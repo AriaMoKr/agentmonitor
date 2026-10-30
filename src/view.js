@@ -1,0 +1,636 @@
+// What the monitor draws, as lines for a screen of a given size: the list of agents, one agent
+// in detail, and the help; and the plain table --once prints. Pure functions of a snapshot and
+// the screen's state, so the tests can draw them.
+import { ago, bytes, clock, durationLabel, elapsed, fit, shortModel, tokens, truncate, width } from './format.js';
+
+/**
+ * @typedef {import('./monitor.js').Agent} Agent
+ * @typedef {import('./monitor.js').Snapshot} Snapshot
+ * @typedef {import('./monitor.js').State} State
+ * @typedef {'status' | 'recent' | 'name' | 'project'} Sort
+ * @typedef {'running' | 'all' | 'none'} AgentsShown
+ *
+ * @typedef {object} Ui
+ * @property {'list' | 'detail' | 'help'} view
+ * @property {string | undefined} selected the selected row's key
+ * @property {number} index the selected row's place, kept when its row goes away
+ * @property {number} top the first row on screen
+ * @property {number} logScroll how far the detail view's activity is scrolled back from the newest
+ * @property {string} filter
+ * @property {boolean} editingFilter
+ * @property {Sort} sort
+ * @property {boolean} showEnded
+ * @property {AgentsShown} agents which agents of a session are listed under it
+ * @property {string} message shown in the footer until messageUntil
+ * @property {number} messageUntil
+ *
+ * @typedef {{ agent: Agent, depth: number, prefix: string }} Row
+ * @typedef {{ width: number, height: number, now: number }} Screen
+ */
+
+export const SORTS = /** @type {Sort[]} */ (['status', 'recent', 'name', 'project']);
+export const AGENTS_SHOWN = /** @type {AgentsShown[]} */ (['running', 'all', 'none']);
+
+/** @returns {Ui} */
+export function initialUi() {
+  return {
+    view: 'list', selected: undefined, index: 0, top: 0, logScroll: 0,
+    filter: '', editingFilter: false, sort: 'status', showEnded: true, agents: 'running',
+    message: '', messageUntil: 0,
+  };
+}
+
+/**
+ * The look: colors as SGR escapes (none without color), the glyphs, Unicode or ASCII, and
+ * whether work in progress spins (not in a table printed once).
+ * @param {{ color: boolean, ascii: boolean, animate?: boolean }} o
+ */
+export function makeTheme({ color, ascii, animate = true }) {
+  const sgr = (/** @type {string} */ code) => (/** @type {string} */ s) => (color && s ? `\x1b[${code}m${s}\x1b[0m` : s);
+  return {
+    color,
+    ascii,
+    animate,
+    bold: sgr('1'),
+    dim: sgr('2'),
+    inverse: sgr('7'),
+    red: sgr('31'),
+    green: sgr('32'),
+    yellow: sgr('33'),
+    blue: sgr('34'),
+    magenta: sgr('35'),
+    cyan: sgr('36'),
+    yellowBold: sgr('1;33'),
+    ellipsis: ascii ? '~' : '…',
+    rule: ascii ? '-' : '─',
+    /** between the parts of a field */
+    sep: ascii ? ', ' : ' · ',
+    spinner: ascii ? ['|', '/', '-', '\\'] : ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+    glyphs: /** @type {Record<State, string>} */ (ascii
+      ? { working: '*', running: '*', waiting: '!', idle: 'o', active: '?', done: '+', failed: 'x', stopped: '#', ended: '.' }
+      : { working: '●', running: '●', waiting: '◆', idle: '○', active: '◌', done: '✓', failed: '✗', stopped: '■', ended: '·' }),
+    tree: ascii ? { mid: '|- ', last: '`- ', pipe: '|  ', none: '   ' } : { mid: '├─ ', last: '└─ ', pipe: '│  ', none: '   ' },
+    arrows: ascii ? 'up/down' : '↑↓',
+    enter: ascii ? 'enter' : '⏎',
+    /** a styled line cut or padded to a width */
+    pad: (/** @type {string} */ s, /** @type {number} */ cols) => padStyled(s, cols, ascii ? '~' : '…'),
+  };
+}
+/** @typedef {ReturnType<typeof makeTheme>} Theme */
+
+const ORDER = /** @type {Record<State, number>} */ ({ waiting: 0, working: 1, running: 1, active: 2, idle: 3, done: 4, failed: 4, stopped: 4, ended: 4 });
+
+/**
+ * A state's glyph: a spinner while at work.
+ * @param {State} state
+ * @param {Theme} t
+ * @param {number} now
+ */
+function glyphChar(state, t, now) {
+  if ((state === 'working' || state === 'running') && t.animate) return t.spinner[Math.floor(now / 100) % t.spinner.length];
+  return t.glyphs[state] ?? '?';
+}
+
+/**
+ * A state's glyph, colored.
+ * @param {State} state
+ * @param {Theme} t
+ * @param {number} now
+ */
+function glyph(state, t, now) {
+  const g = glyphChar(state, t, now);
+  switch (state) {
+    case 'working':
+    case 'running': return t.green(g);
+    case 'waiting': return t.yellowBold(g);
+    case 'idle': return t.cyan(g);
+    case 'active': return t.blue(g);
+    case 'failed': return t.red(g);
+    case 'stopped': return t.magenta(g);
+    default: return t.dim(g);
+  }
+}
+
+/** @param {State} state */
+const over = (state) => ORDER[state] === 4;
+
+/**
+ * Whether an agent's activity goes on now, so that how long it has taken means something.
+ * @param {Agent} a
+ */
+const ongoing = (a) => ['tool', 'thinking', 'waiting', 'agents'].includes(a.activityKind) && a.activityAt > 0;
+
+/**
+ * The rows to list: the sessions in the chosen order, each followed by the agents it shows.
+ * @param {Snapshot} snap
+ * @param {Ui} ui
+ * @param {Theme} t
+ * @returns {Row[]}
+ */
+export function visibleRows(snap, ui, t) {
+  const needle = ui.filter.trim().toLowerCase();
+  const matches = (/** @type {Agent} */ a) =>
+    [a.title, a.project, a.cwd, a.sessionId, a.kind, shortModel(a.model), a.activity, a.agentType, String(a.pid ?? '')]
+      .some((v) => v && v.toLowerCase().includes(needle));
+  const sessions = snap.rows.filter((a) => {
+    if (!ui.showEnded && over(a.state)) return false;
+    return !needle || matches(a) || a.children.some((c) => matches(c) || c.children.some(matches));
+  });
+  sessions.sort(compare(ui.sort));
+  /** @type {Row[]} */
+  const rows = [];
+  for (const s of sessions) {
+    rows.push({ agent: s, depth: 0, prefix: '' });
+    if (ui.agents === 'none') continue;
+    const kids = s.children.filter((c) => ui.agents === 'all' || c.state === 'running');
+    kids.forEach((c, i) => {
+      const last = i === kids.length - 1;
+      rows.push({ agent: c, depth: 1, prefix: last ? t.tree.last : t.tree.mid });
+      const grand = c.children.filter((g) => ui.agents === 'all' || g.state === 'running');
+      grand.forEach((g, j) => {
+        rows.push({ agent: g, depth: 2, prefix: (last ? t.tree.none : t.tree.pipe) + (j === grand.length - 1 ? t.tree.last : t.tree.mid) });
+      });
+    });
+  }
+  return rows;
+}
+
+/**
+ * @param {Sort} sort
+ * @returns {(a: Agent, b: Agent) => number}
+ */
+function compare(sort) {
+  const recent = (/** @type {Agent} */ a, /** @type {Agent} */ b) => b.lastActive - a.lastActive;
+  switch (sort) {
+    case 'recent': return recent;
+    case 'name': return (a, b) => a.title.localeCompare(b.title) || recent(a, b);
+    case 'project': return (a, b) => (a.project ?? '').localeCompare(b.project ?? '') || recent(a, b);
+    default: return (a, b) => ORDER[a.state] - ORDER[b.state] || recent(a, b);
+  }
+}
+
+/**
+ * Keeps the selection on its row (by key) or, when that row went away, at its place; and the
+ * selected row on screen.
+ * @param {Ui} ui
+ * @param {Row[]} rows
+ * @param {number} bodyHeight
+ */
+export function settleSelection(ui, rows, bodyHeight) {
+  const at = ui.selected === undefined ? -1 : rows.findIndex((r) => r.agent.key === ui.selected);
+  ui.index = at >= 0 ? at : Math.max(0, Math.min(ui.index, rows.length - 1));
+  ui.selected = rows[ui.index]?.agent.key;
+  const h = Math.max(1, bodyHeight);
+  if (ui.index < ui.top) ui.top = ui.index;
+  if (ui.index >= ui.top + h) ui.top = ui.index - h + 1;
+  ui.top = Math.max(0, Math.min(ui.top, Math.max(0, rows.length - h)));
+}
+
+/**
+ * @typedef {{ key: string, title: string, width: number, align?: 'left' | 'right', flex?: number, min?: number }} Column
+ * The columns that fit `cols`: the name and the activity share what the others leave.
+ * @param {number} cols
+ * @returns {Column[]}
+ */
+export function columns(cols) {
+  /** @type {(Column & { from?: number })[]} */
+  const all = [
+    { key: 'state', title: '', width: 1 },
+    { key: 'title', title: 'NAME', width: 0, flex: 42, min: 12 },
+    { key: 'project', title: 'PROJECT', width: 16, from: 72 },
+    { key: 'kind', title: 'KIND', width: 8, from: 118 },
+    { key: 'model', title: 'MODEL', width: 10, from: 104 },
+    { key: 'ctx', title: 'CTX', width: 5, align: 'right', from: 90 },
+    { key: 'activity', title: 'ACTIVITY', width: 0, flex: 58, min: 10 },
+    { key: 'last', title: 'LAST', width: 4, align: 'right' },
+    { key: 'pid', title: 'PID', width: 6, align: 'right', from: 140 },
+  ];
+  const shown = all.filter((c) => !c.from || cols >= c.from);
+  // One column of margin on the left, one space between columns.
+  const fixed = 1 + (shown.length - 1) + shown.reduce((n, c) => n + c.width, 0);
+  const rest = Math.max(0, cols - fixed);
+  const title = /** @type {Column} */ (shown.find((c) => c.key === 'title'));
+  const activity = /** @type {Column} */ (shown.find((c) => c.key === 'activity'));
+  title.width = Math.max(Math.min(rest, title.min ?? 0), Math.floor((rest * 42) / 100));
+  activity.width = Math.max(0, rest - title.width);
+  return shown;
+}
+
+/**
+ * One row's cells, styled unless `plain`.
+ * @param {Row} row
+ * @param {Column[]} cols
+ * @param {Theme} t
+ * @param {number} now
+ * @param {boolean} plain
+ */
+function rowText(row, cols, t, now, plain) {
+  const a = row.agent;
+  const dim = over(a.state);
+  const style = (/** @type {string} */ s, /** @type {(s: string) => string} */ f) => (plain ? s : f(s));
+  const soft = (/** @type {string} */ s) => (plain || !dim ? s : t.dim(s));
+  const cells = cols.map((c) => {
+    switch (c.key) {
+      case 'state':
+        return plain ? glyphChar(a.state, t, now) : glyph(a.state, t, now);
+      case 'title': {
+        const prefix = row.prefix;
+        const text = fit(prefix + a.title, c.width, 'left', t.ellipsis);
+        if (plain || !prefix) return soft(text);
+        return t.dim(prefix) + soft(text.slice(prefix.length));
+      }
+      case 'project':
+        return soft(fit(placeOf(a), c.width, 'left', t.ellipsis));
+      case 'kind':
+        return soft(fit(kindOf(a), c.width, 'left', t.ellipsis));
+      case 'model':
+        return soft(fit(shortModel(a.model), c.width, 'left', t.ellipsis));
+      case 'ctx':
+        return soft(fit(tokens(a.ctx), c.width, 'right'));
+      case 'activity':
+        return activityCell(a, c.width, t, now, plain);
+      case 'last':
+        return soft(fit(a.lastActive ? ago(now - a.lastActive) : '', c.width, 'right'));
+      case 'pid':
+        return soft(fit(a.pid ? String(a.pid) : '', c.width, 'right', t.ellipsis));
+      default:
+        return '';
+    }
+  });
+  return ' ' + cells.join(' ');
+}
+
+/**
+ * What the PROJECT column says: a session's folder, a subagent's type, a workflow agent's phase.
+ * @param {Agent} a
+ */
+function placeOf(a) {
+  if (a.type === 'session') return a.project ?? '';
+  if (a.type === 'workflow') return a.phase ?? '';
+  if (a.type === 'agent') return a.phase ?? '';
+  return a.agentType ?? '';
+}
+
+/** @param {Agent} a */
+function kindOf(a) {
+  if (a.type === 'session') return a.kind ?? '';
+  if (a.type === 'workflow') return 'workflow';
+  return a.background ? 'bg agent' : 'agent';
+}
+
+/**
+ * The activity, colored by kind, with how long it has gone on for live work.
+ * @param {Agent} a
+ * @param {number} w
+ * @param {Theme} t
+ * @param {number} now
+ * @param {boolean} plain
+ */
+function activityCell(a, w, t, now, plain) {
+  const time = ongoing(a) ? ` ${elapsed(now - a.activityAt)}` : '';
+  const room = Math.max(0, w - width(time));
+  // An agent that ended says nothing more than its state, unless its last words were read.
+  const words = a.activity || (a.type !== 'session' && over(a.state) ? a.state : '');
+  const text = room > 0 ? fit(words, room, 'left', t.ellipsis) : '';
+  const full = fit(text + time, w, 'left', t.ellipsis);
+  if (plain) return full;
+  const tail = full.slice(text.length);
+  /** @type {(s: string) => string} */
+  let paint = (s) => s;
+  switch (a.activityKind) {
+    case 'waiting': paint = t.yellowBold; break;
+    case 'error': paint = t.red; break;
+    case 'agents': paint = t.green; break;
+    case 'thinking':
+    case 'reply':
+    case 'prompt':
+    case 'job':
+    case '':
+      paint = t.dim; break;
+  }
+  if (over(a.state)) paint = a.activityKind === 'error' ? t.red : t.dim;
+  return paint(text) + t.dim(tail);
+}
+
+/**
+ * The counts in the header: sessions by state, and agents at work.
+ * @param {Snapshot} snap
+ * @param {Theme} t
+ */
+function summary(snap, t) {
+  /** @type {Partial<Record<State, number>>} */
+  const n = {};
+  let agents = 0;
+  for (const r of snap.rows) {
+    n[r.state] = (n[r.state] ?? 0) + 1;
+    for (const c of r.children) {
+      if (c.type === 'workflow') agents += c.children.filter((g) => g.state === 'running').length;
+      else if (c.state === 'running') agents++;
+    }
+  }
+  const parts = [];
+  if (n.working) parts.push(`${t.green(t.glyphs.working)} ${n.working} working`);
+  if (n.waiting) parts.push(`${t.yellowBold(t.glyphs.waiting)} ${t.yellowBold(`${n.waiting} waiting`)}`);
+  if (n.idle) parts.push(`${t.cyan(t.glyphs.idle)} ${n.idle} idle`);
+  if (n.active) parts.push(`${t.blue(t.glyphs.active)} ${n.active} active`);
+  if (n.ended) parts.push(t.dim(`${t.glyphs.ended} ${n.ended} ended`));
+  if (agents) parts.push(`${t.green(String(agents))} agent${agents === 1 ? '' : 's'} at work`);
+  return parts.join('  ');
+}
+
+/**
+ * `left` and `right` on one line of `cols` columns; `right` goes when they do not both fit.
+ * @param {string} left styled
+ * @param {string} right styled
+ * @param {number} cols
+ * @param {Theme} t
+ */
+function spread(left, right, cols, t) {
+  const lw = visibleWidth(left);
+  const rw = visibleWidth(right);
+  if (lw + rw + 2 > cols) return t.pad(left, cols);
+  return left + ' '.repeat(cols - lw - rw) + right;
+}
+
+const SGR = /\x1b\[[0-9;]*m/g;
+/** @param {string} s */
+function visibleWidth(s) {
+  return width(s.replace(SGR, ''));
+}
+
+/**
+ * A styled line cut or padded to `cols` (cutting drops its styles, to stay safe).
+ * @param {string} s
+ * @param {number} cols
+ * @param {string} [ellipsis]
+ */
+export function padStyled(s, cols, ellipsis = '…') {
+  const w = visibleWidth(s);
+  if (w > cols) return truncate(s.replace(SGR, ''), cols, ellipsis);
+  return s + ' '.repeat(cols - w);
+}
+
+/**
+ * The list view: header, column titles, the rows, and the footer.
+ * @param {Snapshot} snap
+ * @param {Row[]} rows
+ * @param {Ui} ui
+ * @param {Screen} screen
+ * @param {Theme} t
+ * @returns {string[]}
+ */
+export function listLines(snap, rows, ui, { width: cols, height, now }, t) {
+  const lines = [];
+  const left = ` ${t.bold('Claude agents')}  ${summary(snap, t)}`;
+  lines.push(spread(left, `${t.dim(clock(now, now))} `, cols, t));
+  const cs = columns(cols);
+  lines.push(t.dim(t.pad(' ' + cs.map((c) => fit(c.title, c.width, c.align, t.ellipsis)).join(' '), cols)));
+  const body = Math.max(0, height - 3);
+  if (rows.length === 0) {
+    const why = !snap.found
+      ? `No Claude Code sessions found in ${snap.dir}.`
+      : ui.filter
+        ? `Nothing matches "${ui.filter}".`
+        : `No Claude agents running or active in the last ${durationLabel(snap.windowMs)}.`;
+    for (let i = 0; i < body; i++) lines.push(i === 1 ? t.pad(`   ${t.dim(why)}`, cols) : ' '.repeat(cols));
+  }
+  for (let i = 0; i < body && rows.length; i++) {
+    const row = rows[ui.top + i];
+    if (!row) {
+      lines.push(' '.repeat(cols));
+      continue;
+    }
+    const selected = ui.index === ui.top + i;
+    const text = rowText(row, cs, t, now, selected && t.color);
+    lines.push(selected && t.color ? t.inverse(t.pad(text, cols)) : t.pad(selected ? `>${text.slice(1)}` : text, cols));
+  }
+  // The last line leaves the last column alone: writing there can scroll some terminals.
+  lines.push(footer(ui, rows, t, cols - 1, now));
+  return lines.slice(0, height);
+}
+
+/**
+ * The footer: the filter being typed, a message, or the filter in use and the keys, as many of
+ * them as fit (the help lists them all).
+ * @param {Ui} ui
+ * @param {Row[]} rows
+ * @param {Theme} t
+ * @param {number} cols
+ * @param {number} now
+ */
+function footer(ui, rows, t, cols, now) {
+  if (ui.editingFilter) return t.pad(` ${t.bold('/')}${ui.filter}${t.inverse(' ')}  ${t.dim(`${t.enter} keep  esc clear`)}`, cols);
+  if (ui.message && now < ui.messageUntil) return t.pad(` ${t.yellow(ui.message)}`, cols);
+  const pos = rows.length ? `${ui.index + 1}/${rows.length}` : '';
+  const filter = ui.filter ? `${t.yellow(`filter "${ui.filter}"`)} ${t.dim('esc clears')}  ` : '';
+  // Each key with what it is worth its room: on a narrow screen the least worth go first.
+  /** @type {[string, number][]} */
+  const all = [
+    [`${t.arrows} move`, 3], [`${t.enter} details`, 4], ['/ filter', 3], [`s sort:${ui.sort}`, 2],
+    [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2], [`a agents:${ui.agents}`, 2], ['w window', 1], ['? help', 5], ['q quit', 5],
+  ];
+  // A space before, two between the keys and the position, and one after it.
+  const room = cols - visibleWidth(filter) - width(pos) - 4;
+  let keys = '';
+  for (let worth = 0; worth <= 5; worth++) {
+    keys = all.filter(([, w]) => w > worth).map(([k]) => k).join('  ');
+    if (width(keys) <= room) break;
+  }
+  return spread(` ${filter}${t.dim(keys)}`, `${t.dim(pos)} `, cols, t);
+}
+
+/**
+ * The detail view of one agent: a title line, its fields, its agents, and its latest events,
+ * the newest at the bottom (scrolled back by ui.logScroll). A workflow has no events of its
+ * own: its agents take the room.
+ * @param {Agent} a
+ * @param {Snapshot} snap
+ * @param {Ui} ui
+ * @param {Screen} screen
+ * @param {Theme} t
+ * @returns {string[]}
+ */
+export function detailLines(a, snap, ui, { width: cols, height, now }, t) {
+  const lines = [];
+  const status = [a.state, ongoing(a) ? elapsed(now - a.activityAt) : ''].filter(Boolean).join(t.sep);
+  lines.push(spread(` ${glyph(a.state, t, now)} ${t.bold(truncate(a.title, Math.max(10, cols - width(status) - 6), t.ellipsis))}`, `${t.dim(status)} `, cols, t));
+  lines.push(t.dim(t.rule.repeat(cols)));
+
+  const body = Math.max(0, height - 3);
+  const hasLog = a.type !== 'workflow';
+  const top = [...fieldLines(a, now, t, cols)];
+  if (a.children.length) {
+    const flows = a.children.filter((c) => c.type === 'workflow').length;
+    const running = a.children.filter((c) => c.state === 'running').length;
+    const count = (/** @type {number} */ n, /** @type {string} */ what) => (n ? `${n} ${what}${n === 1 ? '' : 's'}` : '');
+    const parts = [count(a.children.length - flows, 'agent'), count(flows, 'workflow'), running ? `${running} running` : ''];
+    top.push('', ` ${t.bold('Agents')}  ${t.dim(parts.filter(Boolean).join(t.sep))}`);
+    const cs = columns(cols).filter((c) => !['pid', 'kind'].includes(c.key));
+    // Room for the header and the 'and N more' line.
+    const maxKids = hasLog ? Math.max(3, Math.floor((height - 4) / 3)) : Math.max(3, body - top.length - 1);
+    const kids = a.children.length > maxKids ? a.children.slice(0, maxKids - 1) : a.children;
+    for (const c of kids) top.push(t.pad(rowText({ agent: c, depth: 1, prefix: '' }, cs, t, now, false), cols));
+    if (a.children.length > kids.length) top.push(t.dim(`   and ${a.children.length - kids.length} more`));
+  }
+
+  const logRows = hasLog ? Math.max(3, body - top.length - 2) : 0;
+  const topRows = hasLog ? Math.max(0, body - logRows - 2) : body;
+  for (const line of top.slice(0, topRows)) lines.push(t.pad(line, cols));
+  if (hasLog) {
+    lines.push(' '.repeat(cols));
+    const events = a.events;
+    const maxScroll = Math.max(0, events.length - logRows);
+    ui.logScroll = Math.max(0, Math.min(ui.logScroll, maxScroll));
+    const end = events.length - ui.logScroll;
+    const shown = events.slice(Math.max(0, end - logRows), end);
+    const scrolled = ui.logScroll ? t.dim(` (${ui.logScroll} newer below)`) : '';
+    const none = events.length ? '' : t.dim(a.transcript ? '  none read yet' : '  no transcript');
+    lines.push(t.pad(` ${t.bold('Activity')}${none}${scrolled}`, cols));
+    for (const e of shown) lines.push(eventLine(e, cols, now, t));
+  }
+  while (lines.length < height - 1) lines.push(' '.repeat(cols));
+  const keys = ['esc back', `${t.arrows} scroll`, 'home/end', 'tab next'].join('  ');
+  lines.push(t.pad(` ${t.dim(keys)}`, cols - 1));
+  return lines.slice(0, height);
+}
+
+/**
+ * The detail view's fields, as ' Label  value' lines.
+ * @param {Agent} a
+ * @param {number} now
+ * @param {Theme} t
+ * @param {number} cols
+ */
+function* fieldLines(a, now, t, cols) {
+  const field = (/** @type {string} */ label, /** @type {string | undefined} */ value) =>
+    value ? t.pad(` ${t.dim(fit(label, 10))} ${truncate(value, Math.max(0, cols - 13), t.ellipsis)}`, cols) : null;
+  const when = (/** @type {number | undefined} */ ts) => (ts ? `${clock(ts, now)} (${ago(now - ts)} ago)` : undefined);
+  const join = (/** @type {(string | false | undefined)[]} */ parts) => parts.filter(Boolean).join(t.sep) || undefined;
+  const waiting = a.state === 'waiting';
+  const lines = [
+    field(waiting ? 'Waiting' : ongoing(a) ? 'Doing' : 'Last', a.activity
+      ? (waiting ? a.activity.replace(/^waiting: /, '') : a.activity) + (ongoing(a) ? `  (${elapsed(now - a.activityAt)})` : '')
+      : undefined),
+  ];
+  if (a.pending.length > 1) {
+    for (const p of a.pending.slice(-5)) lines.push(field('', `${p.summary}  (${elapsed(now - p.ts)})`));
+  }
+  if (a.type === 'session') {
+    lines.push(
+      field('Session', join([a.sessionId, a.kind, a.version && `Claude Code ${a.version}`])),
+      field('Resume', a.sessionId && a.state === 'ended' ? `claude --resume ${a.sessionId}, in its folder` : undefined),
+      field('Folder', join([a.cwd, a.branch && a.branch !== 'HEAD' && `branch ${a.branch}`])),
+      field('Process', a.pid ? join([`pid ${a.pid}`, a.processStartedAt && `up ${elapsed(now - a.processStartedAt)}`, a.memKB && `${Math.round(a.memKB / 1024)} MB`]) : undefined),
+      field('Model', join([a.model, a.effort && `effort ${a.effort}`, a.permissionMode && `permissions ${a.permissionMode}`])),
+      field('Context', join([a.ctx && `${tokens(a.ctx)} tokens`, a.outTokens && `${tokens(a.outTokens)} output tokens in the part read`])),
+      field('Totals', a.cost ? join([
+        `$${a.cost.usd.toFixed(2)}`,
+        `${tokens(a.cost.output)} out`,
+        `${tokens(a.cost.input + a.cost.cacheRead + a.cost.cacheWrite)} in`,
+        (a.cost.linesAdded || a.cost.linesRemoved) && `+${a.cost.linesAdded} -${a.cost.linesRemoved} lines`,
+        'as Claude Code last saved them',
+      ]) : undefined),
+      field('Started', when(a.startedAt)),
+      field('Last', when(a.lastActive)),
+      field('Desktop', join([a.hostSessionId, a.archived && 'archived'])),
+      field('Job', a.job ? join([a.job.id, a.job.state, a.job.needs ?? a.job.detail]) : undefined),
+    );
+  } else {
+    lines.push(
+      field('Agent', join([a.agentId ?? a.runId, a.type === 'workflow' ? 'workflow' : a.agentType, a.background && 'background', a.phase && `phase ${a.phase}`])),
+      field('Agents', a.counts ? join([`${a.counts.total} in all`, `${a.counts.running} running`, `${a.counts.done} done`, a.counts.failed && `${a.counts.failed} failed`]) : undefined),
+      field('Model', a.model),
+      field('Context', join([a.ctx && `${tokens(a.ctx)} tokens`, a.outTokens && `${tokens(a.outTokens)} output tokens`, a.tokens && `${tokens(a.tokens)} tokens in all`])),
+      field('Started', when(a.startedAt)),
+      field('Last', when(a.lastActive)),
+      field('Took', a.durationMs ? elapsed(a.durationMs) : undefined),
+    );
+  }
+  lines.push(field('Transcript', a.transcript && `${a.transcript}${a.transcriptSize ? ` · ${bytes(a.transcriptSize)}` : ''}`));
+  for (const l of lines) if (l) yield l;
+}
+
+const EVENT_LABEL = { prompt: 'you', reply: 'claude', tool: 'tool', error: 'error', info: 'note' };
+
+/**
+ * @param {import('./transcript.js').Event} e
+ * @param {number} cols
+ * @param {number} now
+ * @param {Theme} t
+ */
+function eventLine(e, cols, now, t) {
+  const time = fit(e.ts ? clock(e.ts, now) : '', 12);
+  const label = fit(EVENT_LABEL[e.kind] ?? e.kind, 6);
+  const text = truncate(e.text, Math.max(0, cols - 22), t.ellipsis);
+  const paint = e.kind === 'prompt' ? t.cyan : e.kind === 'error' ? t.red : e.kind === 'tool' ? t.dim : (/** @type {string} */ s) => s;
+  return t.pad(` ${t.dim(time)} ${paint(label)} ${e.kind === 'prompt' ? t.bold(text) : text}`, cols);
+}
+
+/**
+ * The help view.
+ * @param {Screen} screen
+ * @param {Theme} t
+ * @param {string} dir
+ */
+export function helpLines({ width: cols, height }, t, dir) {
+  const g = t.glyphs;
+  // A key and what it does, and maybe a second key and what that does.
+  const key = (/** @type {string} */ k, /** @type {string} */ what, k2 = '', what2 = '') =>
+    `   ${fit(k, 13)} ${k2 ? `${fit(what, 15)} ${fit(k2, 20)} ${what2}` : what}`;
+  const [right, left] = t.ascii ? ['right', 'left'] : ['→', '←'];
+  const text = [
+    ` ${t.bold('agentmonitor')}  the Claude agents on this computer`,
+    '',
+    ` ${t.bold('Keys')}`,
+    key(`${t.arrows} j k`, 'move', 'pgup pgdn home end', 'move by pages'),
+    key(`${t.enter} l ${right}`, 'details', `esc h ${left}`, 'back, or clear the filter'),
+    key('/', 'filter', 'tab', 'next agent, in details'),
+    key('s', 'sort: status, most recent, name, project'),
+    key('e', 'show or hide the sessions that ended'),
+    key('a', 'agents under their session: running, all, none'),
+    key('w', 'window for "recently active": 1h, 6h, 24h, 3d, 7d'),
+    key('r', 'read everything again'),
+    key('q ctrl-c', 'quit (q in the details goes back)'),
+    '',
+    ` ${t.bold('States')}`,
+    `   ${t.green(g.working)} working   the session is at work, or ${t.green(g.running)} an agent runs`,
+    `   ${t.yellowBold(g.waiting)} waiting   it needs you: a permission, an answer`,
+    `   ${t.cyan(g.idle)} idle      it runs, and waits for your next message`,
+    `   ${t.blue(g.active)} active    its transcript moved moments ago, but no process is known`,
+    `   ${t.dim(g.ended)} ended     ${t.dim(g.done)} done   ${t.red(g.failed)} failed   ${t.magenta(g.stopped)} stopped`,
+    '',
+    ` ${t.bold('Columns')}`,
+    '   CTX is the context of the last reply in tokens; LAST, how long ago it last did',
+    '   anything; ACTIVITY ends with how long the current step has taken.',
+    '',
+    ` ${t.dim(`Reading ${dir}`)}`,
+    ` ${t.dim('Any key goes back.')}`,
+  ];
+  const lines = text.slice(0, height - 1).map((l) => t.pad(l, cols));
+  while (lines.length < height - 1) lines.push(' '.repeat(cols));
+  lines.push(' '.repeat(Math.max(0, cols - 1)));
+  return lines;
+}
+
+/**
+ * The table --once prints: the same rows as the list, without a selection or footer.
+ * @param {Snapshot} snap
+ * @param {{ width: number, now: number, agents: AgentsShown, showEnded: boolean }} o
+ * @param {Theme} t
+ */
+export function table(snap, { width: cols, now, agents, showEnded }, t) {
+  const ui = { ...initialUi(), agents, showEnded };
+  const rows = visibleRows(snap, ui, t);
+  const cs = columns(cols);
+  const lines = [
+    ` ${t.bold('Claude agents')}  ${summary(snap, t)}`.trimEnd(),
+    t.dim((' ' + cs.map((c) => fit(c.title, c.width, c.align, t.ellipsis)).join(' ')).trimEnd()),
+  ];
+  for (const row of rows) lines.push(rowText(row, cs, t, now, false).trimEnd());
+  if (!rows.length) {
+    lines.push(snap.found
+      ? `   No Claude agents running or active in the last ${durationLabel(snap.windowMs)}.`
+      : `   No Claude Code sessions found in ${snap.dir}.`);
+  }
+  return lines.join('\n') + '\n';
+}
