@@ -1,0 +1,104 @@
+/* The web view's look: a terminal's, the lines the server draws on a grid of monospace cells,
+   in a terminal's colors, dark or light as the browser prefers. */
+:root {
+  --bg: #1e1e1e;
+  --fg: #d4d4d4;
+  --red: #f14c4c;
+  --green: #23d18b;
+  --yellow: #e5e510;
+  --blue: #3b8eea;
+  --magenta: #d670d6;
+  --cyan: #29b8db;
+  --banner-bg: #5a1d1d;
+  --banner-fg: #ffd7d7;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --fg: #1f1f1f;
+    --red: #cd3131;
+    --green: #00862b;
+    --yellow: #8a6d00;
+    --blue: #0451a5;
+    --magenta: #bc05bc;
+    --cyan: #0e7490;
+    --banner-bg: #fde7e9;
+    --banner-fg: #8a1f11;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.screen,
+.probe {
+  font-family: ui-monospace, 'Cascadia Mono', 'Cascadia Code', Consolas, Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
+  font-size: 14px;
+  line-height: 1.25;
+  font-variant-ligatures: none;
+}
+
+.screen {
+  position: absolute;
+  inset: 6px 8px;
+  overflow: hidden;
+  cursor: default;
+}
+
+.screen > div,
+.line {
+  height: 1.25em;
+  white-space: pre;
+  overflow: hidden;
+}
+
+/* Measured for the size of a cell. */
+.probe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: max-content;
+  visibility: hidden;
+}
+
+/* A character outside ASCII, in a box as wide as the columns it takes. */
+.cell {
+  display: inline-block;
+  vertical-align: top;
+  height: 1.25em;
+  overflow: hidden;
+  text-align: center;
+}
+
+.b { font-weight: bold; }
+.d { opacity: 0.6; }
+.i { background: var(--fg); color: var(--bg); }
+.red { color: var(--red); }
+.green { color: var(--green); }
+.yellow { color: var(--yellow); }
+.blue { color: var(--blue); }
+.magenta { color: var(--magenta); }
+.cyan { color: var(--cyan); }
+
+.banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--banner-bg);
+  color: var(--banner-fg);
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+.banner[hidden] {
+  display: none;
+}

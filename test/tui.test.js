@@ -15,8 +15,8 @@ function fakeMonitor(snaps) {
   return {
     dir: '/home/me/.claude',
     windowMs: 24 * HOUR,
-    /** @type {string | undefined} */
-    focus: undefined,
+    /** @type {Set<string>} */
+    focus: new Set(),
     refreshes: 0,
     async refresh() {
       this.refreshes++;
@@ -167,11 +167,11 @@ test("an agent's details have the monitor read its transcript, done or not", asy
   const before = monitor.refreshes;
   tui.type('\r');
   await tui.until((s) => s.includes('esc back'));
-  assert.equal(monitor.focus, 'a:x:1');
+  assert.deepEqual([...monitor.focus], ['a:x:1']);
   await until(() => monitor.refreshes > before);
   tui.type('\x1b');
   await tui.until((s) => s.includes('NAME'));
-  assert.equal(monitor.focus, undefined);
+  assert.deepEqual([...monitor.focus], []);
   tui.type('q');
   await tui.done;
 });
@@ -224,7 +224,7 @@ test("the mouse in the details: a click on an agent opens its details; and --no-
   await tui.until((s) => s.includes('look around'));
   tui.click(10, tui.find('look around').y);
   await tui.until(() => /look around +done$/.test(tui.term.screen.lines()[0]));
-  assert.equal(monitor.focus, 'a:x:1');
+  assert.deepEqual([...monitor.focus], ['a:x:1']);
   tui.type('q');
   await tui.until((s) => s.includes('NAME'));
   tui.type('q');

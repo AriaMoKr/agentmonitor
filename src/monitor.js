@@ -159,10 +159,10 @@ export class Monitor {
     /** @type {Map<string, { mtimeMs: number, children: Agent[], used: boolean }>} agents of sessions that ended */
     this.endedAgents = new Map();
     /**
-     * @type {string | undefined} the key of an agent whose transcript is read though it is not at
-     * work (the one being looked at), to show what it did
+     * @type {Set<string>} the keys of agents whose transcripts are read though they are not at
+     * work (those being looked at: one in the terminal, one for each web page), to show what they did
      */
-    this.focus = undefined;
+    this.focus = new Set();
   }
 
   /**
@@ -401,7 +401,7 @@ export class Monitor {
     if (!s.file) return [];
     const dir = s.file.sessionDir;
     const hit = this.endedAgents.get(dir);
-    const focused = this.focus?.startsWith(`a:${s.id}:`);
+    const focused = [...this.focus].some((k) => k.startsWith(`a:${s.id}:`));
     let all;
     if (!live && hit && hit.mtimeMs === s.file.mtimeMs && !focused) {
       hit.used = true;
@@ -440,7 +440,7 @@ export class Monitor {
       state = !parent.pending.has(meta.toolUseId) ? 'done' : parentLive ? 'running' : 'ended';
     } else state = parentLive ? 'running' : 'ended';
     const key = `a:${sessionId}:${f.id}`;
-    const tx = state === 'running' || key === this.focus ? await this.transcript(f.path, f) : null;
+    const tx = state === 'running' || this.focus.has(key) ? await this.transcript(f.path, f) : null;
     if (tx && state === 'running') state = settle(tx.info, f, now);
     const description = clean(meta.description);
     const agentType = clean(meta.agentType);
@@ -481,7 +481,7 @@ export class Monitor {
       /** @type {State} */
       let st = j?.state === 'done' ? 'done' : j?.state === 'failed' ? 'failed' : state === 'running' ? 'running' : 'ended';
       const key = `a:${sessionId}:${f.id}`;
-      const tx = st === 'running' || key === this.focus ? await this.transcript(f.path, f) : null;
+      const tx = st === 'running' || this.focus.has(key) ? await this.transcript(f.path, f) : null;
       if (tx && st === 'running') st = settle(tx.info, f, now);
       return agentRow({
         key,

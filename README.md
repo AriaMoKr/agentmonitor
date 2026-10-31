@@ -1,6 +1,6 @@
 # agentmonitor
 
-The Claude agents on this computer, live in a terminal: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread.
+The Claude agents on this computer, live in a terminal, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread.
 
 ```
  Claude agents  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread  ○ 2 idle  · 1 ended  3 agents at work
@@ -32,7 +32,7 @@ node bin/agentmonitor.js
 
 For an `agentmonitor` command, run `npm link` in this folder.
 
-In a terminal it runs full screen until you press q, reading everything again each second. When its output is not a terminal (a pipe, a file) it prints the table once instead, as `--once` does, and `--json` prints what it found as JSON.
+In a terminal it runs full screen until you press q, reading everything again each second. When its output is not a terminal (a pipe, a file) it prints the table once instead, as `--once` does, and `--json` prints what it found as JSON. `--serve` shows it as a web page instead ([In a browser](#in-a-browser)).
 
 On Windows it needs a console, which Windows Terminal, the console window, VS Code's terminal and the Claude desktop app's Terminal panel give programs whatever shell runs in them. MSYS2's bash runs there too: `C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64` starts it in the terminal it is run from. mintty (MSYS2, Git Bash, Cygwin) gives programs pipes instead, so there agentmonitor prints the table once and exits.
 
@@ -56,6 +56,13 @@ It draws every line again every 2 seconds, since a terminal can lose lines witho
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
       --no-mouse         leave the mouse to the terminal (to select text)
+      --serve            serve the list and the details as a web page instead,
+                         read only, at an address it prints, which holds a token
+      --host <address>   where --serve listens: 127.0.0.1 (the default) is this
+                         computer only; 0.0.0.0, every network it is on
+      --port <n>         --serve's port (default 7420; 0 for any free one)
+      --token <t>        the token in --serve's address, to keep it the same
+                         (16 or more letters, digits, - and _; default: random)
   -v, --version
   -h, --help
 ```
@@ -145,6 +152,31 @@ In the details: ↑ ↓ and PgUp PgDn scroll the events, Home and End go to the 
 
 The mouse: a click selects a row, and a double click opens its details; the wheel moves the selection, or scrolls the events in the details. A click on a column title sorts by it (NAME, PROJECT, LAST; ACTIVITY and the state column sort by state), one on a key in the footer presses it, and one on an agent in the details opens that agent. While the monitor has the mouse, most terminals select text with Shift held (some on macOS with Option); `--no-mouse` leaves the mouse to the terminal.
 
+## In a browser
+
+`--serve` shows the list and the details as a web page, which keeps itself up to date and takes the same keys and clicks (but q: a page is closed, not quit):
+
+```bash
+node bin/agentmonitor.js --serve
+```
+
+It prints the page's address and runs until Ctrl+C. It listens on 127.0.0.1, so only this computer can open the page. To open it from another computer on your network, have it listen on every interface:
+
+```bash
+node bin/agentmonitor.js --serve --host 0.0.0.0
+```
+
+It then prints an address for each of this computer's network addresses, such as `http://192.168.1.20:7420/…/`: open one on the other computer. On Windows, the first time Node.js listens there, Windows asks whether to let it take connections, and other computers reach it once you allow it on private networks. `--port` sets the port: 7420, unless you give another, or 0 for any free one.
+
+What keeps it to you:
+
+- Every address begins with a random token, which only the printed addresses hold: without it, every request gets a 404. A new token is made each time it starts, unless you give one with `--token` (16 or more letters, digits, `-` and `_`), which keeps a bookmark working. Anyone with the address sees everything the monitor shows, your prompts and folders among it, so give it only to whom you would show your screen.
+- It is plain HTTP: on a network shared with others, they can read what goes by, the token too. Use `--host 0.0.0.0` on networks you trust.
+- It only reads, as in a terminal. It answers GET and HEAD and nothing else, and what a page sends, its keys and clicks, moves only that page's view, but for `w`: the window for "recently active" is the same for every page.
+- The page runs only its own script and style (its Content-Security-Policy forbids anything else), puts the text it is sent in as text, never as markup, and keeps nothing: no cookies, nothing cached.
+
+Each page has its own view: the row selected, the filter, the details open. A page that stops asking for 10 minutes is forgotten. It draws on a grid of monospace cells in a terminal's colors, dark or light as the browser prefers, and while you select text it holds still, so the selection stays.
+
 ## Where it looks
 
 All in Claude Code's config folder (`~/.claude`, or `$CLAUDE_CONFIG_DIR`, or `--dir`), but for the desktop app's records:
@@ -196,7 +228,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
 npm test
 ```
 
-`bin/agentmonitor.js` reads the options and starts `src/tui.js` (the screen, the keys and the mouse) or prints once with `src/view.js` (what is drawn, and where a click on it goes). `src/monitor.js` puts a snapshot together from `src/registry.js`, `src/transcript.js`, `src/agents.js`, `src/jobs.js`, `src/desktop.js` and `src/procs.js`. The tests write a config folder as Claude Code does, and drive the monitor through a fake terminal.
+`bin/agentmonitor.js` reads the options and starts `src/tui.js` (the screen, the keys and the mouse) or `src/serve.js` (the web view, with its page in `src/web/`), or prints once with `src/view.js` (what is drawn, and where a click on it goes). `src/viewer.js` holds what one look at the monitor shows and what keys and clicks do to it: the terminal has one, and the web view one for each page. `src/monitor.js` puts a snapshot together from `src/registry.js`, `src/transcript.js`, `src/agents.js`, `src/jobs.js`, `src/desktop.js` and `src/procs.js`. The tests write a config folder as Claude Code does, drive the monitor through a fake terminal, and ask the web view on a free port of 127.0.0.1.
 
 ## License
 

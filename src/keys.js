@@ -6,7 +6,9 @@
  * @typedef {{ name: string, ch?: string, ctrl?: boolean, mouse?: Mouse }} Key
  *   name: 'up', 'enter', 'escape'... or the character typed, or 'mouse'; ch: the character typed
  * @typedef {{ button: 'left' | 'middle' | 'right' | 'wheelup' | 'wheeldown' | 'other', x: number,
- *   y: number, release: boolean, motion: boolean }} Mouse x and y: the cell, from 0 at the top left
+ *   y: number, release: boolean, motion: boolean, double?: boolean }} Mouse x and y: the cell, from
+ *   0 at the top left; double: the second click of a double click, as a browser tells it (a
+ *   terminal does not)
  */
 
 /** @type {Record<string, string>} */

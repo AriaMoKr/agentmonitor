@@ -4,7 +4,7 @@ Guidance for Claude Code in this repository.
 
 ## What this is
 
-agentmonitor: the Claude Code sessions on this computer (in a terminal, the desktop app's Code tab, an IDE, the background) that run or were active lately, with what each is doing, its task list and the subagents and workflows it started, live in a terminal. Node 22 or later, plain ES modules, no dependencies and no build. `README.md` covers using it, what it reads and how it decides a session's state.
+agentmonitor: the Claude Code sessions on this computer (in a terminal, the desktop app's Code tab, an IDE, the background) that run or were active lately, with what each is doing, its task list and the subagents and workflows it started, live in a terminal, or with `--serve` as a web page, which another computer can open. Node 22 or later, plain ES modules, no dependencies and no build. `README.md` covers using it, what it reads and how it decides a session's state.
 
 ## Commands
 
@@ -12,15 +12,17 @@ agentmonitor: the Claude Code sessions on this computer (in a terminal, the desk
 node bin/agentmonitor.js          # full screen; q quits
 node bin/agentmonitor.js --once   # the table, printed once (also when stdout is not a terminal)
 node bin/agentmonitor.js --json   # what was found, as JSON (without the events)
+node bin/agentmonitor.js --serve  # the web view, at the address it prints; Ctrl+C stops it
 npm test                          # node --test "test/*.test.js"
 ```
 
 ## Layout
 
-- `bin/agentmonitor.js`: the options, then `runTui`, or one table or JSON.
-- `src/monitor.js`: `Monitor.refresh(now)` puts a `Snapshot` together: sessions (one row per process running one, or one for a session that ended), each with its subagents and workflow runs as `children`, a workflow's agents as its children. `focus` is the key of an agent whose transcript is read though it is not at work (the one in the detail view).
+- `bin/agentmonitor.js`: the options, then `runTui`, `serve`, or one table or JSON.
+- `src/monitor.js`: `Monitor.refresh(now)` puts a `Snapshot` together: sessions (one row per process running one, or one for a session that ended), each with its subagents and workflow runs as `children`, a workflow's agents as its children. `focus` holds the keys of the agents whose transcripts are read though they are not at work (those in a detail view: the terminal's, and each web page's).
 - `src/registry.js` (`sessions/<pid>.json`), `src/transcript.js` (a transcript read as it grows), `src/agents.js` (a session's subagents and workflow runs), `src/jobs.js` (`jobs/*/state.json`), `src/desktop.js` (the desktop app's session records: its summary of each one's last turn, and from them which sessions it shows unread), `src/procs.js` (is a PID running, and is it Claude Code), `src/files.js` (folders and JSON read again only when changed).
-- `src/view.js`: what is drawn, as lines for a screen size, and where a click on them goes (`hits`): pure, so the tests draw it. `src/tui.js`: the alternate screen, the keys and the mouse (`src/keys.js`; the terminal's reports in the SGR form, asked for with modes 1000 and 1006), the timers, painting the lines that changed, and every 2 seconds all of them (a terminal can lose lines without telling the program: the desktop app's Terminal panel has). `src/format.js`: terminal-safe text, widths, short forms.
+- `src/view.js`: what is drawn, as lines for a screen size, and where a click on them goes (`hits`): pure, so the tests draw it. Its theme says whether it is for a web page (`t.web`: no quitting, text selected by dragging). `src/viewer.js`: one look at the monitor (the view shown, the selection, the filter) and what keys and clicks do to it; the terminal has one, and the web view one per page. `src/tui.js`: the alternate screen, the keys and the mouse (`src/keys.js`; the terminal's reports in the SGR form, asked for with modes 1000 and 1006), the timers, painting the lines that changed, and every 2 seconds all of them (a terminal can lose lines without telling the program: the desktop app's Terminal panel has). `src/format.js`: terminal-safe text, widths, short forms.
+- `src/serve.js`: the web view's server (`node:http`): the page's files and `screen?page=<id>&w=&h=&i=<input>...`, which applies the inputs to that page's `Viewer` and answers its lines as JSON runs (`[text, classes, columns]`: the SGR styles made classes, characters outside ASCII with their width). A read is shared by the pages and made when one asks and the last is older than the interval. `src/web/`: the page (`index.html`, `app.css`, and `app.js`, which asks each second, draws the lines that changed and sends keys, clicks and the wheel; its pure helpers are exported for the tests).
 - `test/helpers/fixture.js` writes a config folder as Claude Code does (times relative to `NOW`, mtimes set); `test/helpers/screen.js` is a fake TTY pair and a screen that applies what is written; `test/helpers/agents.js` makes agents and snapshots by hand.
 
 ## Claude Code's files
@@ -45,6 +47,7 @@ Undocumented, read as Claude Code 2.1.3xx writes them; a new version can change 
 - All text from the files is untrusted terminal output: through `clean()` before it is drawn, and measured with `width()`, `fit()` and `truncate()` (wide characters, emoji). With `--ascii`, draw nothing but ASCII of the monitor's own (`t.sep`, `t.ellipsis`, `t.pad`).
 - The screen: autowrap off, and the last line one column short, since writing the bottom right cell scrolls some terminals. Every way out puts the terminal back, with its mouse reports off.
 - On Windows, Node's raw mode is the console's VT input, and the console passes the mouse's modes (1000, 1006) on to the terminal only while that is on, and does not turn them off when Node exits: raw mode on before asking for the mouse, the mouse off before leaving raw mode. In mintty Node gets pipes, not a console, so there is no full screen there. `msys2_shell.cmd -defterm -here -no-start -ucrt64` runs MSYS2's bash in the console it is started from.
+- The web view stays read only and private: GET and HEAD only; every path under the token (compared in constant time), anything else 404; 127.0.0.1 unless `--host` says otherwise. The page runs its own script and style and nothing inline (its Content-Security-Policy forbids the rest), puts what it gets in with `textContent` and classes, never `innerHTML` or a style attribute, and keeps nothing (`no-store`, no cookies). A page's inputs move only its own view (but `w`, the shared window).
 - Keep a refresh cheap: transcripts are read from their tail and then only what was appended; JSON files are parsed again only when their size or mtime changes; the process table is read for a new PID and every 10 seconds.
-- Tests: `node:test`, a fixture config folder with fixed times, the TUI through the fake terminal. Run `npm test` before a commit.
+- Tests: `node:test`, a fixture config folder with fixed times, the TUI through the fake terminal, the web view through real requests to 127.0.0.1 on a free port (never 0.0.0.0, which makes Windows ask about its firewall). Run `npm test` before a commit.
 - Style: ES modules, JSDoc types, single quotes, a header comment in each file saying what it is for.

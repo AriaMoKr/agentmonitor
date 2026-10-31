@@ -48,6 +48,15 @@ function graphemeWidth(g) {
 }
 
 /**
+ * `s` as its graphemes, each with the columns it takes in a terminal.
+ * @param {string} s
+ * @returns {[string, number][]}
+ */
+export function graphemes(s) {
+  return Array.from(segmenter.segment(s), ({ segment }) => /** @type {[string, number]} */ ([segment, graphemeWidth(segment)]));
+}
+
+/**
  * The columns `s` takes in a terminal.
  * @param {string} s
  */

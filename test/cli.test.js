@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { width } from '../src/format.js';
 import { HOUR, makeConfig, MINUTE, rec, sessionId } from './helpers/fixture.js';
 
 const BIN = fileURLToPath(new URL('../bin/agentmonitor.js', import.meta.url));
+
+/**
+ * This environment without the variables agentmonitor reads, and with `env`.
+ * @param {Record<string, string>} [env]
+ */
+function environment(env = {}) {
+  const base = { ...process.env };
+  for (const k of ['FORCE_COLOR', 'NO_COLOR', 'CLAUDE_CONFIG_DIR', 'COLUMNS']) delete base[k];
+  return { ...base, ...env };
+}
 
 /**
  * Runs agentmonitor with its output piped, as a script would, in an environment without the
@@ -15,10 +25,8 @@ const BIN = fileURLToPath(new URL('../bin/agentmonitor.js', import.meta.url));
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
 function run(args, env = {}) {
-  const base = { ...process.env };
-  for (const k of ['FORCE_COLOR', 'NO_COLOR', 'CLAUDE_CONFIG_DIR', 'COLUMNS']) delete base[k];
   return new Promise((resolve) => {
-    execFile(process.execPath, [BIN, ...args], { env: { ...base, ...env }, timeout: 30_000 }, (err, stdout, stderr) => {
+    execFile(process.execPath, [BIN, ...args], { env: environment(env), timeout: 30_000 }, (err, stdout, stderr) => {
       resolve({ code: err ? Number(err.code) : 0, stdout, stderr });
     });
   });
@@ -40,6 +48,15 @@ test('a wrong option ends with status 2, saying why', async () => {
     [['--agents', 'some'], /--agents takes running, all, none, not 'some'/],
     [['--bogus'], /Unknown option '--bogus'/],
     [['extra'], /Unexpected argument 'extra'/],
+    [['--host', '0.0.0.0'], /--host goes with --serve/],
+    [['--port', '8080'], /--port goes with --serve/],
+    [['--token', 'abcdefghijklmnop'], /--token goes with --serve/],
+    [['--serve', '--once'], /--serve does not go with --once or --json/],
+    [['--serve', '--json'], /--serve does not go with --once or --json/],
+    [['--serve', '--port', 'http'], /--port takes a number from 0 to 65535, not 'http'/],
+    [['--serve', '--port', '65536'], /--port takes a number from 0 to 65535, not '65536'/],
+    [['--serve', '--token', 'too-short'], /--token takes 16 or more letters, digits, - and _/],
+    [['--serve', '--token', 'sixteen chars ok'], /--token takes 16 or more letters, digits, - and _/],
   ])) {
     const r = await run(args);
     assert.equal(r.code, 2, args.join(' '));
@@ -94,6 +111,35 @@ test('--since and --hide-ended; a folder with no sessions', async (t) => {
   assert.doesNotMatch((await run(['--once', '-e', '--dir', cfg.dir])).stdout, /Two hours ago/);
   const empty = makeConfig(t);
   assert.match((await run(['--once', '--dir', empty.dir])).stdout, /No Claude Code sessions found in /);
+});
+
+test('--serve prints the address of the web view, on this computer only, and serves it there', async (t) => {
+  const cfg = makeConfig(t);
+  const now = Date.now();
+  cfg.transcript(sessionId(), [rec.prompt('Served session', now - 5 * MINUTE), rec.reply('Done.', now - 4 * MINUTE)], { mtime: now - 4 * MINUTE });
+  const token = 'cli-test-token-0123456789';
+  const child = spawn(process.execPath, [BIN, '--serve', '--port', '0', '--token', token, '--dir', cfg.dir], { env: environment() });
+  t.after(() => child.kill());
+  let out = '';
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (d) => (out += d));
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`not ready: ${out}`)), 20_000);
+    child.stdout.on('data', () => {
+      if (!out.includes('Ctrl+C stops it.')) return;
+      clearTimeout(timer);
+      resolve(undefined);
+    });
+    child.once('exit', (code) => reject(new Error(`ended with ${code}: ${out}`)));
+  });
+  const m = /^The web view, read only, at:\n {2}(http:\/\/127\.0\.0\.1:\d+\/cli-test-token-0123456789\/)\nOnly this computer can open it; /.exec(out);
+  assert.ok(m, out);
+  const page = await fetch(m[1]);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /<script type="module" src="app.js">/);
+  const screen = await (await fetch(`${m[1]}screen?page=cli-page-1&w=120&h=10`)).json();
+  assert.ok(screen.lines.some((/** @type {[string][]} */ l) => l.map((r) => r[0]).join('').includes('Served session')), JSON.stringify(screen.lines));
+  assert.equal((await fetch(m[1].replace(token, 'not-the-token-0123456789'))).status, 404);
 });
 
 test('colors: on with --color or FORCE_COLOR, off with --no-color', async (t) => {

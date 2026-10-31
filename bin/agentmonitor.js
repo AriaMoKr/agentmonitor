@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { parseDuration } from '../src/format.js';
 import { Monitor } from '../src/monitor.js';
+import { serve, TOKEN, urls } from '../src/serve.js';
 import { runTui } from '../src/tui.js';
 import { AGENTS_SHOWN, makeTheme, table } from '../src/view.js';
 
@@ -15,7 +16,7 @@ const HELP = `Usage: agentmonitor [options]
 Shows the Claude Code sessions on this computer (in a terminal, the desktop app,
 an IDE or the background) that are running or were active lately, with what
 each is doing, and the subagents and workflows they started. Live in a
-terminal; printed once when the output is not one.
+terminal; printed once when the output is not one; with --serve, as a web page.
 
 Options:
   -s, --since <time>     how far back "recently active" reaches (default 24h)
@@ -33,13 +34,21 @@ Options:
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
       --no-mouse         leave the mouse to the terminal (to select text)
+      --serve            serve the list and the details as a web page instead,
+                         read only, at an address it prints, which holds a token
+      --host <address>   where --serve listens: 127.0.0.1 (the default) is this
+                         computer only; 0.0.0.0, every network it is on
+      --port <n>         --serve's port (default 7420; 0 for any free one)
+      --token <t>        the token in --serve's address, to keep it the same
+                         (16 or more letters, digits, - and _; default: random)
   -v, --version
   -h, --help
 
 Times: 30s, 5m, 2h, 1d, 1w.
 Keys: arrows move, Enter shows details, / filters, s sorts, e hides ended,
 a cycles agents, w cycles the window, ? help, q quits. The mouse: a click
-selects, a double click shows details, the wheel moves.
+selects, a double click shows details, the wheel moves. The web page takes
+the same keys and clicks; anyone with its address sees what it shows.
 `;
 
 /**
@@ -67,6 +76,10 @@ try {
       color: { type: 'boolean' },
       'no-color': { type: 'boolean' },
       'no-mouse': { type: 'boolean' },
+      serve: { type: 'boolean' },
+      host: { type: 'string' },
+      port: { type: 'string' },
+      token: { type: 'string' },
       version: { type: 'boolean', short: 'v' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -97,6 +110,14 @@ try {
 }
 const agents = /** @type {import('../src/view.js').AgentsShown} */ (values.agents ?? 'running');
 if (!AGENTS_SHOWN.includes(agents)) fail(`--agents takes ${AGENTS_SHOWN.join(', ')}, not '${values.agents}'`);
+if (values.serve && (values.once || values.json)) fail('--serve does not go with --once or --json');
+for (const o of /** @type {const} */ (['host', 'port', 'token'])) if (values[o] !== undefined && !values.serve) fail(`--${o} goes with --serve`);
+let port = 7420;
+if (values.port !== undefined) {
+  if (!/^\d{1,5}$/.test(values.port) || Number(values.port) > 65535) fail(`--port takes a number from 0 to 65535, not '${values.port}'`);
+  port = Number(values.port);
+}
+if (values.token !== undefined && !TOKEN.test(values.token)) fail('--token takes 16 or more letters, digits, - and _');
 
 const dir = resolve(values.dir ?? (process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')));
 const monitor = new Monitor({ dir, windowMs });
@@ -104,6 +125,33 @@ const interactive = Boolean(process.stdout.isTTY && process.stdin.isTTY) && !val
 const forced = process.env.FORCE_COLOR !== undefined && process.env.FORCE_COLOR !== '0';
 const color = values['no-color'] ? false : values.color || forced || (Boolean(process.stdout.isTTY) && !process.env.NO_COLOR);
 const ascii = Boolean(values.ascii);
+
+if (values.serve) {
+  const host = values.host ?? '127.0.0.1';
+  /** @type {import('../src/serve.js').Served} */
+  let served;
+  try {
+    served = await serve(monitor, {
+      host, port, token: values.token, intervalMs, ascii, agents, showEnded: !values['hide-ended'],
+      log: (line) => process.stdout.write(`${line}\n`),
+    });
+  } catch (e) {
+    const err = /** @type {NodeJS.ErrnoException} */ (e);
+    const why = err.code === 'EADDRINUSE' ? `port ${port} is in use: try another --port, or --port 0 for any free one` : `cannot listen on ${host} port ${port}: ${err.message}`;
+    process.stderr.write(`agentmonitor: ${why}\n`);
+    process.exit(1);
+  }
+  const local = /^(?:127\.|::1$|localhost$)/.test(host);
+  process.stdout.write(`The web view, read only, at:\n${urls(host, served.port, served.token).map((u) => `  ${u}\n`).join('')}`);
+  process.stdout.write(local ? 'Only this computer can open it; with --host 0.0.0.0, the others on its networks can too.\n' : 'Anyone with the address sees what it shows.\n');
+  if (!local && process.platform === 'win32') process.stdout.write('Windows can ask whether Node.js may take connections: other computers reach it once allowed.\n');
+  process.stdout.write('Ctrl+C stops it.\n');
+  await new Promise((resolve) => {
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(signal, resolve);
+  });
+  await served.close();
+  process.exit(0);
+}
 
 if (interactive) {
   await runTui(monitor, {

@@ -55,16 +55,18 @@ export function initialUi() {
 }
 
 /**
- * The look: colors as SGR escapes (none without color), the glyphs, Unicode or ASCII, and
- * whether work in progress spins (not in a table printed once).
- * @param {{ color: boolean, ascii: boolean, animate?: boolean }} o
+ * The look: colors as SGR escapes (none without color), the glyphs, Unicode or ASCII, whether
+ * work in progress spins (not in a table printed once), and whether it is drawn on a web page,
+ * where no key quits and text is selected by dragging.
+ * @param {{ color: boolean, ascii: boolean, animate?: boolean, web?: boolean }} o
  */
-export function makeTheme({ color, ascii, animate = true }) {
+export function makeTheme({ color, ascii, animate = true, web = false }) {
   const sgr = (/** @type {string} */ code) => (/** @type {string} */ s) => (color && s ? `\x1b[${code}m${s}\x1b[0m` : s);
   return {
     color,
     ascii,
     animate,
+    web,
     bold: sgr('1'),
     dim: sgr('2'),
     inverse: sgr('7'),
@@ -513,8 +515,10 @@ function footer(ui, rows, t, cols, now, onHit) {
   /** @type {[string, number, string | undefined][]} */
   const all = [
     [`${t.arrows} move`, 3, undefined], [`${t.enter} details`, 4, 'enter'], ['/ filter', 3, '/'], [`s sort:${ui.sort}`, 2, 's'],
-    [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'], ['? help', 5, '?'], ['q quit', 5, 'q'],
+    [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'], ['? help', 5, '?'],
   ];
+  // A web page is closed, not quit.
+  if (!t.web) all.push(['q quit', 5, 'q']);
   // A space before, two between the keys and the position, and one after it.
   const room = cols - visibleWidth(filter) - width(pos) - 4;
   let shown = all;
@@ -734,8 +738,8 @@ export function helpLines({ width: cols, height }, t, dir, mouse = true) {
     key('e', 'show or hide the sessions that ended'),
     key('a', 'agents under their session: running, all, none'),
     key('w', 'window for "recently active": 1h, 6h, 24h, 3d, 7d'),
-    key('r', 'read again', 'q ctrl-c', 'quit (q in the details goes back)'),
-    ...(mouse ? [key('click', 'select a row', 'double-click', 'its details'), key('wheel', 'move or scroll', 'shift+drag', 'select text')] : []),
+    t.web ? key('r', 'read again') : key('r', 'read again', 'q ctrl-c', 'quit (q in the details goes back)'),
+    ...(mouse ? [key('click', 'select a row', 'double-click', 'its details'), key('wheel', 'move or scroll', t.web ? 'drag' : 'shift+drag', 'select text')] : []),
     '',
     ` ${t.bold('States')}`,
     `   ${t.green(g.working)} working   the session is at work, or ${t.green(g.running)} an agent runs`,

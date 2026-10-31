@@ -311,13 +311,14 @@ test('the agent being looked at has its transcript read, though it is done', asy
   const child = async () => (await monitor.refresh(NOW)).rows[0].children[0];
   const before = await child();
   assert.deepEqual([before.state, before.activity, before.events.length], ['done', '', 0]);
-  monitor.focus = `a:${id}:x1`;
+  // Looked at from the terminal and a web page: either one has it read.
+  monitor.focus = new Set([`a:${id}:x9`, `a:${id}:x1`]);
   const focused = await child();
   assert.equal(focused.state, 'done');
   assert.equal(focused.activity, 'Nothing odd.');
   assert.deepEqual(focused.events.map((e) => e.kind), ['prompt', 'reply']);
   assert.equal(focused.model, 'claude-opus-5-5');
-  monitor.focus = undefined;
+  monitor.focus = new Set();
   assert.equal((await child()).activity, '');
 });
 
