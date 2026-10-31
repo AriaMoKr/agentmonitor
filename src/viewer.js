@@ -75,7 +75,7 @@ export class Viewer {
     this.hits = [];
     this.height = screen.height;
     if (!snap) return [` ${t.bold('Claude agents')}  ${t.dim(`reading ${this.monitor.dir}`)}`];
-    if (ui.view === 'help') return helpLines(screen, t, this.monitor.dir, this.mouseOn);
+    if (ui.view === 'help') return helpLines(ui, screen, t, this.monitor.dir, this.mouseOn);
     this.rows = visibleRows(snap, ui, t);
     if (ui.view === 'detail') {
       this.detail = find(snap, ui.selected) ?? this.detail;
@@ -160,8 +160,9 @@ export class Viewer {
 
   /**
    * A click on a row selects it, and a second one soon after opens it; one on a column's title
-   * sorts by it, one on a key presses it, one on an agent in the details opens that agent. The
-   * wheel moves the selection, or scrolls the activity in the details.
+   * sorts by it, one on a key presses it, one on an agent in the details opens that agent, and
+   * one on the help goes back. The wheel moves the selection, or scrolls the activity in the
+   * details, or the help.
    * @param {Mouse} m
    * @returns {'quit' | undefined}
    */
@@ -171,6 +172,7 @@ export class Viewer {
     if (m.button === 'wheelup' || m.button === 'wheeldown') {
       const by = m.button === 'wheelup' ? -1 : 1;
       if (ui.view === 'detail') ui.logScroll = Math.max(0, ui.logScroll - 3 * by);
+      else if (ui.view === 'help') ui.helpTop = Math.max(0, ui.helpTop + 3 * by);
       else if (ui.view === 'list') this.move(by);
       return;
     }
@@ -213,6 +215,15 @@ export class Viewer {
       return;
     }
     if (ui.view === 'help') {
+      // The keys that scroll it (its drawing keeps it from going past its end); any other goes back.
+      switch (key.name) {
+        case 'up': case 'k': ui.helpTop = Math.max(0, ui.helpTop - 1); return;
+        case 'down': case 'j': ui.helpTop++; return;
+        case 'pageup': ui.helpTop = Math.max(0, ui.helpTop - page); return;
+        case 'pagedown': ui.helpTop += page; return;
+        case 'home': case 'g': ui.helpTop = 0; return;
+        case 'end': case 'G': ui.helpTop = Number.MAX_SAFE_INTEGER; return;
+      }
       ui.view = 'list';
       return;
     }
@@ -277,7 +288,7 @@ export class Viewer {
         this.say(ui.bell ? 'the bell rings when a session needs you or ends its turn' : 'no bell');
         return;
       case '?':
-        ui.view = 'help';
+        Object.assign(ui, { view: 'help', helpTop: 0 });
         return;
     }
   }

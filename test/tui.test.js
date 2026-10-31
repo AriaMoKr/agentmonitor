@@ -108,6 +108,11 @@ test('help, the filter, sorting and hiding the sessions that ended', async (t) =
   await tui.until((s) => s.includes('Old work'));
   tui.type('?');
   await tui.until((s) => s.includes('Keys') && s.includes('bell on or off'));
+  // Taller than these 16 lines: End shows its end, k the line above, and any other key goes back.
+  tui.type('\x1b[F');
+  await tui.until((s) => s.includes('Columns') && s.includes('any other key or a click goes back'));
+  tui.type('k');
+  await tui.until((s) => s.includes('Columns') && !s.includes('any other key'));
   tui.type('x');
   await tui.until((s) => s.includes('NAME'));
   tui.type('/');
@@ -211,6 +216,9 @@ test('the mouse: a click selects, a second opens, the wheel moves, a key below a
   tui.click(tui.find('? help').x, 15);
   await tui.until((s) => s.includes('Keys'));
   assert.match(tui.text(), /click {9}select a row/);
+  // The wheel scrolls it, and a click goes back.
+  tui.type('\x1b[<65;10;5M');
+  await tui.until((s) => / 4-18\/\d+ *$/m.test(s));
   tui.click(0, 0);
   await tui.until((s) => s.includes('NAME'));
   tui.click(tui.find('NAME').x, 1);

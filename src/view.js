@@ -21,6 +21,7 @@ import { ago, bytes, clock, durationLabel, elapsed, fit, shortModel, tokens, tru
  * @property {number} index the selected row's place, kept when its row goes away
  * @property {number} top the first row on screen
  * @property {number} logScroll how far the detail view's activity is scrolled back from the newest
+ * @property {number} helpTop the help's first line on screen, when it is taller than the screen
  * @property {string} filter
  * @property {boolean} editingFilter
  * @property {Sort} sort
@@ -50,7 +51,7 @@ export const AGENTS_SHOWN = /** @type {AgentsShown[]} */ (['running', 'all', 'no
 /** @returns {Ui} */
 export function initialUi() {
   return {
-    view: 'list', selected: undefined, index: 0, top: 0, logScroll: 0,
+    view: 'list', selected: undefined, index: 0, top: 0, logScroll: 0, helpTop: 0,
     filter: '', editingFilter: false, sort: 'status', showEnded: true, agents: 'running', bell: false,
     message: '', messageUntil: 0,
   };
@@ -718,13 +719,15 @@ function eventLine(e, cols, now, t) {
 }
 
 /**
- * The help view.
+ * The help view: from ui.helpTop on when it is taller than the screen, with the keys that scroll
+ * it, and how far down it is, on the last line.
+ * @param {Ui} ui
  * @param {Screen} screen
  * @param {Theme} t
  * @param {string} dir
  * @param {boolean} [mouse] whether the mouse is on
  */
-export function helpLines({ width: cols, height }, t, dir, mouse = true) {
+export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
   const g = t.glyphs;
   // A key and what it does, and maybe a second key and what that does.
   const key = (/** @type {string} */ k, /** @type {string} */ what, k2 = '', what2 = '') =>
@@ -762,12 +765,16 @@ export function helpLines({ width: cols, height }, t, dir, mouse = true) {
     '   the current step has taken.',
     '',
     ` ${t.dim(`Reading ${dir}`)}`,
-    ` ${t.dim('Any key goes back.')}`,
+    ` ${t.dim(`${t.arrows} pgup pgdn home end${mouse ? ' and the wheel' : ''} scroll; any other key${mouse ? ' or a click' : ''} goes back.`)}`,
   ];
-  const lines = text.slice(0, height - 1).map((l) => t.pad(l, cols));
-  while (lines.length < height - 1) lines.push(' '.repeat(cols));
-  lines.push(' '.repeat(Math.max(0, cols - 1)));
-  return lines;
+  const room = Math.max(0, height - 1);
+  ui.helpTop = Math.max(0, Math.min(ui.helpTop, text.length - room));
+  const lines = text.slice(ui.helpTop, ui.helpTop + room).map((l) => t.pad(l, cols));
+  while (lines.length < room) lines.push(' '.repeat(cols));
+  const keys = t.dim(['esc back', `${t.arrows} scroll`, 'home/end'].join('  '));
+  const pos = text.length > room ? t.dim(`${ui.helpTop + 1}-${ui.helpTop + room}/${text.length}`) : '';
+  lines.push(spread(` ${keys}`, pos && `${pos} `, cols - 1, t));
+  return lines.slice(0, height);
 }
 
 /**

@@ -513,8 +513,8 @@ test('the activity log shows the newest events, and scrolls back', () => {
   assert.match(oldest[6], /event 0 *$/);
 });
 
-test('the help fills the screen, its last line one column short', () => {
-  const lines = helpLines({ width: 90, height: 40, now: NOW }, plain, '/home/me/.claude');
+test('the help fills the screen, the keys that scroll it on its last line, one column short', () => {
+  const lines = helpLines(initialUi(), { width: 90, height: 40, now: NOW }, plain, '/home/me/.claude');
   assert.equal(lines.length, 40);
   assert.match(lines.join('\n'), /Keys[\s\S]*States[\s\S]*Columns[\s\S]*Reading \/home\/me\/\.claude/);
   assert.match(lines.join('\n'), /◇ blocked {3}its turn ended on something only you can do/);
@@ -522,10 +522,38 @@ test('the help fills the screen, its last line one column short', () => {
   assert.match(lines.join('\n'), /• unread {4}the desktop app's blue dot/);
   assert.match(lines.join('\n'), /EFFORT, the effort it works at, *\n +and a \+ when ultracode is on;/);
   assert.match(lines.join('\n'), /click {9}select a row +double-click +its details/);
-  assert.doesNotMatch(helpLines({ width: 90, height: 40, now: NOW }, plain, '/x', false).join('\n'), /click/, 'not with the mouse off');
+  assert.match(lines.join('\n'), /↑↓ pgup pgdn home end and the wheel scroll; any other key or a click goes back\./);
+  const off = helpLines(initialUi(), { width: 90, height: 40, now: NOW }, plain, '/x', false).join('\n');
+  assert.doesNotMatch(off, /click|wheel/, 'not with the mouse off');
+  assert.match(off, /↑↓ pgup pgdn home end scroll; any other key goes back\./);
   lines.slice(0, -1).forEach((l) => assert.equal(visible(l), 90, l));
-  assert.equal(lines[39], ' '.repeat(89));
-  assert.equal(helpLines({ width: 90, height: 10, now: NOW }, plain, '/x').length, 10);
+  // All of it fits: no telling how far down it is.
+  assert.equal(lines[39], ` esc back  ↑↓ scroll  home/end${' '.repeat(59)}`);
+  assert.equal(helpLines(initialUi(), { width: 90, height: 10, now: NOW }, plain, '/x').length, 10);
+});
+
+test('on a screen too short for it the help scrolls, and says how far down it is', () => {
+  const full = helpLines(initialUi(), { width: 90, height: 100, now: NOW }, plain, '/x');
+  const ui = initialUi();
+  const draw = () => helpLines(ui, { width: 90, height: 12, now: NOW }, plain, '/x');
+  let lines = draw();
+  const total = Number(/\/(\d+) $/.exec(lines[11])?.[1]);
+  assert.ok(total > 11, lines[11]);
+  assert.deepEqual(lines.slice(0, 11), full.slice(0, 11));
+  assert.match(lines[11], new RegExp(`^ esc back {2}↑↓ scroll {2}home/end +1-11/${total} $`));
+  assert.equal(visible(lines[11]), 89);
+  ui.helpTop = 5;
+  lines = draw();
+  assert.deepEqual(lines.slice(0, 11), full.slice(5, 16));
+  assert.match(lines[11], new RegExp(` 6-16/${total} $`));
+  ui.helpTop = 1000;
+  lines = draw();
+  assert.equal(ui.helpTop, total - 11, 'no further down than its end');
+  assert.match(lines[10], /any other key or a click goes back/);
+  assert.match(lines[11], new RegExp(` ${total - 10}-${total}/${total} $`));
+  // Taller again, it shows from the top what it can.
+  helpLines(ui, { width: 90, height: 100, now: NOW }, plain, '/x');
+  assert.equal(ui.helpTop, 0);
 });
 
 test('with --ascii, nothing but ASCII is drawn', () => {
@@ -554,7 +582,7 @@ test('with --ascii, nothing but ASCII is drawn', () => {
     detailLines(busy, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
     detailLines(unread, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
     detailLines(blocked, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
-    helpLines({ width: 120, height: 30, now: NOW }, ascii, '/home/me/.claude'),
+    helpLines(initialUi(), { width: 120, height: 30, now: NOW }, ascii, '/home/me/.claude'),
     table(snap, { width: 120, now: NOW, agents: 'all', showEnded: true }, ascii).split('\n'),
   ];
   for (const line of screens.flat()) assert.match(line, /^[\x20-\x7e]*$/, line);
