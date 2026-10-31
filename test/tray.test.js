@@ -44,9 +44,15 @@ function readPng(file) {
   return { width, height, at };
 }
 
-test('the tray shows what matters most: a session that needs you, a turn ended unread, one at work, all idle, none running', () => {
+test('the tray shows what matters most: a session that needs you, a turn ended unread, one at work, one waiting on what it left running, all idle, none running', () => {
   /** @param {...import('../src/monitor.js').Agent} rows */
   const level = (...rows) => trayState(snapshot(rows), NOW).level;
+  const serving = { state: /** @type {const} */ ('idle'), commands: [{ summary: 'Bash: Serve the site', ts: NOW - MINUTE }] };
+  const watching = { state: /** @type {const} */ ('idle'), children: [agent({ key: 'a:ci', type: 'subagent', title: 'watch CI', state: 'running' })] };
+  assert.equal(level(agent({ title: 'a', ...serving }), agent({ title: 'b' })), 'background');
+  assert.equal(level(agent({ title: 'a', ...watching }), agent({ title: 'b', state: 'ended', live: false })), 'background', 'an agent it started');
+  assert.equal(level(agent({ title: 'a', ...serving }), agent({ title: 'b', state: 'working' })), 'working');
+  assert.equal(level(agent({ title: 'a', ...serving, unread: true })), 'unread');
   assert.equal(level(agent({ title: 'a' }), agent({ title: 'b', state: 'waiting' }), agent({ title: 'c', state: 'working' })), 'waiting');
   assert.equal(level(agent({ title: 'a', blocked: true }), agent({ title: 'b', unread: true })), 'waiting', 'blocked: something only you can do');
   assert.equal(level(agent({ title: 'a', unread: true }), agent({ title: 'b', state: 'working' })), 'unread');
@@ -65,6 +71,7 @@ test('its tooltip and its menu: the counts, the plan\'s usage as the list\'s fir
     agent({ title: 'Plan the migration', unread: true, project: 'infra', lastActive: NOW - 10_000 }),
     agent({ title: 'Pick a provider', blocked: true, project: 'shop', lastActive: NOW - MINUTE }),
     agent({ title: 'Idle one' }),
+    agent({ title: 'Serving one', commands: [{ summary: 'Bash: Serve the site', ts: NOW - MINUTE }] }),
     agent({ title: 'Ended one', state: 'ended', live: false }),
   ], { usage: { at: NOW - 10 * MINUTE, session: 64, week: 29, sessionReset: { at: S, from: S - 10 * MINUTE, to: S + 5 * MINUTE } } });
   const s = trayState(snap, NOW);
@@ -72,9 +79,9 @@ test('its tooltip and its menu: the counts, the plan\'s usage as the list\'s fir
   assert.deepEqual({ ...s, listed: undefined }, {
     level: 'waiting',
     needs: 2,
-    counts: '2 need you, 1 unread, 1 at work, 1 idle',
+    counts: '2 need you, 1 unread, 1 at work, 1 in the background, 1 idle',
     usage,
-    tooltip: `Claude agents: 2 need you, 1 unread, 1 at work, 1 idle\n${usage}`,
+    tooltip: `Claude agents: 2 need you, 1 unread, 1 at work, 1 in the background, 1 idle\n${usage}`,
     listed: undefined,
   });
   assert.deepEqual(s.listed, [
@@ -149,7 +156,8 @@ test('the icons: PNG with each chunk\'s checksum right, the glyph in the middle 
   assert.equal(crc32(Buffer.from('123456789')), 0xcbf43926);
   const tile = [30, 30, 30, 255];
   /** @type {Record<import('../desktop/icons.js').Level, number[]>} */
-  const middle = { waiting: [229, 229, 16, 255], unread: [59, 142, 234, 255], working: [35, 209, 139, 255], idle: tile, none: tile };
+  const cyan = [41, 184, 219, 255];
+  const middle = { waiting: [229, 229, 16, 255], unread: [59, 142, 234, 255], working: [35, 209, 139, 255], background: cyan, idle: tile, none: tile };
   for (const [level, color] of Object.entries(middle)) {
     for (const size of [16, 20, 24, 32]) {
       const icon = readPng(trayIcon(/** @type {import('../desktop/icons.js').Level} */ (level), size));
@@ -160,7 +168,10 @@ test('the icons: PNG with each chunk\'s checksum right, the glyph in the middle 
     }
   }
   // The idle glyph is a ring: its line in cyan, beside the clear middle.
-  assert.deepEqual(readPng(trayIcon('idle', 16)).at(11, 7), [41, 184, 219, 255]);
+  assert.deepEqual(readPng(trayIcon('idle', 16)).at(11, 7), cyan);
+  // The background one, the ring with a dot in it: the tile between them.
+  const background = readPng(trayIcon('background', 32));
+  assert.deepEqual([background.at(16, 16), background.at(20, 16), background.at(23, 16)], [cyan, tile, cyan]);
   assert.deepEqual(readPng(trayIcon('waiting', 16)).at(3, 3), tile, 'the tile around the glyph');
   // The app's: a green dot, a yellow diamond and a cyan ring down the left, each with a line.
   const app = readPng(appIcon(32));

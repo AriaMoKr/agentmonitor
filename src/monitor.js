@@ -50,7 +50,7 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  *
  * @typedef {'tool' | 'thinking' | 'agents' | 'waiting' | 'blocked' | 'background' | 'error' | 'summary' | 'reply' | 'prompt' | 'job' | ''} ActivityKind
  *   blocked and summary: from the desktop app's summary of the last turn; background: a
- *   command that goes on in the background of a session not at work
+ *   command, an agent or a workflow that goes on in the background of a session not at work
  *
  * @typedef {{ steps: import('./transcript.js').Step[], at: number, current: boolean }} Plan a
  *   task list as of its last change; current: changed since the last prompt, in this turn
@@ -681,6 +681,12 @@ export function activityOf(state, info, record, children, turn, now = 0) {
   if (commands.length) {
     const last = commands[commands.length - 1];
     return { kind: 'background', text: `background: ${last.summary}${commands.length > 1 ? ` (+${commands.length - 1} more)` : ''}`, at: last.ts };
+  }
+  // Or with an agent or a workflow it started at work in the background.
+  const running = record ? children.filter((c) => c.state === 'running') : [];
+  if (running.length) {
+    const since = Math.min(...running.map((c) => c.startedAt ?? c.lastActive));
+    return { kind: 'background', text: `background: ${running.length} agent${running.length === 1 ? '' : 's'} running`, at: since };
   }
   if (turn?.detail) return { kind: 'summary', text: turn.detail, at };
   if (info?.lastReply) return { kind: 'reply', text: info.lastReply.text, at: info.lastReply.ts };

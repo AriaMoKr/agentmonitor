@@ -156,19 +156,22 @@ export class Viewer {
     Object.assign(this.ui, { message, messageUntil: Date.now() + 2500 });
   }
 
-  /** Moves the selection by `by` rows, or to row `to`. */
+  /**
+   * Moves the selection by `by` rows, or to row `to`. With none selected, down from above the
+   * first row, or up from below the last.
+   */
   move(/** @type {number} */ by, /** @type {number | undefined} */ to = undefined) {
     const { ui, rows } = this;
     if (!rows.length) return;
     const at = rows.findIndex((r) => r.agent.key === ui.selected);
-    if (at >= 0) ui.index = at;
-    ui.index = Math.max(0, Math.min(rows.length - 1, to ?? ui.index + by));
+    const from = at >= 0 ? at : ui.index >= 0 ? ui.index : by < 0 ? rows.length : -1;
+    ui.index = Math.max(0, Math.min(rows.length - 1, to ?? from + by));
     ui.selected = rows[ui.index].agent.key;
   }
 
-  /** Opens the details of the selected row. */
+  /** Opens the details of the selected row, when one is. */
   open() {
-    if (this.rows.length) Object.assign(this.ui, { view: 'detail', logScroll: 0 });
+    if (this.ui.selected !== undefined) Object.assign(this.ui, { view: 'detail', logScroll: 0 });
     this.detail = undefined;
   }
 
@@ -178,10 +181,10 @@ export class Viewer {
   }
 
   /**
-   * A click on a row selects it, and a second one soon after opens it; one on a column's title
-   * sorts by it, one on a key presses it, one on an agent in the details opens that agent, and
-   * one on the help goes back. The wheel moves the selection, or scrolls the activity in the
-   * details, or the help.
+   * A click on a row selects it, and a second one soon after opens it; one below the rows selects
+   * none; one on a column's title sorts by it, one on a key presses it, one on an agent in the
+   * details opens that agent, and one on the help goes back. The wheel moves the selection, or
+   * scrolls the activity in the details, or the help.
    * @param {Mouse} m
    * @returns {'quit' | undefined}
    */
@@ -206,6 +209,11 @@ export class Viewer {
     // A click on anything else ends the typing of a filter, as Enter does.
     ui.editingFilter = false;
     if ('sort' in action) return this.sortBy(action.sort);
+    if ('unselect' in action) {
+      Object.assign(ui, { selected: undefined, index: -1 });
+      this.lastClick = { key: '', at: 0 };
+      return;
+    }
     if ('open' in action) {
       Object.assign(ui, { selected: action.open, logScroll: 0 });
       this.detail = undefined;

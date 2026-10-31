@@ -184,6 +184,31 @@ test('a command in the background of a session whose turn is over; its task list
   assert.deepEqual(row(later)?.plan, { ...plan, current: false }, 'made before the last prompt');
 });
 
+test('an agent at work in the background of a session whose turn is over; once it finished, nothing is', async (t) => {
+  const cfg = makeConfig(t);
+  const records = [rec.prompt('Watch CI', NOW - 7 * MINUTE), rec.reply('An agent watches CI.', NOW - 5 * MINUTE)];
+  const bg = { requestShape: 'background', agentType: 'general-purpose', description: 'watch CI' };
+  const watching = sessionId();
+  cfg.transcript(watching, records, { mtime: NOW - 5 * MINUTE });
+  cfg.registry({ pid: 60, sessionId: watching, status: 'idle', statusUpdatedAt: NOW - 5 * MINUTE });
+  cfg.subagent(watching, 'b1', bg, [
+    rec.prompt('watch CI', NOW - 6 * MINUTE),
+    rec.tool('toolu_w', 'Bash', { command: 'gh run watch' }, NOW - 30_000),
+  ], { mtime: NOW - 30_000 });
+  const watched = sessionId();
+  cfg.transcript(watched, records, { mtime: NOW - 5 * MINUTE });
+  cfg.registry({ pid: 61, sessionId: watched, status: 'idle', statusUpdatedAt: NOW - 5 * MINUTE });
+  cfg.subagent(watched, 'b2', { ...bg, finished: true }, [rec.prompt('watch CI', NOW - 6 * MINUTE), rec.reply('CI passed.', NOW - MINUTE)], { mtime: NOW - MINUTE });
+  const rows = (await monitorOf(cfg, { running: { 60: 'claude.exe', 61: 'claude.exe' } }).monitor.refresh(NOW)).rows;
+  const row = (/** @type {string} */ id) => rows.find((r) => r.sessionId === id);
+  const w = row(watching);
+  assert.deepEqual([w?.state, w?.activityKind, w?.activity, w?.activityAt], ['idle', 'background', 'background: 1 agent running', NOW - 6 * MINUTE]);
+  assert.deepEqual(w?.children.map((c) => [c.title, c.state]), [['watch CI', 'running']]);
+  const d = row(watched);
+  assert.deepEqual([d?.state, d?.activityKind, d?.activity], ['idle', 'reply', 'An agent watches CI.']);
+  assert.deepEqual(d?.children.map((c) => [c.title, c.state]), [['watch CI', 'done']]);
+});
+
 test('a session two processes run has a row for each', async (t) => {
   const cfg = makeConfig(t);
   const id = sessionId();

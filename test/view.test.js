@@ -126,6 +126,59 @@ test('a session whose last turn ended blocked on you: its mark, counted, listed 
   assert.ok(ended.includes('\x1b[1;33mblocked: say whether'), `a session that ended, blocked, still waits on you: ${JSON.stringify(ended)}`);
 });
 
+/**
+ * A session whose turn is over, with a command it started going on in the background.
+ * @param {Partial<import('../src/monitor.js').Agent>} o
+ */
+const serving = (o) => agent({
+  state: 'idle', activity: 'background: Bash: Serve the site', activityKind: 'background', activityAt: NOW - 8 * MINUTE,
+  commands: [{ summary: 'Bash: Serve the site', ts: NOW - 8 * MINUTE }], ...o,
+});
+
+test('a session whose turn is over that waits on what it left running: its mark, counted, listed before those idle', () => {
+  const watch = agent({ key: 'a:ci', type: 'subagent', title: 'watch CI', state: 'running', background: true, startedAt: NOW - 3 * MINUTE });
+  const snap = snapshot([
+    ...sessions(),
+    serving({ key: 's:srv', title: 'Serving session', project: 'kappa', lastActive: NOW - 8 * MINUTE }),
+    // An agent it started at work, not a command.
+    agent({
+      key: 's:ci', title: 'Waiting on CI', state: 'idle', project: 'lambda', lastActive: NOW - 3 * MINUTE,
+      activity: 'background: 1 agent running', activityKind: 'background', activityAt: NOW - 3 * MINUTE, children: [watch],
+    }),
+    // What needs you or is unread shows as that; at work, as at work.
+    serving({ key: 's:blk', title: 'Blocked, serving', project: 'mu', blocked: true, lastActive: NOW - 9 * MINUTE }),
+    serving({ key: 's:new', title: 'Unread, serving', project: 'nu', unread: true, lastActive: NOW - 9 * MINUTE }),
+    serving({ key: 's:wrk', title: 'Working, serving', project: 'xi', state: 'working', activity: 'thinking', activityKind: 'thinking', lastActive: NOW - 2 * MINUTE }),
+  ]);
+  const ui = { ...initialUi(), agents: /** @type {const} */ ('none') };
+  const rows = visibleRows(snap, ui, plain);
+  assert.deepEqual(rows.map((r) => r.agent.title), [
+    'Blocked, serving', 'Waiting session', 'Unread, serving', 'Working, serving', 'Busy session', 'Active session',
+    'Waiting on CI', 'Serving session', 'Idle session', 'Ended session',
+  ]);
+  const lines = listLines(snap, rows, ui, { width: 160, height: 14, now: NOW }, plain);
+  assert.match(lines[0], /◇ 1 blocked {2}• 1 unread {2}◎ 2 background {2}○ 1 idle {2}◌ 1 active/);
+  const line = (/** @type {string[]} */ l, /** @type {string} */ title) => l.find((s) => s.includes(title)) ?? '';
+  assert.match(line(lines, 'Serving session'), /^ ◎ kappa +Serving session +background: Bash: Serve the site +8m00s +8m /);
+  assert.match(line(lines, 'Waiting on CI'), /^ ◎ lambda +Waiting on CI +background: 1 agent running +3m00s +3m /);
+  assert.match(line(lines, 'Blocked, serving'), /^.◇ mu /, 'the first row, selected');
+  assert.match(line(lines, 'Unread, serving'), /^ • nu /);
+  assert.match(line(lines, 'Working, serving'), /^ ● xi /);
+  assert.match(line(lines, 'Idle session'), /^ ○ zeta /);
+  const ascii = makeTheme({ color: false, ascii: true, animate: false });
+  assert.match(line(listLines(snap, rows, ui, { width: 160, height: 14, now: NOW }, ascii), 'Serving session'), /^ & kappa /);
+  const color = makeTheme({ color: true, ascii: false, animate: false });
+  assert.ok(listLines(snap, rows, ui, { width: 160, height: 14, now: NOW }, color)[0].includes('\x1b[36m◎\x1b[0m 2 background'));
+  // Its details say so, and list what it waits on.
+  const srv = /** @type {import('../src/monitor.js').Agent} */ (snap.rows.find((r) => r.key === 's:srv'));
+  const detail = detailLines(srv, snap, initialUi(), { width: 100, height: 20, now: NOW }, plain);
+  assert.match(detail[0], /^ ◎ Serving session +background · 8m00s $/);
+  assert.match(detail.join('\n'), /Background Bash: Serve the site {2}\(8m00s\)/);
+  // An agent it started, once done, leaves it idle.
+  const done = { ...snap.rows[6], children: [{ ...watch, state: /** @type {const} */ ('done') }] };
+  assert.match(detailLines(done, snap, initialUi(), { width: 100, height: 20, now: NOW }, plain)[0], /^ ○ Waiting on CI +idle/);
+});
+
 test('the selection stays on its row as rows move, and at its place when its row goes', () => {
   const rows = (/** @type {string[]} */ keys) => keys.map((key) => ({ agent: agent({ key, title: key }), depth: 0, prefix: '' }));
   const ui = initialUi();
@@ -146,6 +199,30 @@ test('the selection stays on its row as rows move, and at its place when its row
   settleSelection(ui, [], 4);
   assert.equal(ui.index, 0);
   assert.equal(ui.selected, undefined);
+});
+
+test('with none selected (a click below the rows) none stays so as rows come and go, and none is marked', () => {
+  const rows = (/** @type {string[]} */ keys) => keys.map((key) => ({ agent: agent({ key, title: key }), depth: 0, prefix: '' }));
+  const ui = initialUi();
+  ui.selected = 'h';
+  settleSelection(ui, rows(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']), 4);
+  Object.assign(ui, { selected: undefined, index: -1 });
+  settleSelection(ui, rows(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k']), 4);
+  assert.deepEqual([ui.selected, ui.index, ui.top], [undefined, -1, 4], 'the list where it was');
+  for (const keys of [['h'], [], ['a', 'b']]) {
+    settleSelection(ui, rows(keys), 4);
+    assert.deepEqual([ui.selected, ui.index], [undefined, -1], keys.join());
+  }
+  // No row marked, and where the selection is, a dash.
+  const snap = snapshot(sessions());
+  const none = { ...initialUi(), index: -1 };
+  const shown = visibleRows(snap, none, plain);
+  settleSelection(none, shown, 17);
+  const lines = listLines(snap, shown, none, { width: 100, height: 20, now: NOW }, plain);
+  assert.deepEqual(lines.filter((l) => l.startsWith('>')), []);
+  assert.match(lines[19], / -\/8 $/);
+  const color = makeTheme({ color: true, ascii: false, animate: false });
+  assert.deepEqual(listLines(snap, shown, none, { width: 100, height: 20, now: NOW }, color).filter((l) => l.startsWith('\x1b[7m')), []);
 });
 
 test('the columns fill the width; a narrow screen drops the least needed', () => {
@@ -353,7 +430,7 @@ test('the footer: the filter in use first, as many keys as fit, and where the se
  */
 const clickAt = (hits, x, y) => hits.find((h) => h.y === y && x >= h.x0 && x < h.x1)?.action;
 
-test('where a click goes in the list: a row selects it, a title sorts by it, a key below is pressed', () => {
+test('where a click goes in the list: a row selects it, the space below the rows none, a title sorts by it, a key is pressed', () => {
   const snap = snapshot(sessions());
   const ui = initialUi();
   const rows = visibleRows(snap, ui, plain);
@@ -363,7 +440,10 @@ test('where a click goes in the list: a row selects it, a title sorts by it, a k
   const lines = listLines(snap, rows, ui, { width: 160, height: 20, now: NOW }, plain, hits);
   assert.deepEqual(clickAt(hits, 10, 3), { select: rows[1].agent.key });
   assert.deepEqual(clickAt(hits, 150, 2 + rows.length - 1), { select: rows[rows.length - 1].agent.key });
-  assert.equal(clickAt(hits, 10, 2 + rows.length), undefined, 'nothing below the last row');
+  // Below the last row, as wide as the screen and down to the keys: none.
+  for (let y = 2 + rows.length; y < 19; y++) {
+    for (const x of [0, 10, 159]) assert.deepEqual(clickAt(hits, x, y), { unselect: true }, `${x}, ${y}`);
+  }
   for (const [title, sort] of [['NAME', 'name'], ['PROJECT', 'project'], ['ACTIVITY', 'status'], ['LAST', 'recent']]) {
     assert.deepEqual(clickAt(hits, lines[1].indexOf(title) + 1, 1), { sort }, title);
   }
@@ -605,12 +685,14 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   const lines = helpLines(initialUi(), { width: 90, height: 45, now: NOW }, plain, '/home/me/.claude');
   assert.equal(lines.length, 45);
   assert.match(lines.join('\n'), /Keys[\s\S]*States[\s\S]*Columns[\s\S]*Reading \/home\/me\/\.claude/);
-  assert.match(lines.join('\n'), /◇ blocked {3}its turn ended on something only you can do/);
-  assert.match(lines.join('\n'), /◐ tool {6}it waits on a tool call it made/);
-  assert.match(lines.join('\n'), /• unread {4}the desktop app's blue dot/);
+  // What a state means from the column a key's does.
+  assert.match(lines.join('\n'), /◇ blocked {5}its turn ended on something only you can do/);
+  assert.match(lines.join('\n'), /◐ tool {8}it waits on a tool call it made/);
+  assert.match(lines.join('\n'), /• unread {6}the desktop app's blue dot/);
+  assert.match(lines.join('\n'), /◎ background {2}it waits on a command, an agent or a workflow it left running/);
   assert.match(lines.join('\n'), /EFFORT {8}the effort it works at, and a \+ when ultracode is on/);
   assert.match(lines.join('\n'), /ACTIVITY {6}what it is doing, with how many of its tasks are done \(4\/8\) and how *\n {17}long the current step has taken/);
-  assert.match(lines.join('\n'), /click {9}select a row +double-click +its details/);
+  assert.match(lines.join('\n'), /click {9}select a row, or none below the rows; double-click for its details/);
   assert.match(lines.join('\n'), /~34% {10}that sample carried on to now with what this computer's sessions used *\n {17}since: an estimate, blind to use elsewhere/);
   assert.match(lines.join('\n'), /resets {8}about when that limit resets: the week's at the same time each week, *\n {17}the session's five hours after its first use/);
   assert.match(lines.join('\n'), /↑↓ pgup pgdn home end and the wheel scroll; any other key or a click goes back\./);
@@ -665,8 +747,11 @@ test('on a screen as narrow as a phone\'s the help wraps, each line under the st
   assert.deepEqual(from('   b ', 3), [col('   b', 17, 'bell on or off: it rings'), col('', 17, 'when a session needs you'), col('', 17, 'or ends its turn')]);
   assert.deepEqual(from('   touch', 2), [col('   touch', 17, 'a tap is a click; a drag'), col('', 17, 'moves or scrolls')]);
   // A glyph stays with its word.
-  assert.deepEqual(from('   ● working', 2), [col('   ● working', 15, 'the session is at work, or'), col('', 15, '● an agent runs')]);
-  assert.deepEqual(from('   · ended', 2), [col('   · ended', 15, '✓ done   ✗ failed'), col('', 15, '■ stopped')]);
+  assert.deepEqual(from('   ● working', 2), [col('   ● working', 17, 'the session is at work, or'), col('', 17, '● an agent runs')]);
+  assert.deepEqual(from('   · ended', 2), [col('   · ended', 17, '✓ done   ✗ failed'), col('', 17, '■ stopped')]);
+  assert.deepEqual(from('   ◎ background', 3), [
+    col('   ◎ background', 17, 'it waits on a command, an'), col('', 17, 'agent or a workflow it'), col('', 17, 'left running'),
+  ]);
   assert.deepEqual(from('   EFFORT', 3), [col('   EFFORT', 17, 'the effort it works at,'), col('', 17, 'and a + when ultracode is'), col('', 17, 'on')]);
 });
 

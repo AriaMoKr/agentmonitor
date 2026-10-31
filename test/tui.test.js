@@ -231,6 +231,47 @@ test('the mouse: a click selects, a second opens, the wheel moves, a key below a
   assert.ok(tui.term.screen.raw.lastIndexOf('\x1b[?1000l') < tui.term.rawAt[1], 'while still in raw mode');
 });
 
+test('a click below the rows selects none, as rows come and go, until a key or a click selects one', async (t) => {
+  const now = Date.now();
+  const more = () => {
+    const snap = sessions(now);
+    snap.rows.push(agent({ key: 's:d', title: 'New work', state: 'idle', project: 'new', lastActive: now - 2 * MINUTE }));
+    return snap;
+  };
+  const monitor = fakeMonitor([() => sessions(now), more]);
+  const tui = start(t, monitor);
+  await tui.until((s) => s.includes('Old work'));
+  const marked = () => tui.term.screen.lines().filter((l) => l.startsWith('>'));
+  const below = () => tui.click(10, tui.find('Old work').y + 2);
+  tui.click(10, tui.find('Write the docs').y);
+  await tui.until(() => tui.line('Write the docs').startsWith('>'));
+  below();
+  await tui.until((s) => / -\/3 *$/m.test(s));
+  assert.deepEqual(marked(), []);
+  // A row that comes is not selected; enter opens nothing.
+  tui.type('r');
+  await tui.until((s) => s.includes('New work') && / -\/4 *$/m.test(s));
+  assert.deepEqual(marked(), []);
+  tui.type('\rj');
+  await tui.until((s) => s.includes('NAME') && marked().length === 1);
+  assert.ok(tui.line('Fix the parser').startsWith('>'), 'down from none: the first row');
+  below();
+  await tui.until(() => marked().length === 0);
+  tui.type('k');
+  await tui.until(() => tui.line('Old work').startsWith('>'));
+  assert.match(tui.text(), / 4\/4 *$/m, 'up from none: the last row');
+  // A click on a row after one below selects it, though the row was the last clicked: no double click.
+  tui.click(10, tui.find('Write the docs').y);
+  below();
+  tui.click(10, tui.find('Write the docs').y);
+  // A key only the list takes, once the clicks are done with.
+  tui.type('s');
+  await tui.until((s) => s.includes('sorted by most recent'));
+  assert.ok(tui.line('Write the docs').startsWith('>'), 'selected, not opened');
+  tui.type('q');
+  await tui.done;
+});
+
 test("the mouse in the details: a click on an agent opens its details; and --no-mouse leaves it off", async (t) => {
   const now = Date.now();
   const withAgent = () => {

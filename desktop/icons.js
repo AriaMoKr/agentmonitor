@@ -1,11 +1,12 @@
 // The agentmonitor app's icons, drawn here rather than kept as image files. The tray's is a dark
 // tile with the glyph of what matters most now, in the list's colors: ◆ a session needs you, • a
-// turn ended unread, ● one is at work, ○ all are idle, a grey ○ none runs. The app's, for its
-// window and the Start menu, is the tile with three rows of the list. As PNG, which Electron
-// takes, and as ICO, which a Windows shortcut names.
+// turn ended unread, ● one is at work, ◎ one waits on what it left running in the background, ○
+// all are idle, a grey ○ none runs. The app's, for its window and the Start menu, is the tile
+// with three rows of the list. As PNG, which Electron takes, and as ICO, which a Windows shortcut
+// names.
 import { deflateSync } from 'node:zlib';
 
-/** @typedef {'waiting' | 'unread' | 'working' | 'idle' | 'none'} Level what the tray shows: what matters most */
+/** @typedef {'waiting' | 'unread' | 'working' | 'background' | 'idle' | 'none'} Level what the tray shows: what matters most */
 /** @typedef {[number, number, number]} Color red, green and blue, 0 to 255 */
 /**
  * @typedef {(x: number, y: number) => number} Shape how far a point is outside it, less than 0
@@ -49,6 +50,9 @@ const diamond = (cx, cy, radius) => (x, y) => (Math.abs(x - cx) + Math.abs(y - c
 /** The band `w` wide along the inside of a shape's edge. @param {Shape} shape @param {number} w @returns {Shape} */
 const edge = (shape, w) => (x, y) => Math.abs(shape(x, y) + w / 2) - w / 2;
 
+/** Shapes as one. @param {...Shape} shapes @returns {Shape} */
+const union = (...shapes) => (x, y) => Math.min(...shapes.map((s) => s(x, y)));
+
 const TILE_SHAPE = rounded(0.5, 0.5, 15.5, 15.5, 3.5);
 /** @type {[Shape, Color][]} */
 const BASE = [[TILE_SHAPE, TILE], [edge(TILE_SHAPE, 1), EDGE]];
@@ -58,6 +62,8 @@ const GLYPHS = {
   waiting: [diamond(8, 8, 5.5), YELLOW],
   unread: [disc(8, 8, 3.5), BLUE],
   working: [disc(8, 8, 4), GREEN],
+  // The idle ring with a dot in it, as ◎ is the idle ○ with something in it.
+  background: [union(ring(8, 8, 3.75, 1.5), disc(8, 8, 1.5)), CYAN],
   idle: [ring(8, 8, 3.75, 1.5), CYAN],
   none: [ring(8, 8, 3.75, 1.5), GREY],
 };

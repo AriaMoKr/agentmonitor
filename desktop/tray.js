@@ -1,7 +1,7 @@
 // What the agentmonitor app's tray icon says of a snapshot: the glyph of what matters most (a
-// session that needs you, a turn ended unread, one at work, all idle, none running), its tooltip,
-// the sessions its menu lists, and what is worth a notification. Pure, so the tests can tell;
-// main.js shows it with Electron.
+// session that needs you, a turn ended unread, one at work, one waiting on what it left running
+// in the background, all idle, none running), its tooltip, the sessions its menu lists, and what
+// is worth a notification. Pure, so the tests can tell; main.js shows it with Electron.
 import { clean, truncate } from '../src/format.js';
 import { makeTheme, shown, usageParts } from '../src/view.js';
 import { ringing } from '../src/viewer.js';
@@ -40,7 +40,7 @@ const MAX_TOOLTIP = 127;
  * @returns {TrayState}
  */
 export function trayState(snap, now) {
-  let [needs, unread, work, idle] = [0, 0, 0, 0];
+  let [needs, unread, work, background, idle] = [0, 0, 0, 0, 0];
   /** @type {Agent[]} */
   const listed = [];
   for (const r of snap.rows) {
@@ -48,13 +48,16 @@ export function trayState(snap, now) {
     if (s === 'waiting' || s === 'blocked') needs++;
     else if (s === 'unread') unread++;
     else if (s === 'working' || s === 'tool' || s === 'active') work++;
+    else if (s === 'background') background++;
     else if (s === 'idle') idle++;
     if (s === 'waiting' || s === 'blocked' || s === 'unread') listed.push(r);
   }
   /** @type {Level} */
-  const level = needs ? 'waiting' : unread ? 'unread' : work ? 'working' : idle ? 'idle' : 'none';
-  const counts = [needs && `${needs} need${needs === 1 ? 's' : ''} you`, unread && `${unread} unread`, work && `${work} at work`, idle && `${idle} idle`]
-    .filter(Boolean).join(', ') || 'none running';
+  const level = needs ? 'waiting' : unread ? 'unread' : work ? 'working' : background ? 'background' : idle ? 'idle' : 'none';
+  const counts = [
+    needs && `${needs} need${needs === 1 ? 's' : ''} you`, unread && `${unread} unread`, work && `${work} at work`,
+    background && `${background} in the background`, idle && `${idle} idle`,
+  ].filter(Boolean).join(', ') || 'none running';
   // As the list's first line has it: a reset after its percent, the parts apart.
   const usage = usageParts(snap.usage, now, plain).map(([s, , of], i) => (i ? (of ? ' ' : plain.sep) : '') + s).join('');
   const needsFirst = (/** @type {Agent} */ a) => (shown(a) === 'unread' ? 1 : 0);

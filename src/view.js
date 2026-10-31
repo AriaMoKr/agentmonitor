@@ -8,17 +8,19 @@ import { ago, bytes, clock, durationLabel, elapsed, fit, graphemes, shortModel, 
  * @typedef {import('./monitor.js').Agent} Agent
  * @typedef {import('./monitor.js').Snapshot} Snapshot
  * @typedef {import('./monitor.js').State} State
- * @typedef {State | 'unread' | 'blocked' | 'tool'} Shown the state a row shows: in place of idle
- *   or ended, blocked when the desktop app's summary of the last turn says it waits on you, or
- *   unread, the app's blue dot; in place of working or running, tool while it waits on a tool
- *   call that has run a while
+ * @typedef {State | 'unread' | 'blocked' | 'tool' | 'background'} Shown the state a row shows: in
+ *   place of idle or ended, blocked when the desktop app's summary of the last turn says it waits
+ *   on you, or unread, the app's blue dot; in place of idle, background while it waits on what it
+ *   left running (a command, an agent, a workflow); in place of working or running, tool while it
+ *   waits on a tool call that has run a while
  * @typedef {'status' | 'recent' | 'name' | 'project'} Sort
  * @typedef {'running' | 'all' | 'none'} AgentsShown
  *
  * @typedef {object} Ui
  * @property {'list' | 'detail' | 'help'} view
  * @property {string | undefined} selected the selected row's key
- * @property {number} index the selected row's place, kept when its row goes away
+ * @property {number} index the selected row's place, kept when its row goes away; -1 while none
+ *   is selected (a click below the rows), which stays so until a key or a click selects one
  * @property {number} top the first row on screen
  * @property {number} logScroll how far the detail view's activity is scrolled back from the newest
  * @property {number} helpTop the help's first line on screen, when it is taller than the screen
@@ -35,9 +37,9 @@ import { ago, bytes, clock, durationLabel, elapsed, fit, graphemes, shortModel, 
  * @typedef {{ agent: Agent, depth: number, prefix: string }} Row
  * @typedef {{ width: number, height: number, now: number }} Screen
  *
- * @typedef {{ select: string } | { open: string } | { sort: Sort } | { key: string }} Action what
- *   a click does: select the row with this key (a second click opens it), open this agent's
- *   details, sort, or press a key
+ * @typedef {{ select: string } | { unselect: true } | { open: string } | { sort: Sort } | { key: string }} Action
+ *   what a click does: select the row with this key (a second click opens it), select none (below
+ *   the rows), open this agent's details, sort, or press a key
  * @typedef {{ y: number, x0: number, x1: number, action: Action }} Hit a place a click acts on:
  *   line y, from column x0 up to x1
  */
@@ -89,8 +91,8 @@ export function makeTheme({ color, ascii, animate = true, web = false }) {
     /** a slower one while it waits on a tool call */
     toolSpinner: ascii ? ['%'] : ['◐', '◓', '◑', '◒'],
     glyphs: /** @type {Record<Shown, string>} */ (ascii
-      ? { working: '*', running: '*', tool: '%', waiting: '!', blocked: '!', unread: '@', idle: 'o', active: '?', done: '+', failed: 'x', stopped: '#', ended: '.' }
-      : { working: '●', running: '●', tool: '◐', waiting: '◆', blocked: '◇', unread: '•', idle: '○', active: '◌', done: '✓', failed: '✗', stopped: '■', ended: '·' }),
+      ? { working: '*', running: '*', tool: '%', waiting: '!', blocked: '!', unread: '@', background: '&', idle: 'o', active: '?', done: '+', failed: 'x', stopped: '#', ended: '.' }
+      : { working: '●', running: '●', tool: '◐', waiting: '◆', blocked: '◇', unread: '•', background: '◎', idle: '○', active: '◌', done: '✓', failed: '✗', stopped: '■', ended: '·' }),
     /** a task list's steps */
     steps: ascii ? { completed: '+', in_progress: '>', pending: '-' } : { completed: '✓', in_progress: '▸', pending: '○' },
     tree: ascii ? { mid: '|- ', last: '`- ', pipe: '|  ', none: '   ' } : { mid: '├─ ', last: '└─ ', pipe: '│  ', none: '   ' },
@@ -102,15 +104,23 @@ export function makeTheme({ color, ascii, animate = true, web = false }) {
 }
 /** @typedef {ReturnType<typeof makeTheme>} Theme */
 
-// What needs you first: waiting or blocked, then unread.
-const ORDER = /** @type {Record<Shown, number>} */ ({ waiting: 0, blocked: 0, unread: 1, working: 2, running: 2, tool: 2, active: 3, idle: 4, done: 5, failed: 5, stopped: 5, ended: 5 });
+// What needs you first: waiting or blocked, then unread; then what is at work, and of what is
+// not, what waits on something it left running before what waits on you alone.
+const ORDER = /** @type {Record<Shown, number>} */ ({ waiting: 0, blocked: 0, unread: 1, working: 2, running: 2, tool: 2, active: 3, background: 4, idle: 5, done: 6, failed: 6, stopped: 6, ended: 6 });
+
+/**
+ * Whether a session not at work waits on what it left running: a command that goes on in the
+ * background, or an agent or a workflow it started, at work.
+ * @param {Agent} a
+ */
+const waitsInBackground = (a) => a.state === 'idle' && Boolean(a.commands?.length || a.children.some((c) => c.state === 'running'));
 
 /**
  * The state an agent's row shows.
  * @param {Agent} a
  * @returns {Shown}
  */
-export const shown = (a) => (a.blocked ? 'blocked' : a.unread ? 'unread' : a.inTool ? 'tool' : a.state);
+export const shown = (a) => (a.blocked ? 'blocked' : a.unread ? 'unread' : a.inTool ? 'tool' : waitsInBackground(a) ? 'background' : a.state);
 
 /**
  * A state's glyph: a spinner while at work, a slower one while it waits on a tool call.
@@ -139,6 +149,7 @@ function glyph(state, t, now) {
     case 'waiting':
     case 'blocked': return t.yellowBold(g);
     case 'unread': return t.blueBold(g);
+    case 'background':
     case 'idle': return t.cyan(g);
     case 'active': return t.blue(g);
     case 'failed': return t.red(g);
@@ -148,7 +159,7 @@ function glyph(state, t, now) {
 }
 
 /** @param {State} state */
-const over = (state) => ORDER[state] === 5;
+const over = (state) => ORDER[state] === ORDER.ended;
 
 /**
  * Whether an agent's activity goes on now, so that how long it has taken means something.
@@ -216,17 +227,18 @@ function compare(sort) {
 
 /**
  * Keeps the selection on its row (by key) or, when that row went away, at its place; and the
- * selected row on screen.
+ * selected row on screen. With none selected, none stays so.
  * @param {Ui} ui
  * @param {Row[]} rows
  * @param {number} bodyHeight
  */
 export function settleSelection(ui, rows, bodyHeight) {
   const at = ui.selected === undefined ? -1 : rows.findIndex((r) => r.agent.key === ui.selected);
-  ui.index = at >= 0 ? at : Math.max(0, Math.min(ui.index, rows.length - 1));
+  if (at >= 0) ui.index = at;
+  else if (ui.index >= 0) ui.index = Math.max(0, Math.min(ui.index, rows.length - 1));
   ui.selected = rows[ui.index]?.agent.key;
   const h = Math.max(1, bodyHeight);
-  if (ui.index < ui.top) ui.top = ui.index;
+  if (ui.index >= 0 && ui.index < ui.top) ui.top = ui.index;
   if (ui.index >= ui.top + h) ui.top = ui.index - h + 1;
   ui.top = Math.max(0, Math.min(ui.top, Math.max(0, rows.length - h)));
 }
@@ -401,6 +413,7 @@ function counts(snap, t) {
   if (n.waiting) parts.push([`${t.yellowBold(t.glyphs.waiting)} ${t.yellowBold(`${n.waiting} waiting`)}`, 5]);
   if (n.blocked) parts.push([`${t.yellowBold(t.glyphs.blocked)} ${t.yellowBold(`${n.blocked} blocked`)}`, 5]);
   if (n.unread) parts.push([`${t.blueBold(t.glyphs.unread)} ${n.unread} unread`, 4]);
+  if (n.background) parts.push([`${t.cyan(t.glyphs.background)} ${n.background} background`, 3]);
   if (n.idle) parts.push([`${t.cyan(t.glyphs.idle)} ${n.idle} idle`, 3]);
   if (n.active) parts.push([`${t.blue(t.glyphs.active)} ${n.active} active`, 3]);
   if (n.ended) parts.push([t.dim(`${t.glyphs.ended} ${n.ended} ended`), 2]);
@@ -625,7 +638,7 @@ export function wrapStyled(s, cols, indent = 0) {
  * @param {Ui} ui
  * @param {Screen} screen
  * @param {Theme} t
- * @param {Hit[]} [hits] gets where a click goes: the rows, the column titles, the keys
+ * @param {Hit[]} [hits] gets where a click goes: the rows, below them, the column titles, the keys
  * @returns {string[]}
  */
 export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits = []) {
@@ -651,6 +664,7 @@ export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits 
     const row = rows[ui.top + i];
     if (!row) {
       lines.push(' '.repeat(cols));
+      hits.push({ y: lines.length - 1, x0: 0, x1: cols, action: { unselect: true } });
       continue;
     }
     const selected = ui.index === ui.top + i;
@@ -695,7 +709,7 @@ function footer(ui, rows, t, cols, now, onHit) {
     return t.pad(` ${t.bold('/')}${ui.filter}${t.inverse(' ')}  ${t.dim(`${t.enter} keep  esc clear`)}`, cols);
   }
   if (ui.message && now < ui.messageUntil) return t.pad(` ${t.yellow(ui.message)}`, cols);
-  const pos = rows.length ? `${ui.index + 1}/${rows.length}` : '';
+  const pos = rows.length ? `${ui.index < 0 ? '-' : ui.index + 1}/${rows.length}` : '';
   const filter = ui.filter ? `${t.yellow(`filter "${ui.filter}"`)} ${t.dim('esc clears')}  ` : '';
   // Each key with what it is worth its room (on a narrow screen the least worth go first), and
   // the key a click on it presses. A phone has no keys but these, the filter among them.
@@ -735,7 +749,8 @@ export function detailLines(a, snap, ui, { width: cols, height, now }, t, hits =
   const lines = [];
   // The category of the app's summary of the last turn, but for the usual one.
   const turn = a.turn && a.turn.category !== 'completed' && a.turn.category.replace(/_/g, ' ');
-  const status = [a.inTool ? 'in a tool' : a.state, turn, a.unread && 'unread', ongoing(a) && elapsed(now - a.activityAt)].filter(Boolean).join(t.sep);
+  const word = a.inTool ? 'in a tool' : waitsInBackground(a) ? 'background' : a.state;
+  const status = [word, turn, a.unread && 'unread', ongoing(a) && elapsed(now - a.activityAt)].filter(Boolean).join(t.sep);
   lines.push(spread(` ${glyph(shown(a), t, now)} ${t.bold(truncate(a.title, Math.max(10, cols - width(status) - 6), t.ellipsis))}`, `${t.dim(status)} `, cols, t));
   lines.push(t.dim(t.rule.repeat(cols)));
 
@@ -926,8 +941,8 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     (visibleWidth(k) <= 13 && visibleWidth(what) <= 15 && visibleWidth(k2) <= 20 && 54 + visibleWidth(what2) <= measure
       ? [`   ${fit(k, 13)} ${fit(what, 15)} ${fit(k2, 20)} ${what2}`]
       : [...key(k, what), ...key(k2, what2)]);
-  // A state's glyph and name, and what it means from column 15.
-  const state = (/** @type {string} */ glyph, /** @type {string} */ name, /** @type {string} */ what) => say(`   ${glyph} ${fit(name, 9)} ${what}`, 15);
+  // A state's glyph and name, and what it means from column 17, as a key's.
+  const state = (/** @type {string} */ glyph, /** @type {string} */ name, /** @type {string} */ what) => say(`   ${glyph} ${fit(name, 11)} ${what}`, 17);
   const [right, left] = t.ascii ? ['right', 'left'] : ['→', '←'];
   // A no-break space keeps a glyph with its word.
   const nb = ' ';
@@ -945,7 +960,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     ...key('b', 'bell on or off: it rings when a session needs you or ends its turn'),
     ...(t.web ? key('r', 'read again') : pair('r', 'read again', 'q ctrl-c', 'quit (q in the details goes back)')),
     ...(mouse ? [
-      ...pair('click', 'select a row', 'double-click', 'its details'),
+      ...key('click', 'select a row, or none below the rows; double-click for its details'),
       ...pair('wheel', 'move or scroll', t.web ? 'drag' : 'shift+drag', 'select text'),
       ...(t.web ? key('touch', 'a tap is a click; a drag moves or scrolls') : []),
     ] : []),
@@ -956,6 +971,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     ...state(t.yellowBold(g.waiting), 'waiting', 'it needs you: a permission, a question, a plan to approve'),
     ...state(t.yellowBold(g.blocked), 'blocked', 'its turn ended on something only you can do, the desktop app says'),
     ...state(t.blueBold(g.unread), 'unread', "the desktop app's blue dot: it finished a turn you have not opened"),
+    ...state(t.cyan(g.background), 'background', 'it waits on a command, an agent or a workflow it left running'),
     ...state(t.cyan(g.idle), 'idle', 'it runs, and waits for your next message'),
     ...state(t.blue(g.active), 'active', 'its transcript moved moments ago, but no process is known'),
     ...state(t.dim(g.ended), 'ended', `${t.dim(g.done)}${nb}done   ${t.red(g.failed)}${nb}failed   ${t.magenta(g.stopped)}${nb}stopped`),
