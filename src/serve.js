@@ -1,9 +1,10 @@
 // The web view: the monitor's list and details as a page a browser keeps up to date, on this
 // computer, or on others when it listens on their network. Read only: it answers GET and HEAD,
-// and what a page sends, its keys and clicks, moves only that page's view. Every address begins
-// with a token, random unless given, that only the addresses printed hold (and, for a phone, the
-// QR code printed of the first). Text from the files reaches the page as JSON strings, which the
-// page puts in as text, never as markup.
+// and what a page sends, its keys and clicks, moves only that page's view; only in the
+// agentmonitor app, whose window is its one page, does q quit, as in a terminal. Every address
+// begins with a token, random unless given, that only the addresses printed hold (and, for a
+// phone, the QR code printed of the first). Text from the files reaches the page as JSON strings,
+// which the page puts in as text, never as markup.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -80,11 +81,13 @@ export function newToken() {
  * @param {number} [o.pageTtlMs] how long a page that stopped asking keeps its view
  * @param {number} [o.maxPages] how many pages' views are kept at most
  * @param {(line: string) => void} [o.log] told of each page opened, and of errors
+ * @param {() => void} [o.onQuit] for the agentmonitor app, whose window is its only page: there q
+ *   quits as in a terminal, called once the page that sent it is answered
  * @returns {Promise<Served>}
  */
-export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = newToken(), intervalMs, ascii, agents, showEnded, bell = false, pageTtlMs = 10 * 60_000, maxPages = 50, log = () => {} }) {
+export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = newToken(), intervalMs, ascii, agents, showEnded, bell = false, pageTtlMs = 10 * 60_000, maxPages = 50, log = () => {}, onQuit }) {
   if (!TOKEN.test(token)) throw new Error('a token is 16 or more letters, digits, - or _');
-  const t = makeTheme({ color: true, ascii, animate: false, web: true });
+  const t = makeTheme({ color: true, ascii, animate: false, web: true, quit: onQuit ? 'q' : '' });
   const files = new Map(Object.entries(FILES).map(([name, [file, type]]) => [name, { body: readFileSync(new URL(`./web/${file}`, import.meta.url)), type }]));
   const expected = Buffer.from(token);
   /** @type {Map<string, Page>} in the order they last asked: the first, longest ago */
@@ -199,12 +202,20 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
     if (!PAGE.test(id) || sent.length > MAX_INPUTS || inputs.includes(undefined)) return send(req, res, 400, 'bad request\n', TEXT);
     const page = pageFor(id, address(req));
     const view = page.viewer;
-    // What it sent acts on the screen it was last sent.
+    // What it sent acts on the screen it was last sent; after a q that quits, nothing more does.
+    let quit = false;
     for (const input of /** @type {Input[]} */ (inputs)) {
       if ('filter' in input) view.typeFilter(input.filter);
       else if ('drag' in input) view.drag(input.drag === 'up');
-      else if (input.mouse) view.mouse(input.mouse);
-      else view.key(input);
+      else if (input.mouse) quit = view.mouse(input.mouse) === 'quit';
+      else quit = view.key(input) === 'quit';
+      if (quit) break;
+    }
+    if (quit) {
+      // Answered with no lines: the window keeps its screen while it goes.
+      send(req, res, 200, JSON.stringify({ title: title(), bell: view.ui.bell, ring: false }), 'application/json; charset=utf-8');
+      onQuit?.();
+      return;
     }
     await current();
     if (page.read) {

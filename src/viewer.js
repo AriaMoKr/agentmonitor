@@ -273,8 +273,8 @@ export class Viewer {
       return;
     }
     switch (key.name) {
-      // A web page is closed, not quit.
-      case 'q': return this.t.web ? undefined : 'quit';
+      // A web page is closed, not quit; the agentmonitor app's window quits as a terminal does.
+      case 'q': return this.t.quit ? 'quit' : undefined;
       case 'up': case 'k': return this.move(-1);
       case 'down': case 'j': return this.move(1);
       case 'pageup': return this.move(-page);

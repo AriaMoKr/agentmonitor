@@ -1,11 +1,11 @@
 // agentmonitor as a desktop app, with Electron: the web view in a window of its own, and an icon
 // in the system tray with the glyph of what matters most now, a session that needs you above
 // all; its menu lists those sessions, and the app's switches. Closed or minimized, the window
-// goes to the tray; Quit is in the tray's menu. The monitor runs in this process, and serves its
-// web view on this computer only, at a free port and a token of its own. The first start adds
-// the app to the Start menu (Windows) or the applications menu (Linux), to start it from there
-// with no terminal. It writes only its own files: its settings and icons in its folder, and
-// those entries.
+// goes to the tray; q in it quits, as in a terminal, and so do Ctrl+Q and the tray's Quit. The
+// monitor runs in this process, and serves its web view on this computer only, at a free port
+// and a token of its own. The first start adds the app to the Start menu (Windows) or the
+// applications menu (Linux), to start it from there with no terminal. It writes only its own
+// files: its settings and icons in its folder, and those entries.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -116,6 +116,8 @@ async function start() {
   const dir = resolve(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'));
   served = await serve(new Monitor({ dir, windowMs: 24 * HOUR }), {
     host: '127.0.0.1', port: 0, intervalMs: 1000, ascii: false, agents: 'running', showEnded: true, log,
+    // q in the window quits, as in a terminal.
+    onQuit: () => app.quit(),
   });
   tray = new Tray(trayImage('none'));
   tray.setToolTip('Claude agents');

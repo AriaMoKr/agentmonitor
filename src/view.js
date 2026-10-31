@@ -61,17 +61,19 @@ export function initialUi() {
 
 /**
  * The look: colors as SGR escapes (none without color), the glyphs, Unicode or ASCII, whether
- * work in progress spins (not in a table printed once), and whether it is drawn on a web page,
- * where no key quits and text is selected by dragging.
- * @param {{ color: boolean, ascii: boolean, animate?: boolean, web?: boolean }} o
+ * work in progress spins (not in a table printed once), whether it is drawn on a web page, where
+ * text is selected by dragging, and the keys that quit, as the help says them: q and Ctrl+C in a
+ * terminal, q in the agentmonitor app's window, none on a web page, which is closed, not quit.
+ * @param {{ color: boolean, ascii: boolean, animate?: boolean, web?: boolean, quit?: string }} o
  */
-export function makeTheme({ color, ascii, animate = true, web = false }) {
+export function makeTheme({ color, ascii, animate = true, web = false, quit = web ? '' : 'q ctrl-c' }) {
   const sgr = (/** @type {string} */ code) => (/** @type {string} */ s) => (color && s ? `\x1b[${code}m${s}\x1b[0m` : s);
   return {
     color,
     ascii,
     animate,
     web,
+    quit,
     bold: sgr('1'),
     dim: sgr('2'),
     inverse: sgr('7'),
@@ -719,8 +721,8 @@ function footer(ui, rows, t, cols, now, onHit) {
     [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'],
     [`b bell:${ui.bell ? 'on' : 'off'}`, 1, 'b'], ['? help', 5, '?'],
   ];
-  // A web page is closed, not quit.
-  if (!t.web) all.push(['q quit', 5, 'q']);
+  // A web page is closed, not quit; the agentmonitor app's window quits as a terminal does.
+  if (t.quit) all.push(['q quit', 5, 'q']);
   // A space before, two between the keys and the position, and one after it.
   const room = cols - visibleWidth(filter) - width(pos) - 4;
   let shown = all;
@@ -958,7 +960,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     ...key('a', 'agents under their session: running, all, none'),
     ...key('w', 'window for "recently active": 1h, 6h, 24h, 3d, 7d'),
     ...key('b', 'bell on or off: it rings when a session needs you or ends its turn'),
-    ...(t.web ? key('r', 'read again') : pair('r', 'read again', 'q ctrl-c', 'quit (q in the details goes back)')),
+    ...(t.quit ? pair('r', 'read again', t.quit, 'quit (q in the details goes back)') : key('r', 'read again')),
     ...(mouse ? [
       ...key('click', 'select a row, or none below the rows; double-click for its details'),
       ...pair('wheel', 'move or scroll', t.web ? 'drag' : 'shift+drag', 'select text'),

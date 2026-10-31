@@ -203,9 +203,9 @@ npm start
 
 Electron is its only dependency, kept in that folder: the monitor itself has none. The first start downloads Electron's own program, about 100 MB (360 MB unpacked), once; `npx install-electron` does that ahead. It also puts agentmonitor in the Start menu on Windows, or in the applications menu on Linux, to start it from there after that.
 
-The window shows the page `--serve` serves, with the same keys and clicks. The monitor runs inside it and serves the page to its window alone: on 127.0.0.1, at a free port, with a new token each time. Ctrl+= and Ctrl+- make the page bigger and smaller, and Ctrl+0 sets it back; it keeps that, and where the window was.
+The window shows the page `--serve` serves, with the same keys and clicks, but q quits, as in a terminal (in the details it goes back). The monitor runs inside it and serves the page to its window alone: on 127.0.0.1, at a free port, with a new token each time. Ctrl+= and Ctrl+- make the page bigger and smaller, and Ctrl+0 sets it back; it keeps that, and where the window was.
 
-Closing the window, or Ctrl+W, leaves agentmonitor running in the tray, and so does minimizing it, unless you turn that off. A click on the icon shows the window again, and so does starting agentmonitor again. Ctrl+Q, or Quit in the icon's menu, quits it.
+Closing the window, or Ctrl+W, leaves agentmonitor running in the tray, and so does minimizing it, unless you turn that off. A click on the icon shows the window again, and so does starting agentmonitor again. q, Ctrl+Q, or Quit in the icon's menu, quits it.
 
 The icon shows what matters most now:
 

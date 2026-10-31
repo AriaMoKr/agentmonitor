@@ -59,7 +59,7 @@ function sessions(now = Date.now()) {
  * Serves `monitor` on a free port of this computer, for the test to ask.
  * @param {import('node:test').TestContext} t
  * @param {ReturnType<typeof fakeMonitor>} monitor
- * @param {{ intervalMs?: number, ascii?: boolean, bell?: boolean, pageTtlMs?: number, maxPages?: number }} [o]
+ * @param {{ intervalMs?: number, ascii?: boolean, bell?: boolean, pageTtlMs?: number, maxPages?: number, onQuit?: () => void }} [o]
  */
 async function start(t, monitor, o = {}) {
   /** @type {string[]} */
@@ -208,6 +208,29 @@ test('keys move the selection and open the details; each page keeps a view of it
   a = await s.screen('page-aaaa', ['k:escape', 'c:/', 'c:d', 'c:o', 'c:c', 'c:s', 'k:enter']);
   assert.match(a.text.at(-1) ?? '', /filter "docs"/);
   assert.doesNotMatch(a.text.join('\n'), /Fix the parser/);
+});
+
+test('in the agentmonitor app q quits, from the list or the footer; in the help and the details it goes back, in the filter it is typed', async (t) => {
+  let quits = 0;
+  const s = await start(t, fakeMonitor(() => sessions()), { onQuit: () => quits++ });
+  let a = await s.screen('page-aaaa');
+  assert.match(a.text.at(-1) ?? '', /\? help {2}q quit/);
+  const help = (await s.screen('page-aaaa', ['c:?'], { h: 30 })).text.join('\n');
+  assert.match(help, /r {13}read again {6}q {20}quit \(q in the details goes back\)/);
+  a = await s.screen('page-aaaa', ['c:q', 'k:enter', 'c:q', 'c:/', 'c:q']);
+  assert.equal(quits, 0);
+  assert.match(a.text[1], /NAME/);
+  assert.deepEqual([a.filter, a.typing], ['q', true]);
+  // In the list it quits: the page answered first, with no lines, and what came after the q not done.
+  a = await s.screen('page-aaaa', ['k:escape', 'c:q', 'k:down']);
+  assert.equal(quits, 1);
+  assert.deepEqual([a.lines, a.title], [undefined, `(1) Claude agents on ${clean(hostname())}`]);
+  a = await s.screen('page-aaaa');
+  assert.match(selected(a), /<img src=x/, 'not moved down');
+  // A click on it in the footer.
+  const [line, from] = a.keys.find((k) => k[3] === 'q') ?? [];
+  await s.screen('page-aaaa', [`m:${from},${line}`]);
+  assert.equal(quits, 2);
 });
 
 test('a click selects a row, a double click opens it, a click on a title sorts; the wheel moves', async (t) => {
