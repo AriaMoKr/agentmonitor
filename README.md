@@ -17,7 +17,7 @@ The Claude agents on this computer, live in a terminal, or in a browser here or 
  ○ Preview the docs site     docs             cli      sonnet 5.5 medium    38k background: Bash: Serve the… 25m00s  24m
  ○ Triage the issues         shop             bg       sonnet 5.5 high      41k Labelled 14 issues; 3 need a perso…   1h
  · Upgrade the linter        tools            cli      opus 5.5   xhigh     96k Done: eslint 10 with the flat conf…   5h
- ↑↓ move  ⏎ details  / filter  s sort:status  e ended:on  a agents:running  w window  ? help  q quit              1/12
+ ↑↓ move  ⏎ details  / filter  s sort:status  e ended:on  a agents:running  w window  b bell:off  ? help  q quit  1/12
 ```
 
 It only reads: Claude Code's own files, and which processes run. It changes nothing and needs no setup in Claude Code.
@@ -51,7 +51,8 @@ It draws every line again every 2 seconds, since a terminal can lose lines witho
       --dir <path>       Claude Code's config folder (default: $CLAUDE_CONFIG_DIR,
                          else ~/.claude)
       --bell             ring the bell when a session starts waiting for you,
-                         or finishes its turn
+                         or finishes its turn (b turns it on or off; with
+                         --serve, the page beeps)
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
@@ -143,6 +144,7 @@ Tasks is its task list: the steps done, the one in progress and those to do, and
 | e | show or hide the sessions that ended |
 | a | agents under their session: those at work, all, none |
 | w | the window for "recently active": 1h, 6h, 24h, 3d, 7d |
+| b | the bell, on or off: it rings when a session starts waiting for you, or finishes its turn (`--bell` starts with it on) |
 | r | read everything again now |
 | ? | help |
 | Ctrl+L | draw the screen again |
@@ -176,6 +178,8 @@ What keeps it to you:
 - The page runs only its own script and style (its Content-Security-Policy forbids anything else), puts the text it is sent in as text, never as markup, and keeps nothing: no cookies, nothing cached.
 
 Each page has its own view: the row selected, the filter, the details open. A page that stops asking for 10 minutes is forgotten. It draws on a grid of monospace cells in a terminal's colors, dark or light as the browser prefers, and while you select text it holds still, so the selection stays.
+
+Its title counts the sessions that wait for you: `(2) Claude agents on <computer>`. Each page has its own bell too, a short beep, which `b` turns on or off and `--bell` starts with on; it rings only for what happens once it is on. A browser lets a page sound only after a click or a key on it, so until then the page says so at the bottom. A page out of sight (in another tab, or minimized) asks every 3 seconds, for its title and its bell only, so it still beeps.
 
 ## Where it looks
 

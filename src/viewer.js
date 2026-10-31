@@ -25,18 +25,21 @@ export class Viewer {
    * @param {import('./view.js').Theme} o.t
    * @param {import('./view.js').AgentsShown} o.agents
    * @param {boolean} o.showEnded
+   * @param {boolean} [o.bell] whether the bell starts on
    * @param {boolean} [o.mouse] whether clicks reach it (the help says what they do)
    * @param {() => void} [o.refresh] has everything read again now (r, w)
    * @param {(key: string | undefined) => void} [o.onFocus] told when the agent in the details
    *   changes, whose transcript is then to be read though it is not at work
    */
-  constructor({ monitor, t, agents, showEnded, mouse = true, refresh = () => {}, onFocus = () => {} }) {
+  constructor({ monitor, t, agents, showEnded, bell = false, mouse = true, refresh = () => {}, onFocus = () => {} }) {
     this.monitor = monitor;
     this.t = t;
     this.mouseOn = mouse;
     this.refresh = refresh;
     this.onFocus = onFocus;
-    this.ui = { ...initialUi(), agents, showEnded };
+    this.ui = { ...initialUi(), agents, showEnded, bell };
+    /** @type {Map<string, string>} each session's state as rings was last told it */
+    this.states = new Map();
     /** @type {import('./view.js').Row[]} */
     this.rows = [];
     /** @type {import('./view.js').Hit[]} where a click goes, on the screen as last drawn */
@@ -112,6 +115,21 @@ export class Viewer {
     if (key === this.told) return;
     this.told = key;
     this.onFocus(key);
+  }
+
+  /**
+   * Whether `snap` rings the bell, when it is on: a session in it started waiting for you, or
+   * went from working to idle, since the snapshot this was last told of. Told of every one, the
+   * bell on or off, so that turning it on rings for nothing old.
+   * @param {Snapshot} snap
+   */
+  rings(snap) {
+    const before = this.states;
+    this.states = new Map(snap.rows.map((r) => [r.key, r.state]));
+    return this.ui.bell && snap.rows.some((r) => {
+      const was = before.get(r.key);
+      return was !== undefined && was !== r.state && (r.state === 'waiting' || (was === 'working' && r.state === 'idle'));
+    });
   }
 
   /** @param {string} message shown in the footer for a while */
@@ -253,6 +271,10 @@ export class Viewer {
       case 'r':
         this.say('reading again');
         this.refresh();
+        return;
+      case 'b':
+        ui.bell = !ui.bell;
+        this.say(ui.bell ? 'the bell rings when a session needs you or ends its turn' : 'no bell');
         return;
       case '?':
         ui.view = 'help';

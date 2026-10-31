@@ -26,6 +26,8 @@ import { ago, bytes, clock, durationLabel, elapsed, fit, shortModel, tokens, tru
  * @property {Sort} sort
  * @property {boolean} showEnded
  * @property {AgentsShown} agents which agents of a session are listed under it
+ * @property {boolean} bell whether the bell rings when a session starts waiting for you, or
+ *   finishes its turn
  * @property {string} message shown in the footer until messageUntil
  * @property {number} messageUntil
  *
@@ -49,7 +51,7 @@ export const AGENTS_SHOWN = /** @type {AgentsShown[]} */ (['running', 'all', 'no
 export function initialUi() {
   return {
     view: 'list', selected: undefined, index: 0, top: 0, logScroll: 0,
-    filter: '', editingFilter: false, sort: 'status', showEnded: true, agents: 'running',
+    filter: '', editingFilter: false, sort: 'status', showEnded: true, agents: 'running', bell: false,
     message: '', messageUntil: 0,
   };
 }
@@ -515,7 +517,8 @@ function footer(ui, rows, t, cols, now, onHit) {
   /** @type {[string, number, string | undefined][]} */
   const all = [
     [`${t.arrows} move`, 3, undefined], [`${t.enter} details`, 4, 'enter'], ['/ filter', 3, '/'], [`s sort:${ui.sort}`, 2, 's'],
-    [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'], ['? help', 5, '?'],
+    [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'],
+    [`b bell:${ui.bell ? 'on' : 'off'}`, 1, 'b'], ['? help', 5, '?'],
   ];
   // A web page is closed, not quit.
   if (!t.web) all.push(['q quit', 5, 'q']);
@@ -738,6 +741,7 @@ export function helpLines({ width: cols, height }, t, dir, mouse = true) {
     key('e', 'show or hide the sessions that ended'),
     key('a', 'agents under their session: running, all, none'),
     key('w', 'window for "recently active": 1h, 6h, 24h, 3d, 7d'),
+    key('b', 'bell on or off: it rings when a session needs you or ends its turn'),
     t.web ? key('r', 'read again') : key('r', 'read again', 'q ctrl-c', 'quit (q in the details goes back)'),
     ...(mouse ? [key('click', 'select a row', 'double-click', 'its details'), key('wheel', 'move or scroll', t.web ? 'drag' : 'shift+drag', 'select text')] : []),
     '',

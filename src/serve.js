@@ -67,12 +67,13 @@ export function newToken() {
  * @param {boolean} o.ascii
  * @param {import('./view.js').AgentsShown} o.agents
  * @param {boolean} o.showEnded
+ * @param {boolean} [o.bell] whether a page's bell starts on
  * @param {number} [o.pageTtlMs] how long a page that stopped asking keeps its view
  * @param {number} [o.maxPages] how many pages' views are kept at most
  * @param {(line: string) => void} [o.log] told of each page opened, and of errors
  * @returns {Promise<Served>}
  */
-export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = newToken(), intervalMs, ascii, agents, showEnded, pageTtlMs = 10 * 60_000, maxPages = 50, log = () => {} }) {
+export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = newToken(), intervalMs, ascii, agents, showEnded, bell = false, pageTtlMs = 10 * 60_000, maxPages = 50, log = () => {} }) {
   if (!TOKEN.test(token)) throw new Error('a token is 16 or more letters, digits, - or _');
   const t = makeTheme({ color: true, ascii, animate: false, web: true });
   const files = new Map(Object.entries(FILES).map(([name, [file, type]]) => [name, { body: readFileSync(new URL(`./web/${file}`, import.meta.url)), type }]));
@@ -149,6 +150,7 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
         t,
         agents,
         showEnded,
+        bell,
         refresh: () => {
           made.read = true;
         },
@@ -174,6 +176,8 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
 
   /**
    * A page's screen, after what it sent: ?page=<id>&w=<columns>&h=<lines>&i=<input>&i=...
+   * Its title, whether its bell is on and rings now, and its lines; with quiet=1, for a page out
+   * of sight, all but the lines.
    * @param {Request} req
    * @param {Response} res
    * @param {URLSearchParams} query
@@ -184,20 +188,25 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
     const keys = inputs.map(parseInput);
     if (!PAGE.test(id) || inputs.length > MAX_INPUTS || keys.includes(undefined)) return send(req, res, 400, 'bad request\n', TEXT);
     const page = pageFor(id, address(req));
+    const view = page.viewer;
     // What it sent acts on the screen it was last sent.
     for (const key of /** @type {Key[]} */ (keys)) {
-      if (key.mouse) page.viewer.mouse(key.mouse);
-      else page.viewer.key(key);
+      if (key.mouse) view.mouse(key.mouse);
+      else view.key(key);
     }
     await current();
     if (page.read) {
       page.read = false;
       await read();
     }
-    const width = number(query.get('w'), 20, 500, 80);
-    const height = number(query.get('h'), 5, 200, 24);
-    const lines = page.viewer.lines(snap, { width, height, now: Date.now() });
-    send(req, res, 200, JSON.stringify({ title: title(), lines: lines.map(runs) }), 'application/json; charset=utf-8');
+    /** @type {{ title: string, bell: boolean, ring: boolean, lines?: Run[][] }} */
+    const answer = { title: title(), bell: view.ui.bell, ring: snap ? view.rings(snap) : false };
+    if (query.get('quiet') !== '1') {
+      const width = number(query.get('w'), 20, 500, 80);
+      const height = number(query.get('h'), 5, 200, 24);
+      answer.lines = view.lines(snap, { width, height, now: Date.now() }).map(runs);
+    }
+    send(req, res, 200, JSON.stringify(answer), 'application/json; charset=utf-8');
   }
 
   /**

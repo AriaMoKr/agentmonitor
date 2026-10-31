@@ -1,6 +1,7 @@
 // The web view's page: asks the server for the screen every second, at the size the window
 // holds, and draws its lines; sends it the keys typed, the clicks and the wheel, which the
-// server's view of this page answers. What the server sends goes in as text, never as markup.
+// server's view of this page answers; and beeps when the server says its bell rings. What the
+// server sends goes in as text, never as markup.
 
 /** Keys by their names in a KeyboardEvent, as the monitor names them. */
 const KEYS = new Map([
@@ -10,13 +11,18 @@ const KEYS = new Map([
 ]);
 /** How far the wheel turns for a step, in pixels: a notch is about 100 in most browsers. */
 const WHEEL_STEP = 50;
-/** How often the page asks for the screen while it is shown, and while it is hidden (ms). */
+/**
+ * How often the page asks while it is in sight (ms); and while it is out of sight, for its title
+ * and its bell only.
+ */
 const EVERY = 1000;
-const HIDDEN_EVERY = 30_000;
+const HIDDEN_EVERY = 3000;
 /** How soon it asks again when the server could not be reached, or answered with an error. */
 const RETRY = 3000;
 /** The most inputs one request sends, as the server takes them. */
 const MAX_INPUTS = 64;
+/** What the bell needs, said while it is on and the browser has not let the page sound yet. */
+const HINT = 'The bell rings once you click or press a key on this page.';
 
 /**
  * What a key sends: 'k:<name>' for a key with a name, 'c:<character>' for one that types;
@@ -80,6 +86,23 @@ export function runNode(doc, run) {
   return span;
 }
 
+/**
+ * The bell: a short tone, on a sound that a click or a key let play.
+ * @param {AudioContext} audio
+ */
+export function beep(audio) {
+  const at = audio.currentTime;
+  const tone = audio.createOscillator();
+  const gain = audio.createGain();
+  tone.frequency.value = 880;
+  gain.gain.setValueAtTime(0.0001, at);
+  gain.gain.exponentialRampToValueAtTime(0.2, at + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.4);
+  tone.connect(gain).connect(audio.destination);
+  tone.start(at);
+  tone.stop(at + 0.45);
+}
+
 /** A random ID for this page, which its tab keeps across reloads. */
 function pageId() {
   try {
@@ -108,8 +131,14 @@ function start() {
   const queue = [];
   /** @type {string[]} the lines on the screen, as they came */
   const drawn = [];
-  /** @type {unknown} a screen that came while text was selected, drawn once it is not */
+  /** @type {unknown[] | undefined} lines that came while text was selected, drawn once it is not */
   let held;
+  /** @type {AudioContext | undefined} the bell's sound, made at a click or a key */
+  let audio;
+  /** whether the server says this page's bell is on */
+  let bellOn = false;
+  /** why the server can't be asked, said at the bottom */
+  let error = '';
   let wheel = 0;
   let busy = false;
   let again = false;
@@ -129,35 +158,52 @@ function start() {
     return Boolean(s && !s.isCollapsed);
   };
 
-  /** @param {string} text shown at the bottom, or none */
-  function say(text) {
+  /** Says the error at the bottom, or else what the bell needs. */
+  function note() {
+    const text = error || (bellOn && audio?.state !== 'running' ? HINT : '');
     banner.textContent = text;
     banner.hidden = !text;
+    banner.classList.toggle('note', !error);
+  }
+
+  /** Readies the bell's sound: a browser lets a page make one only after a click or a key on it. */
+  function unlock() {
+    if (audio?.state === 'running') return;
+    try {
+      audio ??= new AudioContext();
+      audio.resume().then(note, () => {});
+    } catch {
+      // No sound in this browser.
+    }
   }
 
   /**
-   * Draws the lines that changed. While text is selected the screen holds still, so that the
-   * selection stays.
-   * @param {unknown} data the server's answer: { title, lines }
+   * Takes the server's answer: the title and the bell at once, the lines unless text is
+   * selected, when the screen holds still so that the selection stays.
+   * @param {unknown} data { title, bell, ring, lines }
    */
-  function show(data) {
-    if (selecting()) {
-      held = data;
-      return;
-    }
-    held = undefined;
-    const { title, lines } = /** @type {{ title?: unknown, lines?: unknown }} */ (data ?? {});
+  function take(data) {
+    const { title, bell, ring, lines } = /** @type {Record<string, unknown>} */ (data ?? {});
     if (typeof title === 'string') document.title = title;
-    const all = Array.isArray(lines) ? lines : [];
-    all.forEach((line, y) => {
+    bellOn = bell === true;
+    if (ring === true && audio?.state === 'running') beep(audio);
+    if (!Array.isArray(lines)) return;
+    if (selecting()) held = lines;
+    else draw(lines);
+  }
+
+  /** Draws the lines that changed. @param {unknown[]} lines */
+  function draw(lines) {
+    held = undefined;
+    lines.forEach((line, y) => {
       const json = JSON.stringify(line);
       if (drawn[y] === json) return;
       drawn[y] = json;
       const div = screen.children[y] ?? screen.appendChild(document.createElement('div'));
       div.replaceChildren(...(Array.isArray(line) ? line : []).map((run) => runNode(document, run)));
     });
-    while (screen.children.length > all.length) screen.lastElementChild?.remove();
-    drawn.length = all.length;
+    while (screen.children.length > lines.length) screen.lastElementChild?.remove();
+    drawn.length = lines.length;
   }
 
   /** Asks for the screen, with what is queued: one request at a time. */
@@ -171,24 +217,27 @@ function start() {
     busy = true;
     again = false;
     const query = new URLSearchParams({ page: id, w: String(size.w), h: String(size.h) });
+    // Out of sight, only the title and the bell.
+    if (document.hidden) query.set('quiet', '1');
     for (const input of queue.splice(0, MAX_INPUTS)) query.append('i', input);
     let wait = document.hidden ? HIDDEN_EVERY : EVERY;
     try {
       const res = await fetch(`screen?${query}`, { cache: 'no-store' });
       if (res.status === 404) {
         gone = true;
-        say('This address is not served any more: agentmonitor was stopped, or started again with another token.');
+        error = 'This address is not served any more: agentmonitor was stopped, or started again with another token.';
       } else if (!res.ok) {
-        say(`agentmonitor answered ${res.status}; asking again.`);
+        error = `agentmonitor answered ${res.status}; asking again.`;
         wait = RETRY;
       } else {
-        show(await res.json());
-        say('');
+        take(await res.json());
+        error = '';
       }
     } catch {
-      say('agentmonitor cannot be reached; asking again.');
+      error = 'agentmonitor cannot be reached; asking again.';
       wait = RETRY;
     }
+    note();
     busy = false;
     if (gone) return;
     if (again || queue.length) ask();
@@ -201,7 +250,10 @@ function start() {
     ask();
   }
 
+  // Any click or key on the page lets the bell sound.
+  window.addEventListener('pointerdown', unlock);
   window.addEventListener('keydown', (e) => {
+    unlock();
     const input = keyInput({
       key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey,
       altGraph: e.getModifierState('AltGraph'), isComposing: e.isComposing,
@@ -229,7 +281,7 @@ function start() {
     if (steps) ask();
   }, { passive: false });
   document.addEventListener('selectionchange', () => {
-    if (held !== undefined && !selecting()) show(held);
+    if (held && !selecting()) draw(held);
   });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) ask();

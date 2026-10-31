@@ -4,7 +4,7 @@ import { hostname } from 'node:os';
 import { test } from 'node:test';
 import { clean } from '../src/format.js';
 import { parseInput, runs, serve, urls } from '../src/serve.js';
-import { cellAt, keyInput, wheelSteps } from '../src/web/app.js';
+import { beep, cellAt, keyInput, wheelSteps } from '../src/web/app.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE } from './helpers/fixture.js';
 
@@ -50,14 +50,14 @@ function sessions(now = Date.now()) {
 }
 
 /**
- * @typedef {{ title: string, lines: import('../src/serve.js').Run[][], text: string[] }} Screen
+ * @typedef {{ title: string, bell: boolean, ring: boolean, lines: import('../src/serve.js').Run[][], text: string[] }} Screen
  */
 
 /**
  * Serves `monitor` on a free port of this computer, for the test to ask.
  * @param {import('node:test').TestContext} t
  * @param {ReturnType<typeof fakeMonitor>} monitor
- * @param {{ intervalMs?: number, ascii?: boolean, pageTtlMs?: number, maxPages?: number }} [o]
+ * @param {{ intervalMs?: number, ascii?: boolean, bell?: boolean, pageTtlMs?: number, maxPages?: number }} [o]
  */
 async function start(t, monitor, o = {}) {
   /** @type {string[]} */
@@ -72,20 +72,22 @@ async function start(t, monitor, o = {}) {
     /** @param {string} path @param {RequestInit} [init] */
     get: (path, init = {}) => fetch(base + path, { redirect: 'manual', ...init }),
     /**
-     * A page's screen after what it sends: its lines as runs, and as text.
+     * A page's screen after what it sends: its lines as runs, and as text; quiet, as a page out
+     * of sight asks, none.
      * @param {string} page
      * @param {string[]} [inputs]
-     * @param {{ w?: number, h?: number }} [size]
+     * @param {{ w?: number, h?: number, quiet?: boolean }} [o]
      * @returns {Promise<Screen>}
      */
-    async screen(page, inputs = [], { w = 100, h = 12 } = {}) {
+    async screen(page, inputs = [], { w = 100, h = 12, quiet = false } = {}) {
       const query = new URLSearchParams({ page, w: String(w), h: String(h) });
+      if (quiet) query.set('quiet', '1');
       for (const i of inputs) query.append('i', i);
       const res = await fetch(`${base}/${TOKEN}/screen?${query}`);
       assert.equal(res.status, 200);
       assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8');
       const body = await res.json();
-      return { ...body, text: body.lines.map((/** @type {import('../src/serve.js').Run[]} */ l) => l.map((r) => r[0]).join('')) };
+      return { ...body, text: body.lines?.map((/** @type {import('../src/serve.js').Run[]} */ l) => l.map((r) => r[0]).join('')) ?? [] };
     },
   };
 }
@@ -264,6 +266,46 @@ test('a read serves every page, and is made again when older than the interval, 
   assert.equal(monitor.refreshes, 4);
 });
 
+test('a page\'s bell: on with b or --bell, it rings once when a session ends its turn or starts waiting', async (t) => {
+  const now = Date.now();
+  /** @type {import('../src/monitor.js').State} */
+  let state = 'working';
+  const monitor = fakeMonitor(() => {
+    const snap = sessions(now);
+    snap.rows[0].state = state;
+    return snap;
+  });
+  // Read on every ask.
+  const s = await start(t, monitor, { intervalMs: 0 });
+  // Wide enough for the footer to have the bell.
+  let a = await s.screen('page-aaaa', [], { w: 160 });
+  assert.deepEqual([a.bell, a.ring], [false, false]);
+  assert.match(a.text.at(-1) ?? '', /b bell:off {2}\? help/);
+  state = 'idle';
+  assert.equal((await s.screen('page-aaaa')).ring, false, 'not with the bell off');
+  a = await s.screen('page-aaaa', ['c:b']);
+  assert.deepEqual([a.bell, a.ring], [true, false], 'nor for what changed while it was off');
+  assert.match(a.text.at(-1) ?? '', /the bell rings when a session needs you or ends its turn/);
+  state = 'working';
+  assert.equal((await s.screen('page-aaaa')).ring, false, 'back at work');
+  state = 'idle';
+  assert.equal((await s.screen('page-aaaa')).ring, true, 'its turn ended');
+  assert.equal((await s.screen('page-aaaa')).ring, false, 'once');
+  // Out of sight, a page asks for its title and its bell, and no lines.
+  state = 'waiting';
+  const quiet = await s.screen('page-aaaa', [], { quiet: true });
+  assert.equal(quiet.lines, undefined);
+  assert.equal(quiet.ring, true, 'it waits for you');
+  assert.equal(quiet.title, `(2) Claude agents on ${clean(hostname())}`);
+  // Each page has a bell of its own.
+  assert.equal((await s.screen('page-bbbb')).bell, false);
+
+  const on = await start(t, fakeMonitor(() => sessions()), { bell: true });
+  const b = await on.screen('page-bbbb', [], { w: 160 });
+  assert.deepEqual([b.bell, b.ring], [true, false], 'on from the start, ringing for nothing yet');
+  assert.match(b.text.at(-1) ?? '', /b bell:on/);
+});
+
 test('a read that fails is said on the pages and logged once; the last screen stays', async (t) => {
   let fail = false;
   const monitor = fakeMonitor(() => {
@@ -346,4 +388,25 @@ test('the page\'s script: keys as the monitor names them, cells, the wheel; neve
   assert.deepEqual(wheelSteps(0, 1, 2, 17.5, 500), [10, 0]);
   const source = readFileSync(new URL('../src/web/app.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|setAttribute\(/);
+});
+
+test('the page\'s bell: a short tone, from now to under half a second on', () => {
+  /** @type {unknown[][]} */
+  const calls = [];
+  const audio = {
+    currentTime: 0,
+    destination: 'speakers',
+    createOscillator: () => ({
+      frequency: { value: 0 },
+      connect: (/** @type {any} */ to) => to,
+      start: (/** @type {number} */ at) => calls.push(['start', at]),
+      stop: (/** @type {number} */ at) => calls.push(['stop', at]),
+    }),
+    createGain: () => ({
+      gain: { setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {} },
+      connect: (/** @type {string} */ to) => calls.push(['to', to]),
+    }),
+  };
+  beep(/** @type {any} */ (audio));
+  assert.deepEqual(calls, [['to', 'speakers'], ['start', 0], ['stop', 0.45]]);
 });

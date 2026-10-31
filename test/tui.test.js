@@ -107,7 +107,7 @@ test('help, the filter, sorting and hiding the sessions that ended', async (t) =
   const tui = start(t, fakeMonitor([() => sessions()]));
   await tui.until((s) => s.includes('Old work'));
   tui.type('?');
-  await tui.until((s) => s.includes('States') && s.includes('Keys'));
+  await tui.until((s) => s.includes('Keys') && s.includes('bell on or off'));
   tui.type('x');
   await tui.until((s) => s.includes('NAME'));
   tui.type('/');
@@ -127,26 +127,39 @@ test('help, the filter, sorting and hiding the sessions that ended', async (t) =
   await tui.done;
 });
 
-test('the bell rings when a session finishes its turn; w steps the window; ctrl-c quits', async (t) => {
+test('the bell rings when a session finishes its turn, and b turns it off; w steps the window; ctrl-c quits', async (t) => {
   const now = Date.now();
   const finished = () => {
     const snap = sessions(now);
     Object.assign(snap.rows[0], { state: 'idle', activity: 'All tests pass.', activityKind: 'reply', activityAt: now });
     return snap;
   };
-  const monitor = fakeMonitor([() => sessions(now), finished]);
+  const asking = () => {
+    const snap = finished();
+    Object.assign(snap.rows[1], { state: 'waiting', activity: 'Which branch?', activityKind: 'waiting' });
+    return snap;
+  };
+  const monitor = fakeMonitor([() => sessions(now), finished, asking]);
   const tui = start(t, monitor, { bell: true });
   await tui.until((s) => s.includes('Fix the parser'));
   assert.equal(tui.term.screen.bells, 0);
   tui.type('r');
   await tui.until((s) => s.includes('All tests pass.'));
   assert.equal(tui.term.screen.bells, 1);
+  tui.type('b');
+  await tui.until((s) => s.includes('no bell'));
   tui.type('w');
   await tui.until((s) => s.includes('recently active: the last 3d'));
   assert.equal(monitor.windowMs, 72 * HOUR);
+  await tui.until((s) => s.includes('Which branch?'));
+  assert.equal(tui.term.screen.bells, 1, 'not with the bell off');
+  tui.type('b');
+  await tui.until((s) => s.includes('the bell rings when a session needs you'));
+  tui.type('r');
+  await until(() => monitor.refreshes >= 4);
   tui.type('\x03');
   await tui.done;
-  assert.equal(tui.term.screen.bells, 1);
+  assert.equal(tui.term.screen.bells, 1, 'nor for what changed while it was off');
   assert.deepEqual(tui.term.rawModes, [true, false]);
 });
 
@@ -196,7 +209,7 @@ test('the mouse: a click selects, a second opens, the wheel moves, a key below a
   tui.type('\x1b[<65;10;5M\x1b[<65;10;5M');
   await tui.until(() => tui.line('Old work').startsWith('>'));
   tui.click(tui.find('? help').x, 15);
-  await tui.until((s) => s.includes('States'));
+  await tui.until((s) => s.includes('Keys'));
   assert.match(tui.text(), /click {9}select a row/);
   tui.click(0, 0);
   await tui.until((s) => s.includes('NAME'));

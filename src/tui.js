@@ -22,7 +22,8 @@ const MOUSE_OFF = '\x1b[?1006l\x1b[?1000l';
  * @param {number} o.intervalMs
  * @param {boolean} o.color
  * @param {boolean} o.ascii
- * @param {boolean} o.bell ring when a session starts waiting, or finishes its turn
+ * @param {boolean} o.bell whether the bell starts on: it rings when a session starts waiting,
+ *   or finishes its turn (b turns it on or off)
  * @param {import('./view.js').AgentsShown} o.agents
  * @param {boolean} o.showEnded
  * @param {boolean} [o.mouse] have the terminal report clicks and the wheel
@@ -38,6 +39,7 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
     t,
     agents,
     showEnded,
+    bell,
     mouse,
     refresh: () => refresh(),
     // The agent in the details has its transcript read, done or not; now.
@@ -52,8 +54,6 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
   let shown = [];
   /** when every line was last drawn */
   let paintedAll = 0;
-  /** @type {Map<string, string>} each session's state at the last refresh, for the bell */
-  let states = new Map();
   /** @type {NodeJS.Timeout | undefined} */
   let refreshTimer;
   /** @type {NodeJS.Timeout | undefined} */
@@ -135,7 +135,7 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
     clearTimeout(refreshTimer);
     try {
       snap = await monitor.refresh();
-      if (bell) ring(snap);
+      if (viewer.rings(snap)) stdout.write('\x07');
     } catch (e) {
       viewer.say(`could not read: ${/** @type {Error} */ (e).message}`);
     }
@@ -146,17 +146,6 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
       again = false;
       refresh();
     } else refreshTimer = setTimeout(refresh, intervalMs);
-  }
-
-  /** Rings the bell when a session starts waiting for the user, or stops working. */
-  function ring(/** @type {Snapshot} */ s) {
-    const next = new Map(s.rows.map((r) => [r.key, r.state]));
-    const rang = s.rows.some((r) => {
-      const was = states.get(r.key);
-      return was && was !== r.state && (r.state === 'waiting' || (was === 'working' && r.state === 'idle'));
-    });
-    if (rang && states.size) stdout.write('\x07');
-    states = next;
   }
 
   /** The keys only a terminal has: Ctrl+C quits, Ctrl+L draws again, Ctrl+Z suspends. */

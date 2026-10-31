@@ -11,6 +11,8 @@
   --cyan: #29b8db;
   --banner-bg: #5a1d1d;
   --banner-fg: #ffd7d7;
+  --note-bg: #1f3a5f;
+  --note-fg: #d6e8ff;
 }
 
 @media (prefers-color-scheme: light) {
@@ -25,6 +27,8 @@
     --cyan: #0e7490;
     --banner-bg: #fde7e9;
     --banner-fg: #8a1f11;
+    --note-bg: #e8f1fd;
+    --note-fg: #0b3d75;
   }
 }
 
@@ -97,6 +101,12 @@ body {
   background: var(--banner-bg);
   color: var(--banner-fg);
   font: 13px/1.4 system-ui, sans-serif;
+}
+
+/* Not an error: what the bell needs. */
+.banner.note {
+  background: var(--note-bg);
+  color: var(--note-fg);
 }
 
 .banner[hidden] {

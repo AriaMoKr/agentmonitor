@@ -29,7 +29,8 @@ Options:
       --dir <path>       Claude Code's config folder (default: $CLAUDE_CONFIG_DIR,
                          else ~/.claude)
       --bell             ring the bell when a session starts waiting for you,
-                         or finishes its turn
+                         or finishes its turn (b turns it on or off; with
+                         --serve, the page beeps)
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
@@ -46,9 +47,10 @@ Options:
 
 Times: 30s, 5m, 2h, 1d, 1w.
 Keys: arrows move, Enter shows details, / filters, s sorts, e hides ended,
-a cycles agents, w cycles the window, ? help, q quits. The mouse: a click
-selects, a double click shows details, the wheel moves. The web page takes
-the same keys and clicks; anyone with its address sees what it shows.
+a cycles agents, w cycles the window, b turns the bell on or off, ? help,
+q quits. The mouse: a click selects, a double click shows details, the wheel
+moves. The web page takes the same keys and clicks; anyone with its address
+sees what it shows.
 `;
 
 /**
@@ -132,7 +134,7 @@ if (values.serve) {
   let served;
   try {
     served = await serve(monitor, {
-      host, port, token: values.token, intervalMs, ascii, agents, showEnded: !values['hide-ended'],
+      host, port, token: values.token, intervalMs, ascii, agents, showEnded: !values['hide-ended'], bell: Boolean(values.bell),
       log: (line) => process.stdout.write(`${line}\n`),
     });
   } catch (e) {

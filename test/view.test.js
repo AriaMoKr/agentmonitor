@@ -251,7 +251,7 @@ test('the footer: the filter in use first, as many keys as fit, and where the se
     settleSelection(ui, rows, 17);
     return listLines(snap, rows, ui, { width: cols, height: 20, now: NOW }, plain)[19];
   };
-  assert.match(footer(160), /^ ↑↓ move {2}⏎ details {2}\/ filter {2}s sort:status {2}e ended:on {2}a agents:running {2}w window {2}\? help {2}q quit +1\/8 $/);
+  assert.match(footer(160), /^ ↑↓ move {2}⏎ details {2}\/ filter {2}s sort:status {2}e ended:on {2}a agents:running {2}w window {2}b bell:off {2}\? help {2}q quit +1\/8 $/);
   assert.match(footer(100), /^ ↑↓ move .*e ended:on {2}a agents:running {2}\? help {2}q quit +1\/8 $/);
   assert.match(footer(60), /^ ↑↓ move {2}⏎ details {2}\/ filter {2}\? help {2}q quit +1\/8 $/);
   assert.match(footer(100, 'parser'), /^ filter "parser" esc clears {2}↑↓ move {2}⏎ details {2}\/ filter {2}\? help {2}q quit +1\/4 $/);
@@ -280,7 +280,7 @@ test('where a click goes in the list: a row selects it, a title sorts by it, a k
     assert.deepEqual(clickAt(hits, lines[1].indexOf(title) + 1, 1), { sort }, title);
   }
   assert.equal(clickAt(hits, lines[1].indexOf('MODEL') + 1, 1), undefined);
-  for (const [label, key] of [['⏎ details', 'enter'], ['/ filter', '/'], ['s sort', 's'], ['a agents', 'a'], ['? help', '?'], ['q quit', 'q']]) {
+  for (const [label, key] of [['⏎ details', 'enter'], ['/ filter', '/'], ['s sort', 's'], ['a agents', 'a'], ['b bell', 'b'], ['? help', '?'], ['q quit', 'q']]) {
     assert.deepEqual(clickAt(hits, lines[19].indexOf(label) + 1, 19), { key }, label);
   }
   assert.equal(clickAt(hits, lines[19].indexOf('move'), 19), undefined);
