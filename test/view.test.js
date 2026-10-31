@@ -96,6 +96,36 @@ test('a session the desktop app shows unread: its dot, counted, and listed after
   assert.match(listLines(snap, rows, ui, { width: 120, height: 12, now: NOW }, ascii)[3], /^ @ Unread session /);
 });
 
+/**
+ * A session whose last turn ended blocked on you, as the desktop app's summary says.
+ * @param {Partial<import('../src/monitor.js').Agent>} o
+ */
+const blockedSession = (o) => agent({
+  state: 'idle', blocked: true, activityKind: 'blocked', activityAt: NOW - 30 * MINUTE,
+  turn: { category: 'blocked', detail: 'Stutter: picture or sound?', needs: 'say whether the stutter was picture or sound' },
+  activity: 'blocked: say whether the stutter was picture or sound', ...o,
+});
+
+test('a session whose last turn ended blocked on you: its mark, counted, listed with those waiting, not dimmed', () => {
+  const snap = snapshot([
+    ...sessions(),
+    blockedSession({ key: 's:blk', title: 'Blocked session', project: 'theta', lastActive: NOW - 30 * MINUTE, unread: true }),
+    blockedSession({ key: 's:gone', title: 'Blocked and ended', state: 'ended', live: false, project: 'iota', lastActive: NOW - 3 * HOUR }),
+  ]);
+  const ui = { ...initialUi(), agents: /** @type {const} */ ('none') };
+  const rows = visibleRows(snap, ui, plain);
+  assert.deepEqual(rows.map((r) => r.agent.title), [
+    'Waiting session', 'Blocked session', 'Blocked and ended', 'Busy session', 'Active session', 'Idle session', 'Ended session',
+  ]);
+  const lines = listLines(snap, rows, ui, { width: 160, height: 12, now: NOW }, plain);
+  assert.match(lines[0], /◆ 1 waiting {2}◇ 2 blocked {2}○ 1 idle/);
+  assert.doesNotMatch(lines[0], /unread/, 'blocked shows before unread');
+  assert.match(lines[3], /^ ◇ Blocked session +theta +blocked: say whether the stutter was picture or sound +30m/);
+  const color = makeTheme({ color: true, ascii: false, animate: false });
+  const ended = listLines(snap, visibleRows(snap, ui, color), ui, { width: 160, height: 12, now: NOW }, color)[4];
+  assert.ok(ended.includes('\x1b[1;33mblocked: say whether'), `a session that ended, blocked, still waits on you: ${JSON.stringify(ended)}`);
+});
+
 test('the selection stays on its row as rows move, and at its place when its row goes', () => {
   const rows = (/** @type {string[]} */ keys) => keys.map((key) => ({ agent: agent({ key, title: key }), depth: 0, prefix: '' }));
   const ui = initialUi();
@@ -123,7 +153,60 @@ test('the columns fill the width; a narrow screen drops the least needed', () =>
     assert.equal(columns(cols).reduce((n, c) => n + c.width + 1, 0), cols, `${cols} columns`);
   }
   assert.deepEqual(columns(80).map((c) => c.key), ['state', 'title', 'project', 'activity', 'last']);
-  assert.deepEqual(columns(160).map((c) => c.key), ['state', 'title', 'project', 'kind', 'model', 'ctx', 'activity', 'last', 'pid']);
+  assert.deepEqual(columns(109).map((c) => c.key), ['state', 'title', 'project', 'model', 'ctx', 'activity', 'last']);
+  assert.deepEqual(columns(110).map((c) => c.key), ['state', 'title', 'project', 'model', 'effort', 'ctx', 'activity', 'last']);
+  assert.deepEqual(columns(160).map((c) => c.key), ['state', 'title', 'project', 'kind', 'model', 'effort', 'ctx', 'activity', 'last', 'pid']);
+});
+
+test("the effort each one works at: a column after the model, and in an agent's details", () => {
+  const busy = busySession();
+  busy.effort = 'max';
+  busy.model = 'claude-opus-5-5';
+  const explorer = /** @type {import('../src/monitor.js').Agent} */ (busy.children[0]);
+  Object.assign(explorer, { model: 'claude-haiku-4-5', effort: 'medium' });
+  const snap = snapshot([busy, agent({ key: 's:old', title: 'Old session', state: 'idle', model: 'claude-sonnet-5-5' })]);
+  const ui = initialUi();
+  const lines = listLines(snap, visibleRows(snap, ui, plain), ui, { width: 120, height: 10, now: NOW }, plain);
+  assert.match(lines[1], /^ {3}NAME +PROJECT +KIND +MODEL +EFFORT +CTX +ACTIVITY +LAST$/);
+  assert.match(lines.find((l) => l.includes('Busy session')) ?? '', /opus 5\.5 +max +/);
+  assert.match(lines.find((l) => l.includes('find the parser')) ?? '', /haiku 4\.5 +medium +/);
+  assert.match(lines.find((l) => l.includes('Old session')) ?? '', /sonnet 5\.5 {8}/, 'none known: the cell is empty');
+  const filtered = (/** @type {string} */ filter) => visibleRows(snap, { ...ui, filter, agents: 'none' }, plain).map((r) => r.agent.title);
+  assert.deepEqual(filtered('max'), ['Busy session']);
+  assert.deepEqual(filtered('medium'), ['Busy session'], 'by an agent of it');
+  const details = detailLines(explorer, snap, ui, { width: 100, height: 20, now: NOW }, plain).join('\n');
+  assert.match(details, /Model {6}claude-haiku-4-5 · effort medium/);
+});
+
+test('ultracode: a + after the effort, magenta, and spelled out in the details', () => {
+  const busy = busySession();
+  Object.assign(busy, { model: 'claude-opus-5-5', effort: 'max', ultracode: true });
+  const old = agent({ key: 's:old', title: 'Old session', state: 'ended', live: false, model: 'claude-opus-5-5', effort: 'xhigh', ultracode: true });
+  const snap = snapshot([
+    busy,
+    agent({ key: 's:x', title: 'Other session', state: 'idle', model: 'claude-opus-5-5', effort: 'xhigh' }),
+    agent({ key: 's:m', title: 'Medium session', state: 'idle', model: 'claude-opus-5-5', effort: 'medium', ultracode: true }),
+    agent({ key: 's:n', title: 'New session', state: 'idle', ultracode: true }),
+    old,
+  ]);
+  const ui = { ...initialUi(), showEnded: true };
+  const lines = listLines(snap, visibleRows(snap, ui, plain), ui, { width: 120, height: 12, now: NOW }, plain);
+  const line = (/** @type {string} */ title) => lines.find((l) => l.includes(title)) ?? '';
+  assert.match(line('Busy session'), /opus 5\.5 +max\+ +/);
+  assert.match(line('Other session'), /opus 5\.5 +xhigh +/);
+  assert.match(line('Medium session'), /opus 5\.5 +medium\+ +/, 'the longest fits');
+  assert.match(line('New session'), / {12}ultra +/, 'no effort known: the word');
+  assert.deepEqual(visibleRows(snap, { ...ui, filter: 'ultracode', agents: 'none' }, plain).map((r) => r.agent.title), ['Busy session', 'Medium session', 'New session', 'Old session']);
+  const details = detailLines(busy, snap, ui, { width: 100, height: 30, now: NOW }, plain).join('\n');
+  assert.match(details, /Model {6}claude-opus-5-5 · effort max · ultracode/);
+  // In color, with another row selected: the selected one is drawn plain, inverted.
+  const color = makeTheme({ color: true, ascii: false, animate: false });
+  const other = { ...ui, selected: 's:x' };
+  const rows = visibleRows(snap, other, color);
+  settleSelection(other, rows, 8);
+  const colored = listLines(snap, rows, other, { width: 120, height: 12, now: NOW }, color);
+  assert.match(colored.find((l) => l.includes('Busy session')) ?? '', /\x1b\[35mmax\+ +\x1b\[0m/);
+  assert.match(colored.find((l) => l.includes('Old session')) ?? '', /\x1b\[2mxhigh\+ +\x1b\[0m/, 'dim, as the rest of a row that ended');
 });
 
 test('the list fills the screen: each line as wide as it, the last one column less', () => {
@@ -174,6 +257,58 @@ test('the footer: the filter in use first, as many keys as fit, and where the se
   assert.match(footer(100, 'parser'), /^ filter "parser" esc clears {2}↑↓ move {2}⏎ details {2}\/ filter {2}\? help {2}q quit +1\/4 $/);
 });
 
+/**
+ * What a click at x, y does, by the hits a view gave.
+ * @param {import('../src/view.js').Hit[]} hits
+ * @param {number} x
+ * @param {number} y
+ */
+const clickAt = (hits, x, y) => hits.find((h) => h.y === y && x >= h.x0 && x < h.x1)?.action;
+
+test('where a click goes in the list: a row selects it, a title sorts by it, a key below is pressed', () => {
+  const snap = snapshot(sessions());
+  const ui = initialUi();
+  const rows = visibleRows(snap, ui, plain);
+  settleSelection(ui, rows, 17);
+  /** @type {import('../src/view.js').Hit[]} */
+  const hits = [];
+  const lines = listLines(snap, rows, ui, { width: 160, height: 20, now: NOW }, plain, hits);
+  assert.deepEqual(clickAt(hits, 10, 3), { select: rows[1].agent.key });
+  assert.deepEqual(clickAt(hits, 150, 2 + rows.length - 1), { select: rows[rows.length - 1].agent.key });
+  assert.equal(clickAt(hits, 10, 2 + rows.length), undefined, 'nothing below the last row');
+  for (const [title, sort] of [['NAME', 'name'], ['PROJECT', 'project'], ['ACTIVITY', 'status'], ['LAST', 'recent']]) {
+    assert.deepEqual(clickAt(hits, lines[1].indexOf(title) + 1, 1), { sort }, title);
+  }
+  assert.equal(clickAt(hits, lines[1].indexOf('MODEL') + 1, 1), undefined);
+  for (const [label, key] of [['⏎ details', 'enter'], ['/ filter', '/'], ['s sort', 's'], ['a agents', 'a'], ['? help', '?'], ['q quit', 'q']]) {
+    assert.deepEqual(clickAt(hits, lines[19].indexOf(label) + 1, 19), { key }, label);
+  }
+  assert.equal(clickAt(hits, lines[19].indexOf('move'), 19), undefined);
+
+  // The filter in use clears; while it is typed, the keys keep or clear it.
+  const filtered = /** @type {import('../src/view.js').Hit[]} */ ([]);
+  const footer = listLines(snap, rows, { ...ui, filter: 'Idle' }, { width: 160, height: 20, now: NOW }, plain, filtered)[19];
+  assert.deepEqual(clickAt(filtered, footer.indexOf('filter "Idle"') + 2, 19), { key: 'escape' });
+  assert.deepEqual(clickAt(filtered, footer.indexOf('? help') + 1, 19), { key: '?' });
+  const typing = /** @type {import('../src/view.js').Hit[]} */ ([]);
+  const typed = listLines(snap, rows, { ...ui, filter: '日本', editingFilter: true }, { width: 160, height: 20, now: NOW }, plain, typing)[19];
+  // The two wide characters take two columns each: their string index is a column less each.
+  assert.deepEqual(clickAt(typing, typed.indexOf('keep') + 2, 19), { key: 'enter' });
+  assert.deepEqual(clickAt(typing, typed.indexOf('esc clear') + 2, 19), { key: 'escape' });
+});
+
+test('where a click goes in the details: an agent opens its own, a key below is pressed', () => {
+  const s = busySession();
+  /** @type {import('../src/view.js').Hit[]} */
+  const hits = [];
+  const lines = detailLines(s, snapshot([s]), initialUi(), { width: 100, height: 30, now: NOW }, plain, hits);
+  assert.deepEqual(clickAt(hits, 5, lines.findIndex((l) => l.includes('find the parser'))), { open: 'a:1' });
+  assert.deepEqual(clickAt(hits, 5, lines.findIndex((l) => l.includes('review-changes'))), { open: 'w:1' });
+  assert.deepEqual(clickAt(hits, 2, 29), { key: 'escape' });
+  assert.deepEqual(clickAt(hits, lines[29].indexOf('tab next') + 1, 29), { key: 'tab' });
+  assert.equal(clickAt(hits, lines[29].indexOf('scroll'), 29), undefined);
+});
+
 test('an empty list says why', () => {
   const say = (/** @type {import('../src/monitor.js').Snapshot} */ snap, filter = '') =>
     listLines(snap, [], { ...initialUi(), filter }, { width: 100, height: 10, now: NOW }, plain).join('\n');
@@ -192,6 +327,63 @@ test('the activity says how long the current step has taken; an agent that ended
   const lines = listLines(snap, visibleRows(snap, ui, plain), ui, { width: 100, height: 8, now: NOW }, plain);
   assert.match(lines.find((l) => l.includes('Tests')) ?? '', /Bash: npm test +3m05s +1m$/);
   assert.match(lines.find((l) => l.includes('helper')) ?? '', /└─ helper +done +1m$/);
+});
+
+/**
+ * A task list made in the turn at work, of `n` steps: `done` of them done, the next in progress.
+ * @param {number} n @param {number} done
+ * @returns {import('../src/monitor.js').Plan}
+ */
+const planOf = (n, done) => ({
+  steps: Array.from({ length: n }, (_, k) => ({ text: `step ${k + 1}`, status: k < done ? 'completed' : k === done ? 'in_progress' : 'pending' })),
+  at: NOW - 10 * MINUTE,
+  current: true,
+});
+
+test('in a tool: its own mark, counted apart; a task list at work says how far it has come', () => {
+  const tool = agent({
+    key: 's:t', title: 'Tool session', state: 'working', inTool: true, project: 'demo',
+    activity: 'Bash: Build', activityKind: 'tool', activityAt: NOW - 65_000, plan: planOf(8, 4),
+  });
+  const earlier = agent({
+    key: 's:k', title: 'Thinking session', state: 'working', project: 'demo',
+    activity: 'thinking', activityKind: 'thinking', activityAt: NOW - 5000, plan: { ...planOf(8, 4), current: false },
+  });
+  const idle = agent({ key: 's:i', title: 'Idle session', state: 'idle', project: 'demo', activity: 'Done.', activityKind: 'reply', plan: planOf(8, 8) });
+  const snap = snapshot([tool, earlier, idle]);
+  const ui = initialUi();
+  const lines = listLines(snap, visibleRows(snap, ui, plain), ui, { width: 120, height: 8, now: NOW }, plain);
+  const line = (/** @type {string} */ title) => lines.find((l) => l.includes(title)) ?? '';
+  assert.match(lines[0], / Claude agents {2}● 1 working {2}◐ 1 in a tool {2}○ 1 idle /);
+  assert.match(line('Tool session'), /^[ >]◐ Tool session +demo +4\/8 Bash: Build +1m05s +1m/);
+  assert.match(line('Thinking session'), /demo +thinking +5s +1m/, 'a task list of an earlier turn: no count');
+  assert.match(line('Idle session'), /demo +Done\. +1m/, 'nor that of a session not at work');
+  const color = makeTheme({ color: true, ascii: false, animate: true });
+  const out = table(snap, { width: 120, now: NOW, agents: 'running', showEnded: true }, color);
+  assert.match(out, /\x1b\[32m[◐◓◑◒]\x1b\[0m/, 'its mark turns, slower than one at work');
+  assert.match(out, /\x1b\[32m4\/8 \x1b\[0m\x1b\[36mBash: Build/);
+});
+
+test('the detail view of a session in a tool: its task list, and the commands it runs in the background', () => {
+  const s = agent({
+    key: 's:t', title: 'Tool session', state: 'working', inTool: true, sessionId: 't1',
+    activity: 'Bash: Build', activityKind: 'tool', activityAt: NOW - 65_000, plan: planOf(12, 5),
+    commands: [{ summary: 'Bash: Serve the site', ts: NOW - 10 * MINUTE }, { summary: 'PowerShell: Watch', ts: NOW - 2 * MINUTE }],
+  });
+  const lines = detailLines(s, snapshot([s]), initialUi(), { width: 100, height: 30, now: NOW }, plain);
+  assert.match(lines[0], /^ ◐ Tool session +in a tool · 1m05s $/);
+  const text = lines.join('\n');
+  assert.match(text, /Doing {6}Bash: Build {2}\(1m05s\)/);
+  assert.match(text, /Background Bash: Serve the site {2}\(10m00s\) *\n {12}PowerShell: Watch {2}\(2m00s\) *\n/);
+  // 8 lines for its steps: from the last one done, the 4 done above it in one line.
+  assert.match(text, / Tasks {2}5\/12 done *\n {3}✓ 4 more done *\n {3}✓ step 5 *\n {3}▸ step 6 *\n {3}○ step 7 *\n {3}○ step 8 *\n {3}○ step 9 *\n {3}○ step 10 *\n {3}and 2 more *\n/);
+
+  const over = agent({ key: 's:o', title: 'Idle session', state: 'idle', activity: 'Done.', activityKind: 'reply', plan: { ...planOf(12, 12), current: false } });
+  const o = detailLines(over, snapshot([over]), initialUi(), { width: 100, height: 30, now: NOW }, plain).join('\n');
+  assert.match(o, / Tasks {2}12\/12 done · in an earlier turn *\n {3}✓ 5 more done *\n {3}✓ step 6 *\n[\s\S]* {3}✓ step 12 *\n *\n/, 'all done: the last ones');
+  assert.doesNotMatch(o, /Background|and \d+ more/);
+  const short = agent({ key: 's:s', title: 'Short list', state: 'working', activity: 'thinking', activityKind: 'thinking', activityAt: NOW - 1000, plan: planOf(3, 1) });
+  assert.match(detailLines(short, snapshot([short]), initialUi(), { width: 100, height: 30, now: NOW }, plain).join('\n'), / Tasks {2}1\/3 done *\n {3}✓ step 1 *\n {3}▸ step 2 *\n {3}○ step 3 *\n *\n/);
 });
 
 test('wide characters and emoji take their two columns', () => {
@@ -259,6 +451,23 @@ test('the detail view of an unread session: the reply not read yet, and when it 
   assert.match(text, /Desktop {4}local_u · last opened .+ \(10m ago\)/);
 });
 
+test("the detail view of a blocked session: what you are to do, the app's summary, its category", () => {
+  const s = blockedSession({ key: 's:b', title: 'Blocked session', kind: 'desktop', sessionId: 'b1', unread: true });
+  const lines = detailLines(s, snapshot([s]), initialUi(), { width: 100, height: 20, now: NOW }, plain);
+  assert.match(lines[0], /^ ◇ Blocked session +idle · blocked · unread $/);
+  const text = lines.join('\n');
+  assert.match(text, /Blocked {4}say whether the stutter was picture or sound *\n/);
+  assert.match(text, /Summary {4}Stutter: picture or sound\?/);
+  const review = agent({
+    key: 's:r', title: 'Ready for review', state: 'ended', live: false, blocked: false,
+    turn: { category: 'review_ready', detail: 'Web build checked' }, activity: 'Web build checked', activityKind: 'summary',
+  });
+  const r = detailLines(review, snapshot([review]), initialUi(), { width: 100, height: 20, now: NOW }, plain);
+  assert.match(r[0], /^ · Ready for review +ended · review ready $/);
+  assert.match(r.join('\n'), /Last {7}Web build checked/);
+  assert.doesNotMatch(r.join('\n'), /Summary/);
+});
+
 test('the detail view of an agent at work: how long it has been at it', () => {
   const a = agent({
     key: 'a:w', type: 'subagent', title: 'find the parser', state: 'running', agentId: 'a1', agentType: 'Explore',
@@ -308,7 +517,12 @@ test('the help fills the screen, its last line one column short', () => {
   const lines = helpLines({ width: 90, height: 40, now: NOW }, plain, '/home/me/.claude');
   assert.equal(lines.length, 40);
   assert.match(lines.join('\n'), /Keys[\s\S]*States[\s\S]*Columns[\s\S]*Reading \/home\/me\/\.claude/);
+  assert.match(lines.join('\n'), /◇ blocked {3}its turn ended on something only you can do/);
+  assert.match(lines.join('\n'), /◐ tool {6}it waits on a tool call it made/);
   assert.match(lines.join('\n'), /• unread {4}the desktop app's blue dot/);
+  assert.match(lines.join('\n'), /EFFORT, the effort it works at, *\n +and a \+ when ultracode is on;/);
+  assert.match(lines.join('\n'), /click {9}select a row +double-click +its details/);
+  assert.doesNotMatch(helpLines({ width: 90, height: 40, now: NOW }, plain, '/x', false).join('\n'), /click/, 'not with the mouse off');
   lines.slice(0, -1).forEach((l) => assert.equal(visible(l), 90, l));
   assert.equal(lines[39], ' '.repeat(89));
   assert.equal(helpLines({ width: 90, height: 10, now: NOW }, plain, '/x').length, 10);
@@ -320,15 +534,26 @@ test('with --ascii, nothing but ASCII is drawn', () => {
   // A workflow that is not the last agent: a line runs down past its agents to the next.
   busy.children.reverse();
   const unread = agent({ key: 's:u', title: 'Unread session', state: 'idle', unread: true, hostSessionId: 'local_u', openedAt: NOW - HOUR });
-  const snap = snapshot([busy, unread, ...sessions().filter((a) => a.key !== 's:busy')]);
+  const blocked = blockedSession({ key: 's:b', title: 'Blocked session' });
+  const tool = agent({
+    key: 's:t', title: 'Tool session', state: 'working', inTool: true, activity: 'Bash: Build', activityKind: 'tool', activityAt: NOW - 65_000,
+    plan: planOf(12, 5), commands: [{ summary: 'Bash: Serve the site', ts: NOW - 10 * MINUTE }],
+  });
+  const snap = snapshot([busy, unread, blocked, tool, ...sessions().filter((a) => a.key !== 's:busy')]);
   const ui = { ...initialUi(), agents: /** @type {const} */ ('all') };
   const rows = visibleRows(snap, ui, ascii);
   settleSelection(ui, rows, 17);
   assert.ok(rows.some((r) => r.prefix === '|  |- '), rows.map((r) => r.prefix).join(','));
+  const list = listLines(snap, rows, ui, { width: 120, height: 20, now: NOW }, ascii);
+  assert.match(list.find((l) => l.includes('Tool session')) ?? '', /^ % Tool session .* 5\/12 Bash: Build +1m05s/);
+  const details = detailLines(tool, snap, ui, { width: 120, height: 30, now: NOW }, ascii);
+  assert.match(details.join('\n'), / Tasks {2}5\/12 done *\n {3}\+ 4 more done *\n {3}\+ step 5 *\n {3}> step 6 *\n {3}- step 7 *\n/);
   const screens = [
-    listLines(snap, rows, ui, { width: 120, height: 20, now: NOW }, ascii),
+    list,
+    details,
     detailLines(busy, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
     detailLines(unread, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
+    detailLines(blocked, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
     helpLines({ width: 120, height: 30, now: NOW }, ascii, '/home/me/.claude'),
     table(snap, { width: 120, now: NOW, agents: 'all', showEnded: true }, ascii).split('\n'),
   ];

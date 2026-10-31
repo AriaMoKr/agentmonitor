@@ -1,23 +1,37 @@
 // Claude Code's transcripts, read as they grow: <config>/projects/<project>/<session>.jsonl for
 // a session, and subagents/**/agent-<id>.jsonl beside it for the agents it starts. A Transcript
 // reads the tail on first sight and after that only what was appended, and keeps what the
-// monitor shows: when the agent last did something, its model and context, the tool calls
-// still waiting for a result, the last prompt and reply, the titles and the latest events.
+// monitor shows: when the agent last did something, its model, effort and context, whether it
+// was reminded that ultracode is on, the tool calls still waiting for a result, the commands it
+// runs in the background, its task list, the last prompt and reply, the titles and the latest
+// events.
 import { open } from 'node:fs/promises';
 import { clean, toolSummary } from './format.js';
 
 /** How much of a transcript is read on first sight: enough for the current turn. */
 export const TAIL_BYTES = 1 << 20;
 const MAX_TAIL_BYTES = 64 << 20;
+/** How far back a first read goes for the start of a task list it saw changed. */
+const PLAN_TAIL_BYTES = 16 << 20;
 const HEAD_BYTES = 64 << 10;
 const MAX_EVENTS = 200;
 const MAX_TEXT = 400;
+const MAX_STEPS = 30;
+// How a tool call's result begins when its command went on in the background, with its task ID
+// (a command's own output that says so further on is not taken for it).
+const TO_BACKGROUND = /^\s*Command (?:running in background with ID|did not complete [^\n]{0,80}?moved to the background \(ID): ?([\w-]+)/;
 // Records the monitor never needs, some of them megabytes long: skipped without being parsed.
 const SKIP = /^\{"type":"(?:api-request|file-history|atis-latch|frame-link|artifact-|mode"|bridge-session|queue-operation)/;
 
 /**
  * @typedef {{ ts: number, kind: 'prompt' | 'reply' | 'tool' | 'error' | 'info', text: string }} Event
- * @typedef {{ name: string, input: unknown, ts: number, summary: string }} PendingTool
+ * @typedef {{ name: string, input: any, ts: number, summary: string }} PendingTool
+ * @typedef {{ summary: string, ts: number, taskId: string }} Command a command that went on in
+ *   the background (run_in_background, or past its timeout), from when its call was made
+ * @typedef {'pending' | 'in_progress' | 'completed'} StepStatus
+ * @typedef {{ text: string, status: StepStatus }} Step
+ * @typedef {{ steps: Step[], ts: number }} Plan a task list: the desktop app's (update_plan) or
+ *   Claude Code's own (TodoWrite), as of its last change
  * @typedef {{ usd: number, input: number, output: number, cacheRead: number, cacheWrite: number,
  *   linesAdded: number, linesRemoved: number, apiMs: number, durationMs: number }} Cost
  * @typedef {ReturnType<typeof emptyInfo>} Info
@@ -36,6 +50,8 @@ export function emptyInfo() {
     /** @type {string | undefined} */ entrypoint: undefined,
     /** @type {string | undefined} */ permissionMode: undefined,
     /** @type {string | undefined} */ effort: undefined,
+    /** a reminder that ultracode is on was read: Claude Code sends one with some prompts, not all */
+    ultracode: false,
     /** the earliest and the latest time a record read was written (ms) */
     firstTs: 0,
     lastTs: 0,
@@ -51,6 +67,11 @@ export function emptyInfo() {
     pending: new Map(),
     /** @type {Set<string>} the tool use IDs read, so a call with a result can be told from one not read */
     seenTools: new Set(),
+    /** @type {Map<string, Command>} commands in the background not known to have ended, by tool use ID */
+    commands: new Map(),
+    /** @type {Plan | undefined} */ plan: undefined,
+    /** a change to a task list made before the part read, and none made since */
+    planMissed: false,
     /** @type {{ text: string, ts: number } | undefined} */ lastPrompt: undefined,
     /** @type {{ text: string, ts: number } | undefined} */ lastReply: undefined,
     /** @type {{ text: string, ts: number } | undefined} the last API error, such as a usage limit */
@@ -58,6 +79,8 @@ export function emptyInfo() {
     /** @type {'user' | 'assistant' | undefined} */ lastRole: undefined,
     /** @type {string | undefined} the last reply's stop reason: 'tool_use', 'end_turn'... */
     lastStop: undefined,
+    /** @type {string | undefined} the uuid of the last assistant record, which the desktop app's turn summary names */
+    lastAssistantUuid: undefined,
     /** @type {string | undefined} */ customTitle: undefined,
     /** @type {string | undefined} */ aiTitle: undefined,
     /** @type {string | undefined} */ agentName: undefined,
@@ -118,7 +141,8 @@ export class Transcript {
   }
 
   /**
-   * Reads the last TAIL_BYTES, or more while that holds no message (records can be megabytes).
+   * Reads the last TAIL_BYTES, or more while that holds no message (records can be megabytes),
+   * or while it changes a task list made before it.
    * @param {import('node:fs/promises').FileHandle} fh
    * @param {number} size
    */
@@ -131,7 +155,8 @@ export class Transcript {
       const buf = await readRange(fh, start, size);
       this.offset = start + buf.length;
       this.consume(buf, start > 0);
-      if (this.info.messages > 0 || start === 0 || tail >= MAX_TAIL_BYTES) return;
+      if (start === 0 || tail >= MAX_TAIL_BYTES) return;
+      if (this.info.messages > 0 && !(this.info.planMissed && tail < PLAN_TAIL_BYTES)) return;
     }
   }
 
@@ -225,8 +250,15 @@ export function readRecord(info, rec) {
     case 'user':
     case 'assistant':
       info.messages++;
-      for (const k of /** @type {const} */ (['sessionId', 'agentId', 'cwd', 'gitBranch', 'version', 'entrypoint', 'permissionMode', 'effort'])) {
+      for (const k of /** @type {const} */ (['sessionId', 'agentId', 'cwd', 'gitBranch', 'version', 'entrypoint', 'permissionMode'])) {
         if (typeof rec[k] === 'string' && rec[k]) info[k] = rec[k];
+      }
+      // The effort of the turn, else the session's.
+      for (const effort of [rec.perTurnEffort, rec.effort]) {
+        if (typeof effort === 'string' && effort) {
+          info.effort = effort;
+          break;
+        }
       }
       if (rec.type === 'user') readUser(info, rec, ts);
       else readAssistant(info, rec, ts);
@@ -256,6 +288,12 @@ export function readRecord(info, rec) {
     case 'system':
       if (rec.subtype === 'compact_boundary') addEvent(info, ts, 'info', 'conversation compacted');
       break;
+    case 'attachment':
+      // A message that came in while a turn went on, such as a background task's end.
+      if (rec.attachment?.type === 'queued_command' && typeof rec.attachment.prompt === 'string') taskEnded(info, rec.attachment.prompt, ts);
+      // Ultracode's reminder, with its first prompt and about every tenth after (none says it ended).
+      else if (rec.attachment?.type === 'ultra_effort_enter') info.ultracode = true;
+      break;
   }
 }
 
@@ -268,6 +306,7 @@ function readUser(info, rec, ts) {
   info.lastRole = 'user';
   const content = rec.message?.content;
   if (typeof content === 'string') {
+    taskEnded(info, content, ts);
     if (!rec.isMeta) addPrompt(info, content, ts);
     return;
   }
@@ -281,11 +320,114 @@ function readUser(info, rec, ts) {
         const text = textOf(part.content).replace(/<\/?tool_use_error>/g, '').trim();
         const why = clean(text.replace(/\s*\n\s*/g, ' / ')).slice(0, 120);
         addEvent(info, ts, 'error', `${call ? call.summary : 'a tool call'} failed${why ? `: ${why}` : ''}`);
+      } else if (call) {
+        readResult(info, part.tool_use_id, call, textOf(part.content), ts);
       }
     } else if (part?.type === 'text' && !rec.isMeta && !rec.toolUseResult) {
       addPrompt(info, part.text, ts);
     }
   }
+}
+
+/**
+ * What a tool call that worked changed: a command that went on in the background, one stopped,
+ * a task list.
+ * @param {Info} info
+ * @param {string} id the tool use ID
+ * @param {PendingTool} call
+ * @param {string} text its result
+ * @param {number} ts
+ */
+function readResult(info, id, call, text, ts) {
+  const input = call.input && typeof call.input === 'object' ? call.input : {};
+  const bg = TO_BACKGROUND.exec(text);
+  if (bg) {
+    info.commands.set(id, { summary: call.summary, ts: call.ts, taskId: bg[1] });
+    if (info.commands.size > 32) info.commands.delete(/** @type {string} */ (info.commands.keys().next().value));
+  }
+  switch (call.name) {
+    case 'TaskStop':
+    case 'KillShell': {
+      const task = String(input.task_id ?? input.shell_id ?? '');
+      for (const [k, c] of info.commands) if (c.taskId === task) info.commands.delete(k);
+      break;
+    }
+    case 'TodoWrite':
+      if (Array.isArray(input.todos)) setPlan(info, input.todos, ts);
+      break;
+    case 'mcp__ccd_turn__update_plan':
+      changePlan(info, input, ts);
+      break;
+    case 'mcp__ccd_turn__wrap_up':
+      // It checks off the list: the step in progress is done.
+      if (info.plan?.steps.some((s) => s.status === 'in_progress')) {
+        const steps = info.plan.steps.map((s) => (s.status === 'in_progress' ? { ...s, status: /** @type {StepStatus} */ ('completed') } : s));
+        info.plan = { steps, ts };
+      }
+      break;
+  }
+}
+
+/**
+ * A background task's end, from the message Claude Code sends the session about it: the
+ * command that went on in the background (by its call's tool use ID) is over.
+ * @param {Info} info
+ * @param {string} text
+ * @param {number} ts
+ */
+function taskEnded(info, text, ts) {
+  if (!text.startsWith('<task-notification>')) return;
+  const id = /<tool-use-id>([^<]+)<\/tool-use-id>/.exec(text)?.[1];
+  const command = id ? info.commands.get(id) : undefined;
+  if (!id || !command) return;
+  info.commands.delete(id);
+  const status = clean(/<status>([^<]*)<\/status>/.exec(text)?.[1]) || 'ended';
+  addEvent(info, ts, 'info', `${command.summary}: ${status} in the background`);
+}
+
+/**
+ * A new task list.
+ * @param {Info} info
+ * @param {unknown[]} items each { content, status }
+ * @param {number} ts
+ */
+function setPlan(info, items, ts) {
+  const steps = items.slice(0, MAX_STEPS).map((i) => {
+    const o = /** @type {Record<string, unknown>} */ (i && typeof i === 'object' ? i : {});
+    const status = o.status === 'in_progress' || o.status === 'completed' ? o.status : 'pending';
+    return { text: clean(o.content).slice(0, MAX_TEXT), status: /** @type {StepStatus} */ (status) };
+  });
+  info.plan = { steps, ts };
+  info.planMissed = false;
+}
+
+/**
+ * A change to the desktop app's task list (update_plan): the whole list (items), or the next
+ * step (advance), or steps done (done) and the one started (start), 1-based.
+ * @param {Info} info
+ * @param {Record<string, any>} input
+ * @param {number} ts
+ */
+function changePlan(info, input, ts) {
+  if (Array.isArray(input.items)) return setPlan(info, input.items, ts);
+  if (!info.plan) {
+    info.planMissed = true;
+    return;
+  }
+  const steps = info.plan.steps.map((s) => ({ ...s }));
+  const set = (/** @type {unknown} */ n, /** @type {StepStatus} */ status) => {
+    if (typeof n === 'number' && steps[n - 1]) steps[n - 1].status = status;
+  };
+  if (input.advance === true) {
+    const doing = steps.findIndex((s) => s.status === 'in_progress');
+    if (doing >= 0) steps[doing].status = 'completed';
+    const after = steps.findIndex((s, i) => i > doing && s.status === 'pending');
+    const next = after >= 0 ? after : steps.findIndex((s) => s.status === 'pending');
+    if (next >= 0) steps[next].status = 'in_progress';
+  }
+  for (const n of Array.isArray(input.done) ? input.done : []) set(n, 'completed');
+  set(input.start, 'in_progress');
+  info.plan = { steps, ts };
 }
 
 /**
@@ -295,6 +437,7 @@ function readUser(info, rec, ts) {
  */
 function readAssistant(info, rec, ts) {
   info.lastRole = 'assistant';
+  if (typeof rec.uuid === 'string') info.lastAssistantUuid = rec.uuid;
   const m = rec.message ?? {};
   const real = typeof m.model === 'string' && m.model !== '<synthetic>';
   if (real) info.model = m.model;

@@ -1,14 +1,17 @@
 // What the monitor draws, as lines for a screen of a given size: the list of agents, one agent
 // in detail, and the help; and the plain table --once prints. Pure functions of a snapshot and
-// the screen's state, so the tests can draw them.
+// the screen's state, so the tests can draw them; the list and the details also say where a
+// click goes, as they draw it.
 import { ago, bytes, clock, durationLabel, elapsed, fit, shortModel, tokens, truncate, width } from './format.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
  * @typedef {import('./monitor.js').Snapshot} Snapshot
  * @typedef {import('./monitor.js').State} State
- * @typedef {State | 'unread'} Shown the state a row shows: unread, the desktop app's blue dot,
- *   in place of idle or ended
+ * @typedef {State | 'unread' | 'blocked' | 'tool'} Shown the state a row shows: in place of idle
+ *   or ended, blocked when the desktop app's summary of the last turn says it waits on you, or
+ *   unread, the app's blue dot; in place of working or running, tool while it waits on a tool
+ *   call that has run a while
  * @typedef {'status' | 'recent' | 'name' | 'project'} Sort
  * @typedef {'running' | 'all' | 'none'} AgentsShown
  *
@@ -28,7 +31,16 @@ import { ago, bytes, clock, durationLabel, elapsed, fit, shortModel, tokens, tru
  *
  * @typedef {{ agent: Agent, depth: number, prefix: string }} Row
  * @typedef {{ width: number, height: number, now: number }} Screen
+ *
+ * @typedef {{ select: string } | { open: string } | { sort: Sort } | { key: string }} Action what
+ *   a click does: select the row with this key (a second click opens it), open this agent's
+ *   details, sort, or press a key
+ * @typedef {{ y: number, x0: number, x1: number, action: Action }} Hit a place a click acts on:
+ *   line y, from column x0 up to x1
  */
+
+/** The sort a click on a column's title picks. */
+const COLUMN_SORTS = /** @type {Record<string, Sort>} */ ({ state: 'status', title: 'name', project: 'project', activity: 'status', last: 'recent' });
 
 export const SORTS = /** @type {Sort[]} */ (['status', 'recent', 'name', 'project']);
 export const AGENTS_SHOWN = /** @type {AgentsShown[]} */ (['running', 'all', 'none']);
@@ -69,9 +81,13 @@ export function makeTheme({ color, ascii, animate = true }) {
     /** between the parts of a field */
     sep: ascii ? ', ' : ' · ',
     spinner: ascii ? ['|', '/', '-', '\\'] : ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+    /** a slower one while it waits on a tool call */
+    toolSpinner: ascii ? ['%'] : ['◐', '◓', '◑', '◒'],
     glyphs: /** @type {Record<Shown, string>} */ (ascii
-      ? { working: '*', running: '*', waiting: '!', unread: '@', idle: 'o', active: '?', done: '+', failed: 'x', stopped: '#', ended: '.' }
-      : { working: '●', running: '●', waiting: '◆', unread: '•', idle: '○', active: '◌', done: '✓', failed: '✗', stopped: '■', ended: '·' }),
+      ? { working: '*', running: '*', tool: '%', waiting: '!', blocked: '!', unread: '@', idle: 'o', active: '?', done: '+', failed: 'x', stopped: '#', ended: '.' }
+      : { working: '●', running: '●', tool: '◐', waiting: '◆', blocked: '◇', unread: '•', idle: '○', active: '◌', done: '✓', failed: '✗', stopped: '■', ended: '·' }),
+    /** a task list's steps */
+    steps: ascii ? { completed: '+', in_progress: '>', pending: '-' } : { completed: '✓', in_progress: '▸', pending: '○' },
     tree: ascii ? { mid: '|- ', last: '`- ', pipe: '|  ', none: '   ' } : { mid: '├─ ', last: '└─ ', pipe: '│  ', none: '   ' },
     arrows: ascii ? 'up/down' : '↑↓',
     enter: ascii ? 'enter' : '⏎',
@@ -81,24 +97,25 @@ export function makeTheme({ color, ascii, animate = true }) {
 }
 /** @typedef {ReturnType<typeof makeTheme>} Theme */
 
-// What needs you first: waiting, then unread.
-const ORDER = /** @type {Record<Shown, number>} */ ({ waiting: 0, unread: 1, working: 2, running: 2, active: 3, idle: 4, done: 5, failed: 5, stopped: 5, ended: 5 });
+// What needs you first: waiting or blocked, then unread.
+const ORDER = /** @type {Record<Shown, number>} */ ({ waiting: 0, blocked: 0, unread: 1, working: 2, running: 2, tool: 2, active: 3, idle: 4, done: 5, failed: 5, stopped: 5, ended: 5 });
 
 /**
  * The state an agent's row shows.
  * @param {Agent} a
  * @returns {Shown}
  */
-const shown = (a) => (a.unread ? 'unread' : a.state);
+const shown = (a) => (a.blocked ? 'blocked' : a.unread ? 'unread' : a.inTool ? 'tool' : a.state);
 
 /**
- * A state's glyph: a spinner while at work.
+ * A state's glyph: a spinner while at work, a slower one while it waits on a tool call.
  * @param {Shown} state
  * @param {Theme} t
  * @param {number} now
  */
 function glyphChar(state, t, now) {
   if ((state === 'working' || state === 'running') && t.animate) return t.spinner[Math.floor(now / 100) % t.spinner.length];
+  if (state === 'tool' && t.animate) return t.toolSpinner[Math.floor(now / 250) % t.toolSpinner.length];
   return t.glyphs[state] ?? '?';
 }
 
@@ -112,8 +129,10 @@ function glyph(state, t, now) {
   const g = glyphChar(state, t, now);
   switch (state) {
     case 'working':
-    case 'running': return t.green(g);
-    case 'waiting': return t.yellowBold(g);
+    case 'running':
+    case 'tool': return t.green(g);
+    case 'waiting':
+    case 'blocked': return t.yellowBold(g);
     case 'unread': return t.blueBold(g);
     case 'idle': return t.cyan(g);
     case 'active': return t.blue(g);
@@ -130,7 +149,16 @@ const over = (state) => ORDER[state] === 5;
  * Whether an agent's activity goes on now, so that how long it has taken means something.
  * @param {Agent} a
  */
-const ongoing = (a) => ['tool', 'thinking', 'waiting', 'agents'].includes(a.activityKind) && a.activityAt > 0;
+const ongoing = (a) => ['tool', 'thinking', 'waiting', 'agents', 'background'].includes(a.activityKind) && a.activityAt > 0;
+
+/**
+ * How far its task list has come, as '4/8', while it is at work on it (in the turn that made it).
+ * @param {Agent} a
+ */
+function progress(a) {
+  if (!a.plan?.current || !['working', 'waiting', 'running'].includes(a.state)) return '';
+  return `${a.plan.steps.filter((s) => s.status === 'completed').length}/${a.plan.steps.length}`;
+}
 
 /**
  * The rows to list: the sessions in the chosen order, each followed by the agents it shows.
@@ -142,7 +170,7 @@ const ongoing = (a) => ['tool', 'thinking', 'waiting', 'agents'].includes(a.acti
 export function visibleRows(snap, ui, t) {
   const needle = ui.filter.trim().toLowerCase();
   const matches = (/** @type {Agent} */ a) =>
-    [a.title, a.project, a.cwd, a.sessionId, a.kind, shortModel(a.model), a.activity, a.agentType, String(a.pid ?? '')]
+    [a.title, a.project, a.cwd, a.sessionId, a.kind, shortModel(a.model), a.effort, a.ultracode && 'ultracode', a.activity, a.agentType, String(a.pid ?? '')]
       .some((v) => v && v.toLowerCase().includes(needle));
   const sessions = snap.rows.filter((a) => {
     if (!ui.showEnded && over(a.state)) return false;
@@ -212,6 +240,7 @@ export function columns(cols) {
     { key: 'project', title: 'PROJECT', width: 16, from: 72 },
     { key: 'kind', title: 'KIND', width: 8, from: 118 },
     { key: 'model', title: 'MODEL', width: 10, from: 104 },
+    { key: 'effort', title: 'EFFORT', width: 7, from: 110 },
     { key: 'ctx', title: 'CTX', width: 5, align: 'right', from: 90 },
     { key: 'activity', title: 'ACTIVITY', width: 0, flex: 58, min: 10 },
     { key: 'last', title: 'LAST', width: 4, align: 'right' },
@@ -257,6 +286,11 @@ function rowText(row, cols, t, now, plain) {
         return soft(fit(kindOf(a), c.width, 'left', t.ellipsis));
       case 'model':
         return soft(fit(shortModel(a.model), c.width, 'left', t.ellipsis));
+      case 'effort': {
+        // Ultracode as a + after the effort, or alone when none is known; the details spell it out.
+        const text = fit(a.ultracode ? (a.effort ? `${a.effort}+` : 'ultra') : a.effort ?? '', c.width, 'left', t.ellipsis);
+        return a.ultracode && !dim ? style(text, t.magenta) : soft(text);
+      }
       case 'ctx':
         return soft(fit(tokens(a.ctx), c.width, 'right'));
       case 'activity':
@@ -291,7 +325,8 @@ function kindOf(a) {
 }
 
 /**
- * The activity, colored by kind, with how long it has gone on for live work.
+ * The activity, colored by kind, after how far its task list has come and with how long it has
+ * gone on for live work.
  * @param {Agent} a
  * @param {number} w
  * @param {Theme} t
@@ -300,28 +335,35 @@ function kindOf(a) {
  */
 function activityCell(a, w, t, now, plain) {
   const time = ongoing(a) ? ` ${elapsed(now - a.activityAt)}` : '';
-  const room = Math.max(0, w - width(time));
+  const steps = progress(a);
+  const head = steps && w >= width(steps) + 8 ? `${steps} ` : '';
+  const room = Math.max(0, w - width(time) - width(head));
   // An agent that ended says nothing more than its state, unless its last words were read.
   const words = a.activity || (a.type !== 'session' && over(a.state) ? a.state : '');
   const text = room > 0 ? fit(words, room, 'left', t.ellipsis) : '';
-  const full = fit(text + time, w, 'left', t.ellipsis);
+  const full = fit(head + text + time, w, 'left', t.ellipsis);
   if (plain) return full;
-  const tail = full.slice(text.length);
+  const tail = full.slice(head.length + text.length);
   /** @type {(s: string) => string} */
   let paint = (s) => s;
   switch (a.activityKind) {
-    case 'waiting': paint = t.yellowBold; break;
+    case 'waiting':
+    case 'blocked': paint = t.yellowBold; break;
     case 'error': paint = t.red; break;
     case 'agents': paint = t.green; break;
+    case 'background': paint = t.cyan; break;
+    case 'tool': if (a.inTool) paint = t.cyan; break;
     case 'thinking':
+    case 'summary':
     case 'reply':
     case 'prompt':
     case 'job':
     case '':
       paint = t.dim; break;
   }
-  if (over(a.state)) paint = a.activityKind === 'error' ? t.red : t.dim;
-  return paint(text) + t.dim(tail);
+  // A session that ended, blocked, still waits on you.
+  if (over(a.state) && a.activityKind !== 'blocked') paint = a.activityKind === 'error' ? t.red : t.dim;
+  return t.green(head) + paint(text) + t.dim(tail);
 }
 
 /**
@@ -342,7 +384,9 @@ function summary(snap, t) {
   }
   const parts = [];
   if (n.working) parts.push(`${t.green(t.glyphs.working)} ${n.working} working`);
+  if (n.tool) parts.push(`${t.green(t.glyphs.tool)} ${n.tool} in a tool`);
   if (n.waiting) parts.push(`${t.yellowBold(t.glyphs.waiting)} ${t.yellowBold(`${n.waiting} waiting`)}`);
+  if (n.blocked) parts.push(`${t.yellowBold(t.glyphs.blocked)} ${t.yellowBold(`${n.blocked} blocked`)}`);
   if (n.unread) parts.push(`${t.blueBold(t.glyphs.unread)} ${n.unread} unread`);
   if (n.idle) parts.push(`${t.cyan(t.glyphs.idle)} ${n.idle} idle`);
   if (n.active) parts.push(`${t.blue(t.glyphs.active)} ${n.active} active`);
@@ -390,14 +434,21 @@ export function padStyled(s, cols, ellipsis = '…') {
  * @param {Ui} ui
  * @param {Screen} screen
  * @param {Theme} t
+ * @param {Hit[]} [hits] gets where a click goes: the rows, the column titles, the keys
  * @returns {string[]}
  */
-export function listLines(snap, rows, ui, { width: cols, height, now }, t) {
+export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits = []) {
   const lines = [];
   const left = ` ${t.bold('Claude agents')}  ${summary(snap, t)}`;
   lines.push(spread(left, `${t.dim(clock(now, now))} `, cols, t));
   const cs = columns(cols);
   lines.push(t.dim(t.pad(' ' + cs.map((c) => fit(c.title, c.width, c.align, t.ellipsis)).join(' '), cols)));
+  let x = 1;
+  for (const c of cs) {
+    const sort = COLUMN_SORTS[c.key];
+    if (sort) hits.push({ y: 1, x0: x, x1: x + c.width, action: { sort } });
+    x += c.width + 1;
+  }
   const body = Math.max(0, height - 3);
   if (rows.length === 0) {
     const why = !snap.found
@@ -416,10 +467,26 @@ export function listLines(snap, rows, ui, { width: cols, height, now }, t) {
     const selected = ui.index === ui.top + i;
     const text = rowText(row, cs, t, now, selected && t.color);
     lines.push(selected && t.color ? t.inverse(t.pad(text, cols)) : t.pad(selected ? `>${text.slice(1)}` : text, cols));
+    hits.push({ y: lines.length - 1, x0: 0, x1: cols, action: { select: row.agent.key } });
   }
   // The last line leaves the last column alone: writing there can scroll some terminals.
-  lines.push(footer(ui, rows, t, cols - 1, now));
+  const y = lines.length;
+  lines.push(footer(ui, rows, t, cols - 1, now, (hit) => hits.push({ ...hit, y })));
   return lines.slice(0, height);
+}
+
+/**
+ * Where a click on the footer's keys goes: each label from its column on, pressing its key.
+ * @param {[string, string | undefined][]} parts each label and the key a click on it presses,
+ *   with two columns between the labels
+ * @param {number} x where the first label starts
+ * @param {(hit: Omit<Hit, 'y'>) => void} onHit
+ */
+function keyHits(parts, x, onHit) {
+  for (const [label, key] of parts) {
+    if (key) onHit({ x0: x, x1: x + width(label), action: { key } });
+    x += width(label) + 2;
+  }
 }
 
 /**
@@ -430,26 +497,34 @@ export function listLines(snap, rows, ui, { width: cols, height, now }, t) {
  * @param {Theme} t
  * @param {number} cols
  * @param {number} now
+ * @param {(hit: Omit<Hit, 'y'>) => void} onHit gets where a click on a key goes
  */
-function footer(ui, rows, t, cols, now) {
-  if (ui.editingFilter) return t.pad(` ${t.bold('/')}${ui.filter}${t.inverse(' ')}  ${t.dim(`${t.enter} keep  esc clear`)}`, cols);
+function footer(ui, rows, t, cols, now, onHit) {
+  if (ui.editingFilter) {
+    // After ' /', the filter and the cursor.
+    keyHits([[`${t.enter} keep`, 'enter'], ['esc clear', 'escape']], 2 + width(ui.filter) + 3, onHit);
+    return t.pad(` ${t.bold('/')}${ui.filter}${t.inverse(' ')}  ${t.dim(`${t.enter} keep  esc clear`)}`, cols);
+  }
   if (ui.message && now < ui.messageUntil) return t.pad(` ${t.yellow(ui.message)}`, cols);
   const pos = rows.length ? `${ui.index + 1}/${rows.length}` : '';
   const filter = ui.filter ? `${t.yellow(`filter "${ui.filter}"`)} ${t.dim('esc clears')}  ` : '';
-  // Each key with what it is worth its room: on a narrow screen the least worth go first.
-  /** @type {[string, number][]} */
+  // Each key with what it is worth its room (on a narrow screen the least worth go first), and
+  // the key a click on it presses.
+  /** @type {[string, number, string | undefined][]} */
   const all = [
-    [`${t.arrows} move`, 3], [`${t.enter} details`, 4], ['/ filter', 3], [`s sort:${ui.sort}`, 2],
-    [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2], [`a agents:${ui.agents}`, 2], ['w window', 1], ['? help', 5], ['q quit', 5],
+    [`${t.arrows} move`, 3, undefined], [`${t.enter} details`, 4, 'enter'], ['/ filter', 3, '/'], [`s sort:${ui.sort}`, 2, 's'],
+    [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'], ['? help', 5, '?'], ['q quit', 5, 'q'],
   ];
   // A space before, two between the keys and the position, and one after it.
   const room = cols - visibleWidth(filter) - width(pos) - 4;
-  let keys = '';
+  let shown = all;
   for (let worth = 0; worth <= 5; worth++) {
-    keys = all.filter(([, w]) => w > worth).map(([k]) => k).join('  ');
-    if (width(keys) <= room) break;
+    shown = all.filter(([, w]) => w > worth);
+    if (width(shown.map(([k]) => k).join('  ')) <= room) break;
   }
-  return spread(` ${filter}${t.dim(keys)}`, `${t.dim(pos)} `, cols, t);
+  if (filter) onHit({ x0: 1, x1: 1 + visibleWidth(filter) - 2, action: { key: 'escape' } });
+  keyHits(shown.map(([k, , key]) => [k, key]), 1 + visibleWidth(filter), onHit);
+  return spread(` ${filter}${t.dim(shown.map(([k]) => k).join('  '))}`, `${t.dim(pos)} `, cols, t);
 }
 
 /**
@@ -461,17 +536,23 @@ function footer(ui, rows, t, cols, now) {
  * @param {Ui} ui
  * @param {Screen} screen
  * @param {Theme} t
+ * @param {Hit[]} [hits] gets where a click goes: its agents, the keys
  * @returns {string[]}
  */
-export function detailLines(a, snap, ui, { width: cols, height, now }, t) {
+export function detailLines(a, snap, ui, { width: cols, height, now }, t, hits = []) {
   const lines = [];
-  const status = [a.state, a.unread && 'unread', ongoing(a) && elapsed(now - a.activityAt)].filter(Boolean).join(t.sep);
+  // The category of the app's summary of the last turn, but for the usual one.
+  const turn = a.turn && a.turn.category !== 'completed' && a.turn.category.replace(/_/g, ' ');
+  const status = [a.inTool ? 'in a tool' : a.state, turn, a.unread && 'unread', ongoing(a) && elapsed(now - a.activityAt)].filter(Boolean).join(t.sep);
   lines.push(spread(` ${glyph(shown(a), t, now)} ${t.bold(truncate(a.title, Math.max(10, cols - width(status) - 6), t.ellipsis))}`, `${t.dim(status)} `, cols, t));
   lines.push(t.dim(t.rule.repeat(cols)));
 
   const body = Math.max(0, height - 3);
   const hasLog = a.type !== 'workflow';
   const top = [...fieldLines(a, now, t, cols)];
+  if (a.plan) top.push('', ...planLines(a.plan, hasLog ? Math.max(3, Math.floor((height - 4) / 3)) : body, cols, t));
+  /** @type {{ at: number, key: string }[]} the agents' lines in `top` */
+  const kidLines = [];
   if (a.children.length) {
     const flows = a.children.filter((c) => c.type === 'workflow').length;
     const running = a.children.filter((c) => c.state === 'running').length;
@@ -482,12 +563,16 @@ export function detailLines(a, snap, ui, { width: cols, height, now }, t) {
     // Room for the header and the 'and N more' line.
     const maxKids = hasLog ? Math.max(3, Math.floor((height - 4) / 3)) : Math.max(3, body - top.length - 1);
     const kids = a.children.length > maxKids ? a.children.slice(0, maxKids - 1) : a.children;
-    for (const c of kids) top.push(t.pad(rowText({ agent: c, depth: 1, prefix: '' }, cs, t, now, false), cols));
+    for (const c of kids) {
+      kidLines.push({ at: top.length, key: c.key });
+      top.push(t.pad(rowText({ agent: c, depth: 1, prefix: '' }, cs, t, now, false), cols));
+    }
     if (a.children.length > kids.length) top.push(t.dim(`   and ${a.children.length - kids.length} more`));
   }
 
   const logRows = hasLog ? Math.max(3, body - top.length - 2) : 0;
   const topRows = hasLog ? Math.max(0, body - logRows - 2) : body;
+  for (const k of kidLines) if (k.at < topRows) hits.push({ y: lines.length + k.at, x0: 0, x1: cols, action: { open: k.key } });
   for (const line of top.slice(0, topRows)) lines.push(t.pad(line, cols));
   if (hasLog) {
     lines.push(' '.repeat(cols));
@@ -502,9 +587,50 @@ export function detailLines(a, snap, ui, { width: cols, height, now }, t) {
     for (const e of shown) lines.push(eventLine(e, cols, now, t));
   }
   while (lines.length < height - 1) lines.push(' '.repeat(cols));
-  const keys = ['esc back', `${t.arrows} scroll`, 'home/end', 'tab next'].join('  ');
-  lines.push(t.pad(` ${t.dim(keys)}`, cols - 1));
+  /** @type {[string, string | undefined][]} */
+  const keys = [['esc back', 'escape'], [`${t.arrows} scroll`, undefined], ['home/end', undefined], ['tab next', 'tab']];
+  const y = lines.length;
+  keyHits(keys, 1, (hit) => hits.push({ ...hit, y }));
+  lines.push(t.pad(` ${t.dim(keys.map(([k]) => k).join('  '))}`, cols - 1));
   return lines.slice(0, height);
+}
+
+/**
+ * A task list: how far it has come, and its steps in `room` lines below that: when they do not
+ * all fit, from just before the first one not done, with a line for the steps above (all done)
+ * and one for those below.
+ * @param {import('./monitor.js').Plan} plan
+ * @param {number} room
+ * @param {number} cols
+ * @param {Theme} t
+ */
+function planLines(plan, room, cols, t) {
+  const steps = plan.steps;
+  const n = steps.length;
+  const done = steps.filter((s) => s.status === 'completed').length;
+  const note = [`${done}/${n} done`, !plan.current && 'in an earlier turn'].filter(Boolean).join(t.sep);
+  const lines = [` ${t.bold('Tasks')}  ${t.dim(note)}`];
+  let from = 0;
+  let to = n;
+  if (n > room) {
+    const above = (/** @type {number} */ f) => (f > 0 ? 1 : 0);
+    const next = steps.findIndex((s) => s.status !== 'completed');
+    from = Math.max(0, (next < 0 ? n : next) - 1);
+    to = Math.min(n, from + Math.max(1, room - above(from)));
+    if (to < n) to = Math.max(from + 1, to - 1);
+    // Nothing below: the room left goes to the steps above.
+    else while (from > 0 && above(from - 1) + n - from + 1 <= room) from--;
+  }
+  if (from > 0) lines.push(t.dim(`   ${t.steps.completed} ${from} more done`));
+  for (const s of steps.slice(from, to)) {
+    const g = t.steps[s.status];
+    const text = truncate(s.text, Math.max(0, cols - 6), t.ellipsis);
+    if (s.status === 'completed') lines.push(t.dim(`   ${g} ${text}`));
+    else if (s.status === 'in_progress') lines.push(`   ${t.green(g)} ${t.bold(text)}`);
+    else lines.push(`   ${t.dim(g)} ${text}`);
+  }
+  if (to < n) lines.push(t.dim(`   and ${n - to} more`));
+  return lines;
 }
 
 /**
@@ -520,21 +646,26 @@ function* fieldLines(a, now, t, cols) {
   const when = (/** @type {number | undefined} */ ts) => (ts ? `${clock(ts, now)} (${ago(now - ts)} ago)` : undefined);
   const join = (/** @type {(string | false | undefined)[]} */ parts) => parts.filter(Boolean).join(t.sep) || undefined;
   const waiting = a.state === 'waiting';
+  const blocked = a.activityKind === 'blocked';
+  // An activity of the background commands is said by the lines that list them.
+  const background = a.activityKind === 'background';
   const lines = [
-    field(waiting ? 'Waiting' : ongoing(a) ? 'Doing' : a.unread ? 'Unread' : 'Last', a.activity
-      ? (waiting ? a.activity.replace(/^waiting: /, '') : a.activity) + (ongoing(a) ? `  (${elapsed(now - a.activityAt)})` : '')
+    field(waiting ? 'Waiting' : ongoing(a) ? 'Doing' : blocked ? 'Blocked' : a.unread ? 'Unread' : 'Last', a.activity && !background
+      ? (waiting || blocked ? a.activity.replace(/^(?:waiting|blocked): /, '') : a.activity) + (ongoing(a) ? `  (${elapsed(now - a.activityAt)})` : '')
       : undefined),
+    field('Summary', blocked && a.turn?.needs ? a.turn.detail : undefined),
   ];
   if (a.pending.length > 1) {
     for (const p of a.pending.slice(-5)) lines.push(field('', `${p.summary}  (${elapsed(now - p.ts)})`));
   }
+  (a.commands ?? []).slice(-5).forEach((c, i) => lines.push(field(i ? '' : 'Background', `${c.summary}  (${elapsed(now - c.ts)})`)));
   if (a.type === 'session') {
     lines.push(
       field('Session', join([a.sessionId, a.kind, a.version && `Claude Code ${a.version}`])),
       field('Resume', a.sessionId && a.state === 'ended' ? `claude --resume ${a.sessionId}, in its folder` : undefined),
       field('Folder', join([a.cwd, a.branch && a.branch !== 'HEAD' && `branch ${a.branch}`])),
       field('Process', a.pid ? join([`pid ${a.pid}`, a.processStartedAt && `up ${elapsed(now - a.processStartedAt)}`, a.memKB && `${Math.round(a.memKB / 1024)} MB`]) : undefined),
-      field('Model', join([a.model, a.effort && `effort ${a.effort}`, a.permissionMode && `permissions ${a.permissionMode}`])),
+      field('Model', join([a.model, a.effort && `effort ${a.effort}`, a.ultracode && 'ultracode', a.permissionMode && `permissions ${a.permissionMode}`])),
       field('Context', join([a.ctx && `${tokens(a.ctx)} tokens`, a.outTokens && `${tokens(a.outTokens)} output tokens in the part read`])),
       field('Totals', a.cost ? join([
         `$${a.cost.usd.toFixed(2)}`,
@@ -552,7 +683,7 @@ function* fieldLines(a, now, t, cols) {
     lines.push(
       field('Agent', join([a.agentId ?? a.runId, a.type === 'workflow' ? 'workflow' : a.agentType, a.background && 'background', a.phase && `phase ${a.phase}`])),
       field('Agents', a.counts ? join([`${a.counts.total} in all`, `${a.counts.running} running`, `${a.counts.done} done`, a.counts.failed && `${a.counts.failed} failed`]) : undefined),
-      field('Model', a.model),
+      field('Model', join([a.model, a.effort && `effort ${a.effort}`])),
       field('Context', join([a.ctx && `${tokens(a.ctx)} tokens`, a.outTokens && `${tokens(a.outTokens)} output tokens`, a.tokens && `${tokens(a.tokens)} tokens in all`])),
       field('Started', when(a.startedAt)),
       field('Last', when(a.lastActive)),
@@ -584,8 +715,9 @@ function eventLine(e, cols, now, t) {
  * @param {Screen} screen
  * @param {Theme} t
  * @param {string} dir
+ * @param {boolean} [mouse] whether the mouse is on
  */
-export function helpLines({ width: cols, height }, t, dir) {
+export function helpLines({ width: cols, height }, t, dir, mouse = true) {
   const g = t.glyphs;
   // A key and what it does, and maybe a second key and what that does.
   const key = (/** @type {string} */ k, /** @type {string} */ what, k2 = '', what2 = '') =>
@@ -598,24 +730,28 @@ export function helpLines({ width: cols, height }, t, dir) {
     key(`${t.arrows} j k`, 'move', 'pgup pgdn home end', 'move by pages'),
     key(`${t.enter} l ${right}`, 'details', `esc h ${left}`, 'back, or clear the filter'),
     key('/', 'filter', 'tab', 'next agent, in details'),
-    key('s', 'sort: status, most recent, name, project'),
+    key('s', `sort: status, most recent, name, project${mouse ? ' (or click a title)' : ''}`),
     key('e', 'show or hide the sessions that ended'),
     key('a', 'agents under their session: running, all, none'),
     key('w', 'window for "recently active": 1h, 6h, 24h, 3d, 7d'),
-    key('r', 'read everything again'),
-    key('q ctrl-c', 'quit (q in the details goes back)'),
+    key('r', 'read again', 'q ctrl-c', 'quit (q in the details goes back)'),
+    ...(mouse ? [key('click', 'select a row', 'double-click', 'its details'), key('wheel', 'move or scroll', 'shift+drag', 'select text')] : []),
     '',
     ` ${t.bold('States')}`,
     `   ${t.green(g.working)} working   the session is at work, or ${t.green(g.running)} an agent runs`,
-    `   ${t.yellowBold(g.waiting)} waiting   it needs you: a permission, an answer`,
+    `   ${t.green(g.tool)} tool      it waits on a tool call it made: a command, a build, a download`,
+    `   ${t.yellowBold(g.waiting)} waiting   it needs you: a permission, a question, a plan to approve`,
+    `   ${t.yellowBold(g.blocked)} blocked   its turn ended on something only you can do, the desktop app says`,
     `   ${t.blueBold(g.unread)} unread    the desktop app's blue dot: it finished a turn you have not opened`,
     `   ${t.cyan(g.idle)} idle      it runs, and waits for your next message`,
     `   ${t.blue(g.active)} active    its transcript moved moments ago, but no process is known`,
     `   ${t.dim(g.ended)} ended     ${t.dim(g.done)} done   ${t.red(g.failed)} failed   ${t.magenta(g.stopped)} stopped`,
     '',
     ` ${t.bold('Columns')}`,
-    '   CTX is the context of the last reply in tokens; LAST, how long ago it last did',
-    '   anything; ACTIVITY ends with how long the current step has taken.',
+    '   CTX is the context of the last reply in tokens; EFFORT, the effort it works at,',
+    `   and a ${t.magenta('+')} when ultracode is on; LAST, how long ago it last did anything;`,
+    '   ACTIVITY begins with how many of its tasks are done (4/8) and ends with how long',
+    '   the current step has taken.',
     '',
     ` ${t.dim(`Reading ${dir}`)}`,
     ` ${t.dim('Any key goes back.')}`,

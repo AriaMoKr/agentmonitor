@@ -1,8 +1,9 @@
 // The Claude desktop app's records of its Code tab sessions:
 // claude-code-sessions/<account>/<org>/local_<id>.json in the app's data folder, with the
-// session's title, whether it is archived, its model, effort and permission mode, and when it was
-// last opened and its last turn started or ended: from those, which ones the app shows as unread.
-// Keyed here by the Claude Code session ID (cliSessionId) they run.
+// session's title, whether it is archived, its model, effort and permission mode, whether
+// ultracode is on, the app's summary of its last turn, and when it was last opened and its last
+// turn started or ended: from those, which ones the app shows as unread. Keyed here by the Claude
+// Code session ID (cliSessionId) they run.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { entries, JsonFiles } from './files.js';
@@ -11,6 +12,14 @@ import { entries, JsonFiles } from './files.js';
 const MAX_OPENINGS = 10_000;
 
 /**
+ * @typedef {object} TurnSummary the app's summary of a session's last turn (postTurnSummary),
+ *   written a few seconds after the turn ended, and not after every one
+ * @property {string} category 'completed', 'blocked' (on something only the user can do),
+ *   'review_ready'...
+ * @property {string} detail what the turn came to, in a few words
+ * @property {string} [needs] what the user is to do, when it is blocked
+ * @property {string} [for] the uuid of the transcript record it sums up: the turn's last
+ *
  * @typedef {object} DesktopSession
  * @property {string} id the app's ID: 'local_<uuid>'
  * @property {string} cliSessionId
@@ -20,10 +29,13 @@ const MAX_OPENINGS = 10_000;
  * @property {string} [model]
  * @property {string} [effort]
  * @property {string} [permissionMode]
+ * @property {boolean} [ultracode] whether ultracode is on for it (sessionSettings.ultracode);
+ *   undefined when the app keeps no settings for it: none set, or a session started elsewhere
  * @property {number} [createdAt]
  * @property {number} [lastActivityAt]
  * @property {number} [openedAt] when it was last opened in the app (lastFocusedAt)
  * @property {number} [turnEdgeAt] when a turn last started or ended (lastTurnEdgeAt)
+ * @property {TurnSummary} [summary]
  */
 
 /**
@@ -148,15 +160,17 @@ export class DesktopSessions {
   }
 }
 
+const str = (/** @type {unknown} */ v) => (typeof v === 'string' && v ? v : undefined);
+const num = (/** @type {unknown} */ v) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+
 /**
  * @param {Record<string, any>} o
  * @returns {DesktopSession | null}
  */
 export function toDesktopSession(o) {
-  const str = (/** @type {unknown} */ v) => (typeof v === 'string' && v ? v : undefined);
-  const num = (/** @type {unknown} */ v) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
   const cliSessionId = str(o.cliSessionId);
   if (!cliSessionId) return null;
+  const settings = o.sessionSettings && typeof o.sessionSettings === 'object' ? o.sessionSettings : undefined;
   return {
     id: str(o.sessionId) ?? '',
     cliSessionId,
@@ -166,9 +180,25 @@ export function toDesktopSession(o) {
     model: str(o.model),
     effort: str(o.effort),
     permissionMode: str(o.permissionMode),
+    ultracode: settings ? settings.ultracode === true : undefined,
     createdAt: num(o.createdAt),
     lastActivityAt: num(o.lastActivityAt),
     openedAt: num(o.lastFocusedAt),
     turnEdgeAt: num(o.lastTurnEdgeAt),
+    summary: summaryOf(o),
   };
+}
+
+/**
+ * The app's summary of a session's last turn, when it says anything.
+ * @param {Record<string, any>} o the session's record
+ * @returns {TurnSummary | undefined}
+ */
+function summaryOf(o) {
+  const p = o.postTurnSummary;
+  if (!p || typeof p !== 'object') return undefined;
+  const detail = str(p.status_detail);
+  const needs = str(p.needs_action);
+  if (!detail && !needs) return undefined;
+  return { category: str(p.status_category) ?? '', detail: detail ?? '', needs, for: str(p.summarizes_uuid) ?? str(o.postTurnSummaryFor) };
 }

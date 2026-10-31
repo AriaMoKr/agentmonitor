@@ -1,9 +1,10 @@
 // Puts together what the monitor shows: every Claude Code session that runs, or was active
-// within the window, with its state, title, folder, model, context and current activity, and
-// the subagents and workflow runs it started. Sources, all under the config folder (~/.claude):
+// within the window, with its state, title, folder, model, context, current activity and task
+// list, and the subagents and workflow runs it started. Sources, all under the config folder (~/.claude):
 // sessions/<pid>.json (the running processes and their status), projects/*/<session>.jsonl (the
 // transcripts) and the agents' files beside them, and jobs/*/state.json (background sessions);
-// with the desktop app's own records of its sessions for titles, settings and which are unread.
+// with the desktop app's own records of its sessions for titles, settings, which are unread, and
+// the app's summary of each one's last turn.
 import { join } from 'node:path';
 import { SessionAgents } from './agents.js';
 import { DesktopSessions, desktopDataDirs } from './desktop.js';
@@ -21,6 +22,16 @@ const TABLE_MAX_AGE = 10_000;
 const RECENT_WRITE = 60_000;
 /** An agent without an end on record, quiet this long, is taken to have ended. */
 const STALE_AGENT = 15 * 60_000;
+/** A tool call pending this long is waited on: a command, a build, a download (ms). */
+const TOOL_WAIT = 3000;
+/** The tools that start an agent: what the agent does is listed under it. */
+const AGENT_TOOLS = new Set(['Agent', 'Task']);
+
+/**
+ * A string from the files, as it may be drawn (see clean), or undefined when there is none.
+ * @param {unknown} v
+ */
+const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
 
 /**
  * @typedef {import('./registry.js').RegistryEntry} RegistryEntry
@@ -34,7 +45,16 @@ const STALE_AGENT = 15 * 60_000;
  *   working, waiting, idle: a running session's status; active: written to moments ago by a
  *   process not in the registry; running: an agent or workflow at work; the rest: over
  *
- * @typedef {'tool' | 'thinking' | 'agents' | 'waiting' | 'error' | 'reply' | 'prompt' | 'job' | ''} ActivityKind
+ * @typedef {'tool' | 'thinking' | 'agents' | 'waiting' | 'blocked' | 'background' | 'error' | 'summary' | 'reply' | 'prompt' | 'job' | ''} ActivityKind
+ *   blocked and summary: from the desktop app's summary of the last turn; background: a
+ *   command that goes on in the background of a session not at work
+ *
+ * @typedef {{ steps: import('./transcript.js').Step[], at: number, current: boolean }} Plan a
+ *   task list as of its last change; current: changed since the last prompt, in this turn
+ *
+ * @typedef {{ category: string, detail: string, needs?: string }} Turn the desktop app's summary
+ *   of a session's last turn: its category ('completed', 'blocked', 'review_ready'...), what it
+ *   came to, and what you are to do when it is blocked
  *
  * @typedef {object} Agent
  * @property {string} key the same on every refresh
@@ -45,6 +65,8 @@ const STALE_AGENT = 15 * 60_000;
  * @property {string} activity what it is doing, or what it did last, in one line
  * @property {ActivityKind} activityKind
  * @property {number} activityAt since when (ms; 0 when unknown)
+ * @property {boolean} [inTool] it waits on a tool call it made, one that has run a while: a
+ *   command, a build, a download (not one starting an agent: that agent is listed under it)
  * @property {number} lastActive when it last did anything (ms)
  * @property {number} [startedAt]
  * @property {number} [processStartedAt] when the process running the session started
@@ -59,7 +81,10 @@ const STALE_AGENT = 15 * 60_000;
  * @property {string} [kind] how the session was started: desktop, cli, vscode, sdk, bg
  * @property {string} [version]
  * @property {string} [model]
- * @property {string} [effort]
+ * @property {string} [effort] the reasoning effort it works at: 'low', 'medium', 'high',
+ *   'xhigh', 'max'
+ * @property {boolean} [ultracode] a session's: the desktop app's setting, else a reminder of it
+ *   read in the transcript (sent with some prompts only, so it can be missed)
  * @property {string} [permissionMode]
  * @property {number} [ctx] tokens of context in the last reply
  * @property {number} [outTokens] output tokens in the part of the transcript read
@@ -77,9 +102,14 @@ const STALE_AGENT = 15 * 60_000;
  * @property {boolean} [unread] the desktop app shows it unread, with its blue dot: a session not
  *   at work whose last turn ended while another one was open there
  * @property {number} [openedAt] when it was last opened in the desktop app
+ * @property {Turn} [turn] of a session not at work, when it sums up the transcript's last reply
+ * @property {boolean} [blocked] its turn ended on something only you can do, as `turn` says
  * @property {string} [hostSessionId] the desktop app's ID for the session
  * @property {import('./jobs.js').Job} [job]
  * @property {{ summary: string, ts: number }[]} pending tool calls waiting for their result
+ * @property {{ summary: string, ts: number }[]} [commands] the commands it started that go on in
+ *   the background, while it runs: not known to have ended
+ * @property {Plan} [plan] its task list
  * @property {Event[]} events the latest, oldest first
  * @property {Agent[]} children
  *
@@ -300,11 +330,16 @@ export class Monitor {
       let state;
       if (record) state = record.status === 'busy' ? 'working' : record.status === 'waiting' ? 'waiting' : record.status === 'idle' ? 'idle' : 'active';
       else state = !this.seenLive.has(s.id) && now - (info?.lastTs ?? 0) < RECENT_WRITE ? 'active' : 'ended';
-      const act = activityOf(state, info, record, i === 0 ? children : []);
+      // At work for the registry, but the call it made asks you something.
+      if (state === 'working' && askingOf(info)) state = 'waiting';
+      const turn = state === 'idle' || state === 'ended' ? turnOf(d, info) : undefined;
+      const act = activityOf(state, info, record, i === 0 ? children : [], turn, now);
       if (!record && s.job?.state && !act.text) {
         Object.assign(act, { kind: 'job', text: clean(`${s.job.state}: ${s.job.needs ?? s.job.detail ?? ''}`).replace(/:$/, ''), at: s.job.updatedAt ?? 0 });
       }
-      const cwd = record?.cwd ?? info?.cwd ?? d?.cwd ?? s.job?.cwd ?? s.ended[0]?.cwd;
+      const cwd = safe(record?.cwd ?? info?.cwd ?? d?.cwd ?? s.job?.cwd ?? s.ended[0]?.cwd);
+      // At work, the effort of its turn; else the desktop app's setting, which its next turn takes.
+      const atWork = state === 'working' || state === 'waiting' || state === 'active';
       return {
         key: i === 0 ? `s:${s.id}` : `s:${s.id}:${record?.pid}`,
         type: /** @type {const} */ ('session'),
@@ -314,32 +349,38 @@ export class Monitor {
         activity: act.text,
         activityKind: act.kind,
         activityAt: act.at,
+        inTool: act.inTool || undefined,
         lastActive: Math.max(info?.lastTs || (record ? 0 : s.file?.mtimeMs ?? 0), record?.statusUpdatedAt ?? 0, s.job?.updatedAt ?? 0),
         startedAt: tx?.head?.firstTs || info?.firstTs || s.job?.createdAt || record?.startedAt,
         processStartedAt: record?.startedAt,
-        sessionId: s.id,
+        sessionId: clean(s.id),
         pid: record?.pid,
         memKB: record ? live.get(record)?.memKB : undefined,
         cwd,
         project: lastPart(cwd),
-        branch: info?.gitBranch,
+        branch: safe(info?.gitBranch),
         kind: kindLabel({ entrypoint: record?.entrypoint ?? info?.entrypoint ?? s.ended[0]?.entrypoint, kind: record?.kind ?? s.ended[0]?.kind }) || (s.job ? 'bg' : ''),
-        version: record?.version ?? info?.version,
-        model: info?.model ?? d?.model,
-        effort: info?.effort ?? d?.effort,
-        permissionMode: info?.permissionMode ?? d?.permissionMode,
+        version: safe(record?.version ?? info?.version),
+        model: safe(info?.model ?? d?.model),
+        effort: safe(atWork ? info?.effort ?? d?.effort : d?.effort ?? info?.effort),
+        ultracode: (d?.ultracode ?? info?.ultracode) || undefined,
+        permissionMode: safe(info?.permissionMode ?? d?.permissionMode),
         ctx: info?.ctx || undefined,
         outTokens: info?.outTokens || undefined,
         cost: info?.cost,
-        waitingFor: record?.waitingFor,
+        waitingFor: safe(record?.waitingFor),
         transcript: s.file?.path,
         transcriptSize: s.file?.size,
         archived: d?.archived,
         unread: d ? (state === 'idle' || state === 'ended') && this.desktop.unread(d) : undefined,
         openedAt: d?.openedAt,
-        hostSessionId: record?.hostSessionId ?? d?.id,
+        turn,
+        blocked: turn ? turn.category === 'blocked' : undefined,
+        hostSessionId: safe(record?.hostSessionId ?? d?.id),
         job: s.job,
         pending: pendingOf(info),
+        commands: record ? commandsOf(info) : undefined,
+        plan: planOf(info),
         events: info?.events ?? [],
         children: i === 0 ? children : [],
       };
@@ -412,6 +453,7 @@ export class Monitor {
       tx,
       agentType,
       background,
+      now,
     });
   }
 
@@ -450,6 +492,7 @@ export class Monitor {
         tx,
         agentType: clean(f.meta?.agentType),
         phase: clean(j?.phase) || clean(f.meta?.workflowPhase) || undefined,
+        now,
       });
     }));
     agents.sort(byActivity);
@@ -480,7 +523,7 @@ export class Monitor {
       counts,
       tokens: typeof r.totalTokens === 'number' ? r.totalTokens : undefined,
       durationMs: typeof r.durationMs === 'number' ? r.durationMs : undefined,
-      model: typeof r.defaultModel === 'string' ? r.defaultModel : undefined,
+      model: safe(r.defaultModel),
       pending: [],
       events: [],
       children: agents,
@@ -505,12 +548,12 @@ function settle(info, f, now) {
 /**
  * A subagent's or workflow agent's row.
  * @param {{ key: string, type: 'subagent' | 'agent', title: string, state: State, f: AgentFile,
- *   tx: Transcript | null, agentType?: string, phase?: string, background?: boolean }} o
+ *   tx: Transcript | null, agentType?: string, phase?: string, background?: boolean, now: number }} o
  * @returns {Agent}
  */
-function agentRow({ key, type, title, state, f, tx, agentType, phase, background }) {
+function agentRow({ key, type, title, state, f, tx, agentType, phase, background, now }) {
   const info = tx?.info;
-  const act = activityOf(state, info, undefined, []);
+  const act = activityOf(state, info, undefined, [], undefined, now);
   return {
     key,
     type,
@@ -520,21 +563,72 @@ function agentRow({ key, type, title, state, f, tx, agentType, phase, background
     activity: act.text,
     activityKind: act.kind,
     activityAt: act.at,
+    inTool: act.inTool || undefined,
     lastActive: Math.max(f.mtimeMs, info?.lastTs ?? 0),
     startedAt: tx?.head?.firstTs || info?.firstTs || undefined,
     agentId: f.id,
     agentType: agentType || undefined,
     phase,
     background,
-    model: info?.model,
+    model: safe(info?.model),
+    effort: safe(info?.effort),
     ctx: info?.ctx || undefined,
     outTokens: info?.outTokens || undefined,
     transcript: f.path,
     transcriptSize: f.size,
     pending: pendingOf(info),
+    commands: state === 'running' ? commandsOf(info) : undefined,
+    plan: planOf(info),
     events: info?.events ?? [],
     children: [],
   };
+}
+
+/**
+ * The desktop app's summary of a session's last turn, when it sums up the transcript's last
+ * reply: the app writes it a few seconds after a turn, and not after every one.
+ * @param {import('./desktop.js').DesktopSession | undefined} d
+ * @param {Info | undefined} info
+ * @returns {Turn | undefined}
+ */
+function turnOf(d, info) {
+  const s = d?.summary;
+  if (!s?.for || s.for !== info?.lastAssistantUuid) return undefined;
+  const turn = { category: clean(s.category), detail: clean(s.detail), needs: clean(s.needs) || undefined };
+  return turn.detail || turn.needs ? turn : undefined;
+}
+
+/**
+ * What a session waits on you for when a call it made asks you something: a question
+ * (AskUserQuestion), a plan to approve (ExitPlanMode), the desktop app's offer of a session.
+ * The desktop app asks these itself and keeps no file of them while they wait, nor of its
+ * permission prompts, which the monitor cannot see.
+ * @param {Info | undefined} info
+ * @returns {{ text: string, ts: number } | undefined}
+ */
+function askingOf(info) {
+  const calls = info ? [...info.pending.values()] : [];
+  for (let i = calls.length - 1; i >= 0; i--) {
+    const c = calls[i];
+    const input = c.input && typeof c.input === 'object' ? c.input : {};
+    let text;
+    switch (c.name) {
+      case 'AskUserQuestion': {
+        const qs = Array.isArray(input.questions) ? input.questions : [];
+        const first = clean(qs[0]?.question) || clean(qs[0]?.header);
+        text = first ? `a question: ${first}${qs.length > 1 ? ` (+${qs.length - 1} more)` : ''}` : 'a question';
+        break;
+      }
+      case 'ExitPlanMode':
+        text = 'a plan to approve';
+        break;
+      case 'mcp__ccd_session__start_session':
+        if (input.initiation === 'offer') text = clean(input.title) ? `a session offer: ${clean(input.title)}` : 'a session offer';
+        break;
+    }
+    if (text) return { text, ts: c.ts };
+  }
+  return undefined;
 }
 
 /**
@@ -543,17 +637,22 @@ function agentRow({ key, type, title, state, f, tx, agentType, phase, background
  * @param {Info | undefined} info
  * @param {RegistryEntry | undefined} record
  * @param {Agent[]} children
- * @returns {{ kind: ActivityKind, text: string, at: number }}
+ * @param {Turn} [turn] the desktop app's summary of the last turn
+ * @param {number} [now]
+ * @returns {{ kind: ActivityKind, text: string, at: number, inTool?: boolean }}
  */
-export function activityOf(state, info, record, children) {
+export function activityOf(state, info, record, children, turn, now = 0) {
   if (state === 'waiting') {
+    const ask = askingOf(info);
+    if (ask) return { kind: 'waiting', text: `waiting: ${ask.text}`, at: ask.ts };
     return { kind: 'waiting', text: `waiting: ${clean(record?.waitingFor) || 'for you'}`, at: record?.statusUpdatedAt ?? 0 };
   }
   if (state === 'working' || state === 'running' || state === 'active') {
     const calls = info ? [...info.pending.values()] : [];
     if (calls.length) {
       const last = calls[calls.length - 1];
-      return { kind: 'tool', text: last.summary + (calls.length > 1 ? ` (+${calls.length - 1} more)` : ''), at: last.ts };
+      const text = last.summary + (calls.length > 1 ? ` (+${calls.length - 1} more)` : '');
+      return { kind: 'tool', text, at: last.ts, inTool: !AGENT_TOOLS.has(last.name) && now - last.ts >= TOOL_WAIT && !askingOf(info) };
     }
     const running = children.filter((c) => c.state === 'running');
     if (running.length && (!info || info.lastStop === 'end_turn')) {
@@ -565,6 +664,15 @@ export function activityOf(state, info, record, children) {
   if (info?.apiError && info.lastRole === 'assistant' && info.apiError.ts >= info.lastTs - 1000) {
     return { kind: 'error', text: info.apiError.text, at: info.apiError.ts };
   }
+  const at = info?.lastReply?.ts || info?.lastTs || 0;
+  if (turn?.category === 'blocked') return { kind: 'blocked', text: `blocked: ${turn.needs || turn.detail}`, at };
+  // A session that runs, its turn over, with a command still going on in the background.
+  const commands = record ? commandsOf(info) : [];
+  if (commands.length) {
+    const last = commands[commands.length - 1];
+    return { kind: 'background', text: `background: ${last.summary}${commands.length > 1 ? ` (+${commands.length - 1} more)` : ''}`, at: last.ts };
+  }
+  if (turn?.detail) return { kind: 'summary', text: turn.detail, at };
   if (info?.lastReply) return { kind: 'reply', text: info.lastReply.text, at: info.lastReply.ts };
   if (info?.lastPrompt) return { kind: 'prompt', text: info.lastPrompt.text, at: info.lastPrompt.ts };
   return { kind: '', text: '', at: 0 };
@@ -576,6 +684,23 @@ export function activityOf(state, info, record, children) {
  */
 function pendingOf(info) {
   return info ? [...info.pending.values()].map((c) => ({ summary: c.summary, ts: c.ts })) : [];
+}
+
+/**
+ * @param {Info | undefined} info
+ * @returns {{ summary: string, ts: number }[]}
+ */
+function commandsOf(info) {
+  return info ? [...info.commands.values()].map((c) => ({ summary: c.summary, ts: c.ts })) : [];
+}
+
+/**
+ * @param {Info | undefined} info
+ * @returns {Plan | undefined}
+ */
+function planOf(info) {
+  if (!info?.plan?.steps.length) return undefined;
+  return { steps: info.plan.steps, at: info.plan.ts, current: info.plan.ts >= (info.lastPrompt?.ts ?? 0) };
 }
 
 /**

@@ -142,6 +142,146 @@ test('a tail without a whole message is widened until it has one', async (t) => 
   assert.equal(tx.info.lastReply?.text.length, 400);
 });
 
+test("the effort: the turn's, else the session's, as of the last assistant record that has one", async (t) => {
+  const path = tempFile(t);
+  writeFileSync(path, jsonl([rec.prompt('think hard', NOW - 60_000), rec.reply('On it.', NOW - 50_000, { effort: 'xhigh' })]));
+  const tx = new Transcript(path);
+  await update(tx);
+  assert.equal(tx.info.effort, 'xhigh');
+  appendFileSync(path, jsonl([rec.reply('Harder.', NOW - 40_000, { effort: 'max', perTurnEffort: null })]));
+  await update(tx);
+  assert.equal(tx.info.effort, 'max', 'no effort of the turn: the session\'s');
+  appendFileSync(path, jsonl([rec.reply('This turn only.', NOW - 30_000, { effort: 'high', perTurnEffort: 'max' })]));
+  await update(tx);
+  assert.equal(tx.info.effort, 'max', "the turn's first");
+  appendFileSync(path, jsonl([rec.apiError('Rate limited.', NOW - 20_000), rec.reply('Back.', NOW - 10_000, { effort: 'low' })]));
+  await update(tx);
+  assert.equal(tx.info.effort, 'low', 'a record without one changes nothing');
+});
+
+test('ultracode: on once a reminder of it is read, which comes after some prompts only', async (t) => {
+  const path = tempFile(t);
+  writeFileSync(path, jsonl([rec.prompt('plan it', NOW - 60_000), rec.reply('Planned.', NOW - 50_000)]));
+  const tx = new Transcript(path);
+  await update(tx);
+  assert.equal(tx.info.ultracode, false);
+  appendFileSync(path, jsonl([rec.prompt('build it', NOW - 40_000), rec.ultra(NOW - 40_000, 'sparse'), rec.reply('Built.', NOW - 30_000)]));
+  await update(tx);
+  assert.equal(tx.info.ultracode, true);
+  appendFileSync(path, jsonl([rec.prompt('test it', NOW - 20_000), rec.reply('Tested.', NOW - 10_000)]));
+  await update(tx);
+  assert.equal(tx.info.ultracode, true, 'a prompt without one changes nothing');
+});
+
+test('commands in the background: on until the message about their end, or until stopped', async (t) => {
+  const path = tempFile(t);
+  writeFileSync(path, jsonl([
+    rec.prompt('build and serve it', NOW - 60_000),
+    rec.tool('toolu_b', 'Bash', { command: 'npm run build', description: 'Build', run_in_background: true }, NOW - 50_000),
+    rec.result('toolu_b', NOW - 49_000, false, 'Command running in background with ID: b1. Output is being written to: C:\\tmp\\b1.output'),
+    rec.tool('toolu_s', 'PowerShell', { command: 'npm run serve', description: 'Serve' }, NOW - 40_000),
+    rec.result('toolu_s', NOW - 30_000, false, 'Command did not complete within its 120s timeout and was moved to the background (ID: b2). Output is being written to: C:\\tmp\\b2.output.'),
+    // Output that tells of a background command is not one.
+    rec.tool('toolu_g', 'Bash', { command: 'grep -r background logs', description: 'Search the logs' }, NOW - 20_000),
+    rec.result('toolu_g', NOW - 19_000, false, 'logs/a.txt: Command running in background with ID: b9'),
+    rec.reply('Both run.', NOW - 18_000),
+  ]));
+  const tx = new Transcript(path);
+  await update(tx);
+  assert.deepEqual([...tx.info.commands], [
+    ['toolu_b', { summary: 'Bash: Build', ts: NOW - 50_000, taskId: 'b1' }],
+    ['toolu_s', { summary: 'PowerShell: Serve', ts: NOW - 40_000, taskId: 'b2' }],
+  ]);
+
+  appendFileSync(path, jsonl([rec.taskEnd('toolu_b', 'b1', 'completed', NOW - 10_000)]));
+  await update(tx);
+  assert.deepEqual([...tx.info.commands.keys()], ['toolu_s']);
+  assert.equal(tx.info.events.at(-1)?.text, 'Bash: Build: completed in the background');
+  assert.equal(tx.info.prompts, 1, 'the message about it is no prompt');
+
+  appendFileSync(path, jsonl([
+    rec.tool('toolu_k', 'TaskStop', { task_id: 'b2' }, NOW - 5000),
+    rec.result('toolu_k', NOW - 4900, false, '{"message":"Successfully stopped task: b2 (npm run serve)","task_id":"b2"}'),
+  ]));
+  await update(tx);
+  assert.equal(tx.info.commands.size, 0);
+});
+
+test('a background command ends by a message taken in while a turn goes on', async (t) => {
+  const path = tempFile(t);
+  writeFileSync(path, jsonl([
+    rec.tool('toolu_b', 'Bash', { command: 'npm test', description: 'Run the tests', run_in_background: true }, NOW - 50_000),
+    rec.result('toolu_b', NOW - 49_000, false, 'Command running in background with ID: b1.'),
+    rec.tool('toolu_r', 'Read', { file_path: 'C:\\work\\demo\\a.js' }, NOW - 20_000),
+    rec.taskEnd('toolu_b', 'b1', 'failed', NOW - 15_000, true),
+  ]));
+  const tx = new Transcript(path);
+  await update(tx);
+  assert.equal(tx.info.commands.size, 0);
+  assert.equal(tx.info.events.at(-1)?.text, 'Bash: Run the tests: failed in the background');
+});
+
+test("a task list: the desktop app's, step by step and checked off at the end, and TodoWrite's", async (t) => {
+  const path = tempFile(t);
+  const plan = (/** @type {string} */ id, /** @type {object} */ input, /** @type {number} */ at, ok = true) => [
+    rec.tool(id, 'mcp__ccd_turn__update_plan', input, at),
+    rec.result(id, at + 100, !ok, ok ? 'Plan updated.' : 'items also needs "scope"'),
+  ];
+  const items = [{ content: 'Read the code', status: 'in_progress' }, { content: 'Fix it', status: 'pending' }, { content: 'Test it', status: 'pending' }];
+  writeFileSync(path, jsonl([rec.prompt('fix it', NOW - 60_000), ...plan('p1', { items, scope: 'first_task' }, NOW - 50_000)]));
+  const tx = new Transcript(path);
+  await update(tx);
+  const statuses = () => tx.info.plan?.steps.map((s) => s.status);
+  assert.deepEqual(tx.info.plan, { steps: [
+    { text: 'Read the code', status: 'in_progress' }, { text: 'Fix it', status: 'pending' }, { text: 'Test it', status: 'pending' },
+  ], ts: NOW - 49_900 });
+
+  appendFileSync(path, jsonl(plan('p2', { advance: true }, NOW - 40_000)));
+  await update(tx);
+  assert.deepEqual(statuses(), ['completed', 'in_progress', 'pending']);
+
+  appendFileSync(path, jsonl(plan('p3', { done: [2], start: 3 }, NOW - 30_000)));
+  await update(tx);
+  assert.deepEqual(statuses(), ['completed', 'completed', 'in_progress']);
+
+  appendFileSync(path, jsonl(plan('p4', { items: [{ content: 'x', status: 'completed' }] }, NOW - 25_000, false)));
+  await update(tx);
+  assert.deepEqual(statuses(), ['completed', 'completed', 'in_progress'], 'a call that failed changes nothing');
+
+  appendFileSync(path, jsonl([rec.tool('w1', 'mcp__ccd_turn__wrap_up', { recap: 'Fixed.' }, NOW - 20_000), rec.result('w1', NOW - 19_900, false, 'Shown in the next-step box.')]));
+  await update(tx);
+  assert.deepEqual(statuses(), ['completed', 'completed', 'completed']);
+  assert.equal(tx.info.plan?.ts, NOW - 19_900);
+  appendFileSync(path, jsonl([rec.prompt('and now?', NOW - 15_000), rec.tool('w2', 'mcp__ccd_turn__wrap_up', { recap: 'Nothing.' }, NOW - 14_000), rec.result('w2', NOW - 13_900, false, 'Shown.')]));
+  await update(tx);
+  assert.equal(tx.info.plan?.ts, NOW - 19_900, 'a list with no step in progress: still of the turn before');
+
+  appendFileSync(path, jsonl([
+    rec.tool('t1', 'TodoWrite', { todos: [{ content: 'Write \x1b[31mit', status: 'completed', activeForm: 'Writing it' }, { content: 'Ship it', status: 'in_progress', activeForm: 'Shipping it' }, { content: 'Tell', status: 'bogus' }] }, NOW - 10_000),
+    rec.result('t1', NOW - 9900, false, 'Todos have been modified successfully.'),
+  ]));
+  await update(tx);
+  assert.deepEqual(tx.info.plan?.steps, [{ text: 'Write it', status: 'completed' }, { text: 'Ship it', status: 'in_progress' }, { text: 'Tell', status: 'pending' }]);
+});
+
+test('a task list made before the tail: the tail widens to take it in', async (t) => {
+  const path = tempFile(t);
+  const filler = 'x'.repeat(10_000);
+  const records = [
+    rec.prompt('a long job', NOW - 3_600_000),
+    rec.tool('p1', 'mcp__ccd_turn__update_plan', { items: [{ content: 'One', status: 'in_progress' }, { content: 'Two', status: 'pending' }], scope: 'first_task' }, NOW - 3_500_000),
+    rec.result('p1', NOW - 3_499_000, false, 'Plan shown (2 steps).'),
+  ];
+  for (let k = 0; k < 150; k++) records.push(rec.reply(`${k} ${filler}`, NOW - 3_000_000 + k));
+  records.push(rec.tool('p2', 'mcp__ccd_turn__update_plan', { advance: true }, NOW - 2000), rec.result('p2', NOW - 1900, false, 'Plan updated: step 2 of 2 is in progress.'));
+  writeFileSync(path, jsonl(records));
+  assert.ok(statSync(path).size > TAIL_BYTES);
+  const tx = new Transcript(path);
+  await update(tx);
+  assert.deepEqual(tx.info.plan?.steps.map((s) => s.status), ['completed', 'in_progress']);
+  assert.equal(tx.info.planMissed, false);
+});
+
 test('a transcript that shrank is read again from scratch', async (t) => {
   const path = tempFile(t);
   writeFileSync(path, jsonl([rec.prompt('one', NOW - 5000), rec.prompt('two', NOW - 4000)]));

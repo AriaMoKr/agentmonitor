@@ -1,6 +1,6 @@
 // The full-screen monitor: draws on the terminal's alternate screen, reads everything again
-// every interval, redraws only the lines that changed (often, while something spins), and
-// answers keys. The terminal is put back as it was on every way out.
+// every interval, redraws the lines that changed (often, while something spins) and now and then
+// every line, and answers keys and the mouse. The terminal is put back as it was on every way out.
 import { durationLabel } from './format.js';
 import { parseKeys } from './keys.js';
 import { AGENTS_SHOWN, SORTS, detailLines, helpLines, initialUi, listLines, makeTheme, settleSelection, visibleRows } from './view.js';
@@ -10,6 +10,11 @@ export const WINDOWS = [1, 6, 24, 72, 168].map((h) => h * 3_600_000);
 
 const ENTER = '\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[2J';
 const LEAVE = '\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l';
+// Clicks and the wheel reported (1000), in the SGR form (1006), which has no limit on columns.
+const MOUSE_ON = '\x1b[?1000h\x1b[?1006h';
+const MOUSE_OFF = '\x1b[?1006l\x1b[?1000l';
+/** How soon a second click on a row opens it (ms). */
+const DOUBLE_CLICK = 500;
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -26,11 +31,13 @@ const LEAVE = '\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l';
  * @param {boolean} o.bell ring when a session starts waiting, or finishes its turn
  * @param {import('./view.js').AgentsShown} o.agents
  * @param {boolean} o.showEnded
+ * @param {boolean} [o.mouse] have the terminal report clicks and the wheel
+ * @param {number} [o.repaintMs] how often every line is drawn again, changed or not
  * @param {NodeJS.ReadStream} [o.stdin]
  * @param {NodeJS.WriteStream} [o.stdout]
  * @returns {Promise<void>}
  */
-export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEnded, stdin = process.stdin, stdout = process.stdout }) {
+export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEnded, mouse = true, repaintMs = 2000, stdin = process.stdin, stdout = process.stdout }) {
   const t = makeTheme({ color, ascii });
   const ui = { ...initialUi(), agents, showEnded };
   /** @type {Snapshot | null} */
@@ -39,10 +46,16 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
   let rows = [];
   /** @type {string[]} */
   let shown = [];
+  /** when every line was last drawn */
+  let paintedAll = 0;
   /** @type {Agent | undefined} the agent in the detail view, as last seen */
   let detail;
   /** @type {Map<string, string>} each session's state at the last refresh, for the bell */
   let states = new Map();
+  /** @type {import('./view.js').Hit[]} where a click goes, on the screen as last drawn */
+  let hits = [];
+  /** the row last clicked, and when: a second click on it soon after opens it */
+  let lastClick = { key: '', at: 0 };
   /** @type {NodeJS.Timeout | undefined} */
   let refreshTimer;
   /** @type {NodeJS.Timeout | undefined} */
@@ -56,22 +69,24 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
   const size = () => ({ width: Math.max(20, stdout.columns || 80), height: Math.max(5, stdout.rows || 24) });
   const say = (/** @type {string} */ message) => Object.assign(ui, { message, messageUntil: Date.now() + 2500 });
 
+  // Raw mode around the mouse's modes: on Windows it is the console's VT input, and only while
+  // that is on does the console pass them on to the terminal (Windows Terminal, VS Code's).
   function setup() {
-    stdout.write(ENTER);
-    shown = [];
     stdin.setRawMode(true);
     stdin.setEncoding('utf8');
     stdin.resume();
+    stdout.write(ENTER + (mouse ? MOUSE_ON : ''));
+    shown = [];
   }
 
   function restore() {
+    stdout.write((mouse ? MOUSE_OFF : '') + LEAVE);
     try {
       stdin.setRawMode(false);
     } catch {
       // stdin closed already
     }
     stdin.pause();
-    stdout.write(LEAVE);
   }
 
   function close() {
@@ -89,10 +104,14 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
     finish();
   }
 
-  /** Writes the lines that differ from what is on screen. */
+  /** Writes the lines that differ from what is on screen, and every few seconds all of them. */
   function paint(/** @type {string[]} */ lines) {
+    // A terminal can lose lines without telling the program: the desktop app's Terminal panel
+    // has, with no resize reaching it. Every line drawn again now and then mends that.
+    const all = Date.now() - paintedAll >= repaintMs;
+    if (all) paintedAll = Date.now();
     let out = '';
-    for (let i = 0; i < lines.length; i++) if (lines[i] !== shown[i]) out += `\x1b[${i + 1};1H${lines[i]}\x1b[0m`;
+    for (let i = 0; i < lines.length; i++) if (all || lines[i] !== shown[i]) out += `\x1b[${i + 1};1H${lines[i]}\x1b[0m`;
     if (lines.length < shown.length) out += `\x1b[${lines.length + 1};1H\x1b[J`;
     shown = lines;
     if (out) stdout.write(out);
@@ -102,26 +121,27 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
     if (closed) return;
     const { width, height } = size();
     const now = Date.now();
+    hits = [];
     if (!snap) {
       paint([` ${t.bold('Claude agents')}  ${t.dim(`reading ${monitor.dir}`)}`]);
       return;
     }
     if (ui.view === 'help') {
-      paint(helpLines({ width, height, now }, t, monitor.dir));
+      paint(helpLines({ width, height, now }, t, monitor.dir, mouse));
       return;
     }
     rows = visibleRows(snap, ui, t);
     if (ui.view === 'detail') {
       detail = find(snap, ui.selected) ?? detail;
       if (detail) {
-        paint(detailLines(detail, snap, ui, { width, height, now }, t));
+        paint(detailLines(detail, snap, ui, { width, height, now }, t, hits));
         return;
       }
       ui.view = 'list';
       focus();
     }
     settleSelection(ui, rows, height - 3);
-    paint(listLines(snap, rows, ui, { width, height, now }, t));
+    paint(listLines(snap, rows, ui, { width, height, now }, t, hits));
   }
 
   /** Redraws now and again soon: ten times a second while something spins, else each second. */
@@ -182,6 +202,55 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
     ui.selected = rows[ui.index].agent.key;
   }
 
+  /** Opens the details of the selected row. */
+  function open() {
+    if (rows.length) Object.assign(ui, { view: 'detail', logScroll: 0 });
+    detail = undefined;
+    focus();
+  }
+
+  function sortBy(/** @type {import('./view.js').Sort} */ sort) {
+    ui.sort = sort;
+    say(`sorted by ${sort === 'recent' ? 'most recent' : sort}`);
+  }
+
+  /**
+   * A click on a row selects it, and a second one soon after opens it; one on a column's title
+   * sorts by it, one on a key presses it, one on an agent in the details opens that agent. The
+   * wheel moves the selection, or scrolls the activity in the details.
+   */
+  function onMouse(/** @type {import('./keys.js').Mouse} */ m) {
+    if (m.release || m.motion) return;
+    if (m.button === 'wheelup' || m.button === 'wheeldown') {
+      const by = m.button === 'wheelup' ? -1 : 1;
+      if (ui.view === 'detail') ui.logScroll = Math.max(0, ui.logScroll - 3 * by);
+      else if (ui.view === 'list') move(by);
+      return;
+    }
+    if (m.button !== 'left') return;
+    if (ui.view === 'help') {
+      ui.view = 'list';
+      return;
+    }
+    const action = hits.find((h) => h.y === m.y && m.x >= h.x0 && m.x < h.x1)?.action;
+    if (!action) return;
+    if ('key' in action) return onKey({ name: action.key });
+    // A click on anything else ends the typing of a filter, as Enter does.
+    ui.editingFilter = false;
+    if ('sort' in action) return sortBy(action.sort);
+    if ('open' in action) {
+      Object.assign(ui, { selected: action.open, logScroll: 0 });
+      detail = undefined;
+      focus();
+      return;
+    }
+    const now = Date.now();
+    const again = action.select === lastClick.key && now - lastClick.at < DOUBLE_CLICK;
+    lastClick = again ? { key: '', at: 0 } : { key: action.select, at: now };
+    ui.selected = action.select;
+    if (again) open();
+  }
+
   function onKey(/** @type {import('./keys.js').Key} */ key) {
     const page = Math.max(1, size().height - 4);
     if (key.ctrl && key.name === 'c') return close();
@@ -236,10 +305,7 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
       case 'home': case 'g': return move(0, 0);
       case 'end': case 'G': return move(0, rows.length - 1);
       case 'enter': case 'right': case 'l':
-        if (rows.length) Object.assign(ui, { view: 'detail', logScroll: 0 });
-        detail = undefined;
-        focus();
-        return;
+        return open();
       case '/':
         ui.editingFilter = true;
         return;
@@ -247,9 +313,7 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
         ui.filter = '';
         return;
       case 's':
-        ui.sort = SORTS[(SORTS.indexOf(ui.sort) + 1) % SORTS.length];
-        say(`sorted by ${ui.sort === 'recent' ? 'most recent' : ui.sort}`);
-        return;
+        return sortBy(SORTS[(SORTS.indexOf(ui.sort) + 1) % SORTS.length]);
       case 'e':
         ui.showEnded = !ui.showEnded;
         say(ui.showEnded ? 'showing the sessions that ended' : 'hiding the sessions that ended');
@@ -277,7 +341,8 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
 
   function onData(/** @type {string} */ data) {
     for (const key of parseKeys(data)) {
-      onKey(key);
+      if (key.mouse) onMouse(key.mouse);
+      else onKey(key);
       if (closed) return;
     }
     frame();

@@ -32,12 +32,14 @@ Options:
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
+      --no-mouse         leave the mouse to the terminal (to select text)
   -v, --version
   -h, --help
 
 Times: 30s, 5m, 2h, 1d, 1w.
 Keys: arrows move, Enter shows details, / filters, s sorts, e hides ended,
-a cycles agents, w cycles the window, ? help, q quits.
+a cycles agents, w cycles the window, ? help, q quits. The mouse: a click
+selects, a double click shows details, the wheel moves.
 `;
 
 /**
@@ -64,6 +66,7 @@ try {
       ascii: { type: 'boolean' },
       color: { type: 'boolean' },
       'no-color': { type: 'boolean' },
+      'no-mouse': { type: 'boolean' },
       version: { type: 'boolean', short: 'v' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -103,7 +106,9 @@ const color = values['no-color'] ? false : values.color || forced || (Boolean(pr
 const ascii = Boolean(values.ascii);
 
 if (interactive) {
-  await runTui(monitor, { intervalMs, color, ascii, bell: Boolean(values.bell), agents, showEnded: !values['hide-ended'] });
+  await runTui(monitor, {
+    intervalMs, color, ascii, bell: Boolean(values.bell), agents, showEnded: !values['hide-ended'], mouse: !values['no-mouse'],
+  });
   process.exit(0);
 }
 

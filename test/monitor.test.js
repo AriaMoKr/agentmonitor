@@ -87,6 +87,90 @@ test('waiting and idle sessions; a name the user gave comes first', async (t) =>
   assert.equal(i?.activityKind, 'reply');
 });
 
+test('a call that asks you something: a question, a plan to approve, the offer of a session', async (t) => {
+  const cfg = makeConfig(t);
+  /** @param {number} pid @param {object[]} records */
+  const session = (pid, records) => {
+    const id = sessionId();
+    cfg.transcript(id, [rec.prompt('Plan the release', NOW - 5 * MINUTE), ...records], { mtime: NOW - MINUTE });
+    cfg.registry({ pid, sessionId: id, status: 'busy', entrypoint: 'claude-desktop', statusUpdatedAt: NOW - 5 * MINUTE });
+    return id;
+  };
+  const questions = [{ question: 'Which \x1b[1mbranch?', header: 'Branch', options: [], multiSelect: false }, { question: 'Tag it?', header: 'Tag', options: [], multiSelect: false }];
+  const question = session(1, [rec.tool('q1', 'AskUserQuestion', { questions }, NOW - MINUTE)]);
+  const plan = session(2, [rec.tool('p1', 'ExitPlanMode', { plan: '1. Build\n2. Ship' }, NOW - MINUTE)]);
+  const offer = session(3, [rec.tool('o1', 'mcp__ccd_session__start_session', { initiation: 'offer', title: 'Fix the docs' }, NOW - MINUTE)]);
+  const started = session(4, [rec.tool('o2', 'mcp__ccd_session__start_session', { initiation: 'user_asked', title: 'Fix the docs' }, NOW - MINUTE)]);
+  const answered = session(5, [rec.tool('q2', 'AskUserQuestion', { questions }, NOW - 2 * MINUTE), rec.result('q2', NOW - MINUTE, false, 'User has answered your questions: "Which branch?"="main".')]);
+  const running = Object.fromEntries([1, 2, 3, 4, 5].map((pid) => [pid, 'claude.exe']));
+  const rows = (await monitorOf(cfg, { running }).monitor.refresh(NOW)).rows;
+  const seen = (/** @type {string} */ id) => {
+    const r = rows.find((x) => x.sessionId === id);
+    return [r?.state, r?.activityKind, r?.activity, r?.activityAt, r?.inTool];
+  };
+  assert.deepEqual(seen(question), ['waiting', 'waiting', 'waiting: a question: Which branch? (+1 more)', NOW - MINUTE, undefined]);
+  assert.deepEqual(seen(plan), ['waiting', 'waiting', 'waiting: a plan to approve', NOW - MINUTE, undefined]);
+  assert.deepEqual(seen(offer), ['waiting', 'waiting', 'waiting: a session offer: Fix the docs', NOW - MINUTE, undefined]);
+  assert.deepEqual(seen(started), ['working', 'tool', 'ccd_session:start_session: user_asked', NOW - MINUTE, true], 'a session started without asking: a tool it waits on');
+  assert.deepEqual(seen(answered), ['working', 'thinking', 'thinking', NOW - MINUTE, undefined]);
+});
+
+test('in a tool: a call other than an agent, a few seconds after it was made', async (t) => {
+  const cfg = makeConfig(t);
+  /** @param {number} pid @param {string} name @param {object} input @param {number} at */
+  const session = (pid, name, input, at) => {
+    const id = sessionId();
+    cfg.transcript(id, [rec.prompt('Build it', NOW - 5 * MINUTE), rec.tool(`toolu_${pid}`, name, input, at)], { mtime: at });
+    cfg.registry({ pid, sessionId: id, status: 'busy', statusUpdatedAt: at });
+    return id;
+  };
+  const long = session(1, 'Bash', { command: 'npm run build', description: 'Build' }, NOW - 3000);
+  const short = session(2, 'Bash', { command: 'ls' }, NOW - 2900);
+  const agent = session(3, 'Agent', { subagent_type: 'Explore', description: 'Find the parser' }, NOW - MINUTE);
+  const running = { 1: 'claude.exe', 2: 'claude.exe', 3: 'claude.exe' };
+  const rows = (await monitorOf(cfg, { running }).monitor.refresh(NOW)).rows;
+  const seen = (/** @type {string} */ id) => {
+    const r = rows.find((x) => x.sessionId === id);
+    return [r?.state, r?.activity, r?.inTool];
+  };
+  assert.deepEqual(seen(long), ['working', 'Bash: Build', true]);
+  assert.deepEqual(seen(short), ['working', 'Bash: ls', undefined]);
+  assert.deepEqual(seen(agent), ['working', 'Agent: Explore: Find the parser', undefined], 'an agent at work is shown as one');
+});
+
+test('a command in the background of a session whose turn is over; its task list, of this turn or an earlier one', async (t) => {
+  const cfg = makeConfig(t);
+  const steps = [{ content: 'Build', status: 'completed' }, { content: 'Serve', status: 'in_progress' }, { content: 'Check', status: 'pending' }];
+  const records = [
+    rec.prompt('Serve it', NOW - 10 * MINUTE),
+    rec.tool('p1', 'mcp__ccd_turn__update_plan', { items: steps, scope: 'first_task' }, NOW - 9 * MINUTE),
+    rec.result('p1', NOW - 9 * MINUTE + 100, false, 'Plan shown (3 steps).'),
+    rec.tool('b1', 'Bash', { command: 'npm run serve', description: 'Serve the site', run_in_background: true }, NOW - 8 * MINUTE),
+    rec.result('b1', NOW - 8 * MINUTE + 500, false, 'Command running in background with ID: bx1.'),
+    rec.reply('It serves on port 8080.', NOW - 7 * MINUTE),
+  ];
+  const live = sessionId();
+  cfg.transcript(live, records, { mtime: NOW - 7 * MINUTE });
+  cfg.registry({ pid: 1, sessionId: live, status: 'idle', statusUpdatedAt: NOW - 7 * MINUTE });
+  const ended = sessionId();
+  cfg.transcript(ended, records, { mtime: NOW - 7 * MINUTE });
+  const later = sessionId();
+  cfg.transcript(later, [...records, rec.prompt('Thanks', NOW - 2 * MINUTE), rec.reply('You are welcome.', NOW - MINUTE)], { mtime: NOW - MINUTE });
+  cfg.registry({ pid: 2, sessionId: later, status: 'idle', statusUpdatedAt: NOW - MINUTE });
+  const rows = (await monitorOf(cfg, { running: { 1: 'claude.exe', 2: 'claude.exe' } }).monitor.refresh(NOW)).rows;
+  const row = (/** @type {string} */ id) => rows.find((r) => r.sessionId === id);
+  const plan = { steps: steps.map((s) => ({ text: s.content, status: s.status })), at: NOW - 9 * MINUTE + 100, current: true };
+
+  const l = row(live);
+  assert.deepEqual([l?.state, l?.activityKind, l?.activity, l?.activityAt], ['idle', 'background', 'background: Bash: Serve the site', NOW - 8 * MINUTE]);
+  assert.deepEqual(l?.commands, [{ summary: 'Bash: Serve the site', ts: NOW - 8 * MINUTE }]);
+  assert.deepEqual(l?.plan, plan);
+  // Its process gone, nothing goes on in the background.
+  const e = row(ended);
+  assert.deepEqual([e?.state, e?.activityKind, e?.activity, e?.commands], ['ended', 'reply', 'It serves on port 8080.', undefined]);
+  assert.deepEqual(row(later)?.plan, { ...plan, current: false }, 'made before the last prompt');
+});
+
 test('a session two processes run has a row for each', async (t) => {
   const cfg = makeConfig(t);
   const id = sessionId();
@@ -172,7 +256,7 @@ test('subagents: at work, done when their call returned or they finished, ended 
   const bg = { requestShape: 'background' };
   cfg.subagent(id, 'a1', { ...fg, agentType: 'Explore', description: 'find the parser', toolUseId: 'toolu_a1' }, [
     rec.prompt('find the parser', NOW - 9 * MINUTE),
-    rec.tool('toolu_x', 'Grep', { pattern: 'parse', path: 'C:\\work\\demo\\src' }, NOW - 20_000),
+    rec.tool('toolu_x', 'Grep', { pattern: 'parse', path: 'C:\\work\\demo\\src' }, NOW - 20_000, { effort: 'medium' }),
   ], { mtime: NOW - 20_000 });
   cfg.subagent(id, 'a2', { ...fg, agentType: 'general-purpose', description: 'write tests', toolUseId: 'toolu_a2' }, [
     rec.prompt('write tests', NOW - 9 * MINUTE),
@@ -205,6 +289,7 @@ test('subagents: at work, done when their call returned or they finished, ended 
   assert.equal(a1.activity, 'Grep: parse in src');
   assert.equal(a1.activityAt, NOW - 20_000);
   assert.equal(a1.ctx, 60_005);
+  assert.equal(a1.effort, 'medium');
   assert.equal(a2.lastActive, NOW - 2 * MINUTE);
   assert.equal(a3.background, true);
 });
@@ -250,7 +335,7 @@ test('workflow runs: one at work, with its agents, and one finished, with its re
     agents: [
       {
         id: 'w1', label: 'review:bugs', phase: 'Review', state: 'running',
-        records: [rec.prompt('find bugs', NOW - 18 * MINUTE), rec.tool('toolu_r1', 'Read', { file_path: 'C:\\work\\demo\\src\\a.js' }, NOW - 10_000)],
+        records: [rec.prompt('find bugs', NOW - 18 * MINUTE), rec.tool('toolu_r1', 'Read', { file_path: 'C:\\work\\demo\\src\\a.js' }, NOW - 10_000, { effort: 'low' })],
       },
       {
         id: 'w2', label: 'review:perf', phase: 'Review', state: 'done',
@@ -278,10 +363,11 @@ test('workflow runs: one at work, with its agents, and one finished, with its re
   assert.deepEqual(run.counts, { running: 1, done: 1, failed: 0, total: 2 });
   assert.equal(run.phase, 'Review');
   assert.equal(run.activity, 'Review: 1 running, 1/2 done');
-  assert.deepEqual(run.children.map((a) => [a.key, a.title, a.state, a.activity]), [
-    [`a:${id}:w1`, 'review:bugs', 'running', 'Read: src\\a.js'],
-    [`a:${id}:w2`, 'review:perf', 'done', ''],
+  assert.deepEqual(run.children.map((a) => [a.key, a.title, a.state, a.activity, a.effort]), [
+    [`a:${id}:w1`, 'review:bugs', 'running', 'Read: src\\a.js', 'low'],
+    [`a:${id}:w2`, 'review:perf', 'done', '', undefined],
   ]);
+  assert.equal(run.effort, undefined, 'a run has none of its own: its agents each have theirs');
   assert.equal(done.title, 'find-flaky-tests');
   assert.equal(done.state, 'done');
   assert.equal(done.activity, 'completed, 1 agent');
@@ -327,6 +413,81 @@ test("a background job, and the desktop app's title and settings", async (t) => 
   assert.equal(d?.model, 'claude-sonnet-5-5');
   assert.equal(d?.effort, 'high');
   assert.equal(d?.permissionMode, 'acceptEdits');
+});
+
+test("the effort: of the turn at work, else the desktop app's setting, which the next turn takes", async (t) => {
+  const cfg = makeConfig(t);
+  /** @param {number} pid @param {string | undefined} status none: its process is gone @param {string} [app] the app's setting; '' none */
+  const session = (pid, status, app) => {
+    const id = sessionId();
+    const records = [rec.prompt('Work', NOW - 10 * MINUTE), rec.tool(`toolu_${pid}`, 'Read', { file_path: 'a.js' }, NOW - 9 * MINUTE, { effort: 'xhigh' })];
+    if (status !== 'busy') records.push(rec.result(`toolu_${pid}`, NOW - 9 * MINUTE + 500), rec.reply('Read it.', NOW - 8 * MINUTE, { effort: 'xhigh' }));
+    cfg.transcript(id, records, { mtime: NOW - 8 * MINUTE });
+    const local = `local_${pid}`;
+    if (status) cfg.registry({ pid, sessionId: id, status, entrypoint: app === undefined ? 'cli' : 'claude-desktop', statusUpdatedAt: NOW - 8 * MINUTE });
+    if (app !== undefined) cfg.desktopSession({ sessionId: local, cliSessionId: id, title: local, ...(app ? { effort: app } : {}) });
+    return id;
+  };
+  const working = session(1, 'busy', 'max');
+  const idle = session(2, 'idle', 'max');
+  const cli = session(3, 'idle');
+  const ended = session(4, undefined, 'max');
+  const unset = session(5, 'idle', '');
+  const rows = (await monitorOf(cfg, { running: { 1: 'claude.exe', 2: 'claude.exe', 3: 'claude.exe', 5: 'claude.exe' } }).monitor.refresh(NOW)).rows;
+  const effort = (/** @type {string} */ id) => {
+    const r = rows.find((x) => x.sessionId === id);
+    return [r?.state, r?.effort];
+  };
+  assert.deepEqual(effort(working), ['working', 'xhigh'], "at work: its turn's, though the app was set to another since");
+  assert.deepEqual(effort(idle), ['idle', 'max']);
+  assert.deepEqual(effort(cli), ['idle', 'xhigh'], 'no app: its last reply\'s');
+  assert.deepEqual(effort(ended), ['ended', 'max']);
+  assert.deepEqual(effort(unset), ['idle', 'xhigh'], 'the app has none');
+});
+
+test("ultracode: the desktop app's setting for a session, else a reminder of it in the transcript", async (t) => {
+  const cfg = makeConfig(t);
+  /**
+   * @param {number} pid @param {boolean} reminded a reminder came after its prompt
+   * @param {Record<string, unknown> | null} [settings] the app's sessionSettings; null: a record without them; none: no record
+   */
+  const session = (pid, reminded, settings) => {
+    const id = sessionId();
+    const records = [rec.prompt('Work', NOW - 10 * MINUTE), ...(reminded ? [rec.ultra(NOW - 10 * MINUTE)] : []), rec.reply('Done.', NOW - 8 * MINUTE, { effort: 'max' })];
+    cfg.transcript(id, records, { mtime: NOW - 8 * MINUTE });
+    cfg.registry({ pid, sessionId: id, status: 'idle', entrypoint: settings === undefined ? 'cli' : 'claude-desktop', statusUpdatedAt: NOW - 8 * MINUTE });
+    if (settings !== undefined) cfg.desktopSession({ sessionId: `local_${pid}`, cliSessionId: id, title: `local_${pid}`, ...(settings ? { sessionSettings: settings } : {}) });
+    return id;
+  };
+  const on = session(1, false, { ultracode: true });
+  const off = session(2, true, {});
+  const unset = session(3, true, null);
+  const cli = session(4, true);
+  const none = session(5, false);
+  const rows = (await monitorOf(cfg, { running: { 1: 'claude.exe', 2: 'claude.exe', 3: 'claude.exe', 4: 'claude.exe', 5: 'claude.exe' } }).monitor.refresh(NOW)).rows;
+  const ultracode = (/** @type {string} */ id) => rows.find((r) => r.sessionId === id)?.ultracode;
+  assert.equal(ultracode(on), true, 'though no reminder was read');
+  assert.equal(ultracode(off), undefined, "the app's setting over a reminder before it");
+  assert.equal(ultracode(unset), true, 'the app keeps no settings for it: the reminder');
+  assert.equal(ultracode(cli), true);
+  assert.equal(ultracode(none), undefined);
+});
+
+test('what the files say is cleaned before it is drawn: the folder, branch, model and effort, a job', async (t) => {
+  const cfg = makeConfig(t);
+  const id = sessionId();
+  cfg.transcript(id, [rec.prompt('Hello', NOW - 5 * MINUTE, { gitBranch: '\x1b[31mmain', permissionMode: 'accept\x1b[0mEdits' })], { mtime: NOW - 5 * MINUTE });
+  cfg.registry({ pid: 90, sessionId: id, status: 'idle', cwd: 'C:\\work\\\x1b]0;pwned\x07demo', version: '2.1.309\x1b[5m', entrypoint: 'claude-desktop', statusUpdatedAt: NOW - 5 * MINUTE });
+  cfg.desktopSession({ sessionId: 'local_e', cliSessionId: id, model: '\x1b[2Jclaude-sonnet-5-5', effort: 'max\x07' });
+  const job = sessionId();
+  cfg.job('j2', { sessionId: job, name: 'Triage', state: '\x1b[1mblocked', needs: 'approve \x1b]8;;http://x\x07the plan\x1b]8;;\x07', updatedAt: iso(NOW - MINUTE) });
+  const rows = (await monitorOf(cfg, { running: { 90: 'claude.exe' } }).monitor.refresh(NOW)).rows;
+  const s = rows.find((r) => r.sessionId === id);
+  assert.deepEqual([s?.cwd, s?.project, s?.branch, s?.version, s?.model, s?.effort, s?.permissionMode], [
+    'C:\\work\\demo', 'demo', 'main', '2.1.309', 'claude-sonnet-5-5', 'max', 'acceptEdits',
+  ]);
+  const j = rows.find((r) => r.sessionId === job);
+  assert.deepEqual([j?.job?.id, j?.job?.state, j?.job?.needs, j?.activity], ['j2', 'blocked', 'approve the plan', 'blocked: approve the plan']);
 });
 
 /**
@@ -383,6 +544,38 @@ test('the monitor remembers the openings it saw, which a record forgets when its
   assert.equal(await unread(monitorOf(cfg, { running }).monitor, NOW + 2 * MINUTE), false);
   cfg.desktopSession({ sessionId: 'local_x', cliSessionId: x, lastFocusedAt: NOW + 3 * MINUTE, lastTurnEdgeAt: NOW - 2 * MINUTE }, NOW + 3 * MINUTE);
   assert.equal(await unread(monitor, NOW + 4 * MINUTE), false);
+});
+
+test("the desktop app's summary of a session's last turn: what it came to, or what you are to do", async (t) => {
+  const cfg = makeConfig(t);
+  // The uuid of the reply desktopSession writes.
+  const reply = `r${NOW - 2 * MINUTE}`;
+  const summary = (/** @type {Record<string, unknown>} */ o) => ({
+    postTurnSummary: { status_category: 'completed', status_detail: 'Topics set; homepage unchanged', needs_action: '', summarizes_uuid: reply, ...o },
+  });
+  const blocked = { status_category: 'blocked', status_detail: 'Stutter: picture or sound?', needs_action: 'say whether the stutter was picture or sound' };
+  desktopSession(cfg, 1, 'local_done', summary({}));
+  desktopSession(cfg, 2, 'local_blocked', summary(blocked));
+  desktopSession(cfg, 3, 'local_stale', summary({ ...blocked, summarizes_uuid: 'r-an-older-reply' }));
+  desktopSession(cfg, 4, 'local_busy', summary(blocked), 'busy');
+  desktopSession(cfg, 5, 'local_ended', summary({ ...blocked, needs_action: 'open the \x1b[31mPR\x1b[0m' }));
+  desktopSession(cfg, 6, 'local_for', { ...summary({ summarizes_uuid: undefined }), postTurnSummaryFor: reply });
+  const running = Object.fromEntries([1, 2, 3, 4, 6].map((pid) => [pid, 'claude.exe']));
+  const rows = (await monitorOf(cfg, { running }).monitor.refresh(NOW)).rows;
+  const row = (/** @type {string} */ local) => rows.find((r) => r.hostSessionId === local);
+  const seen = (/** @type {string} */ local) => {
+    const r = row(local);
+    return [r?.state, r?.activityKind, r?.activity, r?.blocked];
+  };
+  assert.deepEqual(seen('local_done'), ['idle', 'summary', 'Topics set; homepage unchanged', false]);
+  assert.deepEqual(row('local_done')?.turn, { category: 'completed', detail: 'Topics set; homepage unchanged', needs: undefined });
+  assert.deepEqual(seen('local_blocked'), ['idle', 'blocked', 'blocked: say whether the stutter was picture or sound', true]);
+  assert.deepEqual(row('local_blocked')?.turn, { category: 'blocked', detail: 'Stutter: picture or sound?', needs: 'say whether the stutter was picture or sound' });
+  assert.deepEqual(seen('local_stale'), ['idle', 'reply', 'Done.', undefined], 'a summary of an older reply is not used');
+  assert.equal(row('local_stale')?.turn, undefined);
+  assert.deepEqual(seen('local_busy'), ['working', 'thinking', 'thinking', undefined], 'nor one of a session at work');
+  assert.deepEqual(seen('local_ended'), ['ended', 'blocked', 'blocked: open the PR', true]);
+  assert.deepEqual(seen('local_for'), ['idle', 'summary', 'Topics set; homepage unchanged', false]);
 });
 
 test('the window can change between refreshes', async (t) => {

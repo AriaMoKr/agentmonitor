@@ -52,7 +52,7 @@ test('--once prints a table of the sessions, and so does a run whose output is n
   const cfg = makeConfig(t);
   const now = Date.now();
   const live = sessionId();
-  cfg.transcript(live, [rec.prompt('Live session', now - 5 * MINUTE), rec.tool('toolu_1', 'Bash', { command: 'npm test' }, now - 10_000)]);
+  cfg.transcript(live, [rec.prompt('Live session', now - 5 * MINUTE), rec.tool('toolu_1', 'Bash', { command: 'npm test' }, now - 10_000, { effort: 'xhigh' })]);
   // This test's process (a Node) stands in for a Claude Code process.
   cfg.registry({ pid: process.pid, sessionId: live, cwd: '/work/live', status: 'busy', statusUpdatedAt: now - 10_000 });
   const ended = sessionId();
@@ -61,9 +61,10 @@ test('--once prints a table of the sessions, and so does a run whose output is n
     const { code, stdout, stderr } = await run([...args, '--dir', cfg.dir], { COLUMNS: '120' });
     assert.equal(code, 0, stderr);
     const lines = stdout.trimEnd().split('\n');
-    assert.match(lines[0], /^ Claude agents {2}● 1 working {2}· 1 ended$/);
-    assert.match(lines[1], /NAME +PROJECT +KIND +MODEL +CTX +ACTIVITY +LAST$/);
-    assert.match(stdout, /● Live session +live +cli +opus 5\.5 +60k +Bash: npm test +\d+s +\d+s\n/);
+    // Its command has run for 10s: it waits on a tool.
+    assert.match(lines[0], /^ Claude agents {2}◐ 1 in a tool {2}· 1 ended$/);
+    assert.match(lines[1], /NAME +PROJECT +KIND +MODEL +EFFORT +CTX +ACTIVITY +LAST$/);
+    assert.match(stdout, /◐ Live session +live +cli +opus 5\.5 +xhigh +60k +Bash: npm test +\d+s +\d+s\n/);
     assert.match(stdout, /· Ended session +demo .*All done\. +1h\n/);
     for (const l of lines) assert.ok(width(l) <= 120, l);
     assert.doesNotMatch(stdout, /\x1b\[/, 'no colors in a pipe');

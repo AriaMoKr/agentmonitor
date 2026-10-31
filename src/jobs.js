@@ -2,6 +2,7 @@
 // job is doing ('working', 'blocked' on a question...), its title and the session it runs.
 import { join } from 'node:path';
 import { entries, JsonFiles } from './files.js';
+import { clean } from './format.js';
 
 /**
  * @typedef {object} Job
@@ -45,14 +46,16 @@ export class Jobs {
  */
 export function toJob(id, o) {
   const str = (/** @type {unknown} */ v) => (typeof v === 'string' && v ? v : undefined);
+  // What is drawn as it is, safe to.
+  const text = (/** @type {unknown} */ v) => (typeof v === 'string' && clean(v)) || undefined;
   const time = (/** @type {unknown} */ v) => (typeof v === 'string' ? Date.parse(v) || undefined : typeof v === 'number' ? v : undefined);
   return {
-    id,
+    id: clean(id),
     sessionId: str(o.sessionId),
-    name: str(o.name),
-    state: str(o.state),
-    detail: str(o.detail),
-    needs: str(o.needs),
+    name: text(o.name),
+    state: text(o.state),
+    detail: text(o.detail),
+    needs: text(o.needs),
     cwd: str(o.cwd),
     createdAt: time(o.createdAt),
     updatedAt: time(o.updatedAt),

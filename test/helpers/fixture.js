@@ -20,6 +20,17 @@ export function sessionId() {
 }
 
 /**
+ * The effort fields of an assistant record: the session's, and the turn's (the same, as
+ * Claude Code writes them; null in some older versions). None when not given.
+ * @param {string | undefined} effort
+ * @param {string | null | undefined} perTurnEffort
+ */
+const efforts = (effort, perTurnEffort) => ({
+  ...(effort === undefined ? {} : { effort }),
+  ...(perTurnEffort === undefined ? {} : { perTurnEffort }),
+});
+
+/**
  * Transcript records, as Claude Code writes them.
  */
 export const rec = {
@@ -28,31 +39,54 @@ export const rec = {
     parentUuid: null, isSidechain: false, type: 'user', message: { role: 'user', content: text },
     uuid: `u${at}`, timestamp: iso(at), cwd: 'C:\\work\\demo', sessionId: 's', version: '2.1.309', gitBranch: 'main', entrypoint: 'cli', ...extra,
   }),
-  /** @param {string} text @param {number} at @param {{ model?: string, id?: string, ctx?: number, out?: number }} [o] */
-  reply: (text, at, { model = 'claude-opus-5-5', id = `msg_${at}`, ctx = 50_000, out = 100 } = {}) => ({
-    parentUuid: 'x', isSidechain: false, type: 'assistant', timestamp: iso(at), cwd: 'C:\\work\\demo',
+  /**
+   * @param {string} text @param {number} at
+   * @param {{ model?: string, id?: string, ctx?: number, out?: number, effort?: string, perTurnEffort?: string | null }} [o]
+   */
+  reply: (text, at, { model = 'claude-opus-5-5', id = `msg_${at}`, ctx = 50_000, out = 100, effort, perTurnEffort = effort } = {}) => ({
+    parentUuid: 'x', isSidechain: false, type: 'assistant', uuid: `r${at}`, timestamp: iso(at), cwd: 'C:\\work\\demo',
+    ...efforts(effort, perTurnEffort),
     message: {
       model, id, type: 'message', role: 'assistant', content: [{ type: 'text', text }], stop_reason: 'end_turn',
       usage: { input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: ctx - 1010, output_tokens: out },
     },
   }),
-  /** @param {string} toolId @param {string} name @param {object} input @param {number} at @param {{ id?: string, out?: number }} [o] */
-  tool: (toolId, name, input, at, { id = `msg_${at}`, out = 50 } = {}) => ({
-    parentUuid: 'x', isSidechain: false, type: 'assistant', timestamp: iso(at), cwd: 'C:\\work\\demo',
+  /**
+   * @param {string} toolId @param {string} name @param {object} input @param {number} at
+   * @param {{ id?: string, out?: number, effort?: string, perTurnEffort?: string | null }} [o]
+   */
+  tool: (toolId, name, input, at, { id = `msg_${at}`, out = 50, effort, perTurnEffort = effort } = {}) => ({
+    parentUuid: 'x', isSidechain: false, type: 'assistant', uuid: `t${at}`, timestamp: iso(at), cwd: 'C:\\work\\demo',
+    ...efforts(effort, perTurnEffort),
     message: {
       model: 'claude-opus-5-5', id, type: 'message', role: 'assistant', content: [{ type: 'tool_use', id: toolId, name, input }], stop_reason: 'tool_use',
       usage: { input_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 60_000, output_tokens: out },
     },
   }),
-  /** @param {string} toolId @param {number} at @param {boolean} [isError] */
-  result: (toolId, at, isError = false) => ({
+  /** @param {string} toolId @param {number} at @param {boolean} [isError] @param {string} [text] what the result says */
+  result: (toolId, at, isError = false, text = isError ? 'Exit code 1\nboom' : 'ok') => ({
     parentUuid: 'x', isSidechain: false, type: 'user', timestamp: iso(at),
-    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: isError ? 'Exit code 1\nboom' : 'ok', is_error: isError }] },
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: text, is_error: isError }] },
     toolUseResult: { stdout: 'ok' },
+  }),
+  /**
+   * The message Claude Code sends a session when a task it runs in the background ends: as a
+   * prompt of its own, or (queued) taken in while a turn goes on.
+   * @param {string} toolId the call that started it @param {string} taskId @param {string} status @param {number} at @param {boolean} [queued]
+   */
+  taskEnd: (toolId, taskId, status, at, queued = false) => {
+    const text = `<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>${toolId}</tool-use-id>\n<output-file>C:\\tmp\\${taskId}.output</output-file>\n<status>${status}</status>\n<summary>Background command ${status}</summary>\n</task-notification>`;
+    return queued
+      ? { parentUuid: 'x', isSidechain: false, attachment: { type: 'queued_command', prompt: text }, type: 'attachment', uuid: `q${at}`, timestamp: iso(at) }
+      : { parentUuid: 'x', isSidechain: false, type: 'user', message: { role: 'user', content: text }, uuid: `n${at}`, timestamp: iso(at) };
+  },
+  /** Ultracode's reminder, which comes after some prompts. @param {number} at @param {'full' | 'sparse'} [reminderType] */
+  ultra: (at, reminderType = 'full') => ({
+    parentUuid: 'x', isSidechain: false, attachment: { type: 'ultra_effort_enter', reminderType }, type: 'attachment', uuid: `ue${at}`, timestamp: iso(at),
   }),
   /** @param {string} text @param {number} at */
   apiError: (text, at) => ({
-    type: 'assistant', timestamp: iso(at), isApiErrorMessage: true, error: 'rate_limit',
+    type: 'assistant', uuid: `e${at}`, timestamp: iso(at), isApiErrorMessage: true, error: 'rate_limit',
     message: { model: '<synthetic>', id: `e${at}`, role: 'assistant', content: [{ type: 'text', text }], stop_reason: 'stop_sequence', usage: { input_tokens: 0, output_tokens: 0 } },
   }),
   /** @param {string} title */

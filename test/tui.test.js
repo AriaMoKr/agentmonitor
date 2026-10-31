@@ -46,12 +46,12 @@ function sessions(now = Date.now()) {
  * Runs the monitor in a fake terminal, for the test to type into and read.
  * @param {import('node:test').TestContext} t
  * @param {ReturnType<typeof fakeMonitor>} monitor
- * @param {{ cols?: number, rows?: number, bell?: boolean }} [o]
+ * @param {{ cols?: number, rows?: number, bell?: boolean, mouse?: boolean, repaintMs?: number }} [o]
  */
-function start(t, monitor, { cols = 100, rows = 16, bell = false } = {}) {
+function start(t, monitor, { cols = 100, rows = 16, bell = false, mouse = true, repaintMs = 60_000 } = {}) {
   const term = fakeTerminal(cols, rows);
   const done = runTui(/** @type {any} */ (monitor), {
-    intervalMs: 60_000, color: false, ascii: false, bell, agents: 'running', showEnded: true, stdin: term.stdin, stdout: term.stdout,
+    intervalMs: 60_000, color: false, ascii: false, bell, agents: 'running', showEnded: true, mouse, repaintMs, stdin: term.stdin, stdout: term.stdout,
   });
   // Ends the monitor when a test failed before it quit.
   t.after(() => term.stdin.write('\x03'));
@@ -66,6 +66,13 @@ function start(t, monitor, { cols = 100, rows = 16, bell = false } = {}) {
     until: (check) => until(() => check(text()), text),
     /** The line on screen that holds `s`. @param {string} s */
     line: (s) => term.screen.lines().find((l) => l.includes(s)) ?? '',
+    /** Where on screen `s` is: its column and line. @param {string} s */
+    find: (s) => {
+      const y = term.screen.lines().findIndex((l) => l.includes(s));
+      return { x: term.screen.lines()[y]?.indexOf(s) ?? -1, y };
+    },
+    /** A left click, pressed and let go, as a terminal reports it. @param {number} x @param {number} y */
+    click: (x, y) => term.stdin.write(`\x1b[<0;${x + 1};${y + 1}M\x1b[<0;${x + 1};${y + 1}m`),
   };
 }
 
@@ -169,6 +176,70 @@ test("an agent's details have the monitor read its transcript, done or not", asy
   await tui.done;
 });
 
+test('the mouse: a click selects, a second opens, the wheel moves, a key below and a title act', async (t) => {
+  const tui = start(t, fakeMonitor([() => sessions()]));
+  await tui.until((s) => s.includes('Old work'));
+  assert.ok(tui.term.screen.raw.startsWith('\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[2J\x1b[?1000h\x1b[?1006h'), 'the terminal is asked to report the mouse');
+  // On Windows the console passes the mouse's modes on to the terminal only in raw mode.
+  assert.ok(tui.term.rawAt[0] <= tui.term.screen.raw.indexOf('\x1b[?1000h'), 'once in raw mode');
+  tui.click(10, tui.find('Old work').y);
+  await tui.until(() => tui.line('Old work').startsWith('>'));
+  tui.click(10, tui.find('Old work').y);
+  await tui.until((s) => s.includes('esc back'));
+  assert.match(tui.term.screen.lines()[0], /Old work +ended$/);
+  tui.type('\x1b[<64;10;5M');
+  tui.click(tui.find('esc back').x, 15);
+  await tui.until((s) => s.includes('NAME'));
+  assert.ok(tui.line('Old work').startsWith('>'));
+  tui.type('\x1b[<64;10;5M');
+  await tui.until(() => tui.line('Write the docs').startsWith('>'));
+  tui.type('\x1b[<65;10;5M\x1b[<65;10;5M');
+  await tui.until(() => tui.line('Old work').startsWith('>'));
+  tui.click(tui.find('? help').x, 15);
+  await tui.until((s) => s.includes('States'));
+  assert.match(tui.text(), /click {9}select a row/);
+  tui.click(0, 0);
+  await tui.until((s) => s.includes('NAME'));
+  tui.click(tui.find('NAME').x, 1);
+  await tui.until((s) => s.includes('sorted by name'));
+  assert.ok(tui.find('Old work').y < tui.find('Write the docs').y, 'by name');
+  tui.type('q');
+  await tui.done;
+  assert.ok(tui.term.screen.raw.endsWith('\x1b[?1006l\x1b[?1000l\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l'), 'and told to stop before the screen is put back');
+  assert.deepEqual(tui.term.rawModes, [true, false]);
+  assert.ok(tui.term.screen.raw.lastIndexOf('\x1b[?1000l') < tui.term.rawAt[1], 'while still in raw mode');
+});
+
+test("the mouse in the details: a click on an agent opens its details; and --no-mouse leaves it off", async (t) => {
+  const now = Date.now();
+  const withAgent = () => {
+    const snap = sessions(now);
+    snap.rows[0].children = [agent({ key: 'a:x:1', type: 'subagent', title: 'look around', state: 'done', live: false, lastActive: now - MINUTE })];
+    return snap;
+  };
+  const monitor = fakeMonitor([withAgent]);
+  const tui = start(t, monitor);
+  await tui.until((s) => s.includes('Fix the parser'));
+  tui.type('\r');
+  await tui.until((s) => s.includes('look around'));
+  tui.click(10, tui.find('look around').y);
+  await tui.until(() => /look around +done$/.test(tui.term.screen.lines()[0]));
+  assert.equal(monitor.focus, 'a:x:1');
+  tui.type('q');
+  await tui.until((s) => s.includes('NAME'));
+  tui.type('q');
+  await tui.done;
+
+  const off = start(t, fakeMonitor([() => sessions()]), { mouse: false });
+  await off.until((s) => s.includes('Old work'));
+  off.type('?');
+  await off.until((s) => s.includes('States'));
+  assert.doesNotMatch(off.text(), /click/);
+  off.type('xq');
+  await off.done;
+  assert.ok(!off.term.screen.raw.includes('\x1b[?1000'), 'the mouse is left to the terminal');
+});
+
 test('a resized terminal is drawn again at its new size', async (t) => {
   const tui = start(t, fakeMonitor([() => sessions()]));
   await tui.until((s) => s.includes('Fix the parser'));
@@ -176,6 +247,17 @@ test('a resized terminal is drawn again at its new size', async (t) => {
   tui.term.stdout.emit('resize');
   await tui.until((s) => s.includes('Claude agents') && tui.term.screen.lines().every((l) => width(l) <= 50));
   assert.ok(tui.term.screen.lines().slice(10).every((l) => l === ''), 'nothing below the new last row');
+  tui.type('q');
+  await tui.done;
+});
+
+test('every line is drawn again now and then, for a terminal that lost some and said nothing', async (t) => {
+  const tui = start(t, fakeMonitor([() => sessions()]), { repaintMs: 300 });
+  await tui.until((s) => s.includes('Write the docs') && s.includes('1/3'));
+  // The screen gone, as in the desktop app's Terminal panel, with no resize to say so: the lines
+  // that do not change (the titles, an idle row, the footer) come back too.
+  tui.term.screen.clear();
+  await tui.until((s) => s.includes('NAME') && s.includes('Write the docs') && s.includes('1/3'));
   tui.type('q');
   await tui.done;
 });

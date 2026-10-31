@@ -93,15 +93,18 @@ export function fakeTerminal(cols, rows) {
   const stdin = /** @type {NodeJS.ReadStream} */ (/** @type {unknown} */ (new PassThrough()));
   /** @type {boolean[]} */
   const rawModes = [];
+  /** @type {number[]} how much had been written when each raw mode was set */
+  const rawAt = [];
   Object.assign(stdin, {
     isTTY: true,
     /** @param {boolean} on */
     setRawMode(on) {
       rawModes.push(on);
+      rawAt.push(screen.raw.length);
       return stdin;
     },
   });
-  return { stdin, stdout, screen, rawModes };
+  return { stdin, stdout, screen, rawModes, rawAt };
 }
 
 /**
