@@ -60,7 +60,8 @@ It draws every line again every 2 seconds, since a terminal can lose lines witho
       --serve            serve the list and the details as a web page instead,
                          read only, at an address it prints, which holds a token
       --host <address>   where --serve listens: 127.0.0.1 (the default) is this
-                         computer only; 0.0.0.0, every network it is on
+                         computer only; 0.0.0.0, every network it is on (then
+                         its address is printed as a QR code too, for a phone)
       --port <n>         --serve's port (default 7420; 0 for any free one)
       --token <t>        the token in --serve's address, to keep it the same
                          (16 or more letters, digits, - and _; default: random)
@@ -168,11 +169,11 @@ It prints the page's address and runs until Ctrl+C. It listens on 127.0.0.1, so 
 node bin/agentmonitor.js --serve --host 0.0.0.0
 ```
 
-It then prints an address for each of this computer's network addresses, such as `http://192.168.1.20:7420/…/`: open one on the other computer. On Windows, the first time Node.js listens there, Windows asks whether to let it take connections, and other computers reach it once you allow it on private networks. `--port` sets the port: 7420, unless you give another, or 0 for any free one.
+It then prints an address for each of this computer's network addresses, such as `http://192.168.1.20:7420/…/`: open one on the other computer. The likeliest comes first, and virtual networks' last (WSL's, a virtual machine's, Docker's), since only this computer reaches them. Under the addresses it draws the first as a QR code, which a phone's camera opens, so a phone need not type the token. The code takes colors, to be black on white whatever the terminal's theme, so it is left out when they are off (with `--no-color` or `NO_COLOR`, or when the output is not a terminal); `--ascii` draws it with spaces, twice as large. On Windows, the first time Node.js listens there, Windows asks whether to let it take connections, and other computers reach it once you allow it on private networks. `--port` sets the port: 7420, unless you give another, or 0 for any free one.
 
 What keeps it to you:
 
-- Every address begins with a random token, which only the printed addresses hold: without it, every request gets a 404. A new token is made each time it starts, unless you give one with `--token` (16 or more letters, digits, `-` and `_`), which keeps a bookmark working. Anyone with the address sees everything the monitor shows, your prompts and folders among it, so give it only to whom you would show your screen.
+- Every address begins with a random token, which only the printed addresses hold (and the QR code of the first): without it, every request gets a 404. A new token is made each time it starts, unless you give one with `--token` (16 or more letters, digits, `-` and `_`), which keeps a bookmark working. Anyone with the address sees everything the monitor shows, your prompts and folders among it, so give it only to whom you would show your screen.
 - It is plain HTTP: on a network shared with others, they can read what goes by, the token too. Use `--host 0.0.0.0` on networks you trust.
 - It only reads, as in a terminal. It answers GET and HEAD and nothing else, and what a page sends, its keys and clicks, moves only that page's view, but for `w`: the window for "recently active" is the same for every page.
 - The page runs only its own script and style (its Content-Security-Policy forbids anything else), puts the text it is sent in as text, never as markup, and keeps nothing: no cookies, nothing cached.

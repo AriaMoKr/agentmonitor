@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { test } from 'node:test';
 import { clean } from '../src/format.js';
-import { parseInput, runs, serve, urls } from '../src/serve.js';
+import { qr, qrLines } from '../src/qr.js';
+import { banner, parseInput, runs, serve, urls } from '../src/serve.js';
 import { beep, cellAt, keyAt, keyInput, wheelSteps } from '../src/web/app.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE } from './helpers/fixture.js';
@@ -400,6 +401,41 @@ test('the addresses printed: the one listened on, or for every interface, each n
   const all = ['http://192.168.1.5:7420/tok/', 'http://10.0.0.7:7420/tok/', 'http://127.0.0.1:7420/tok/'];
   assert.deepEqual(urls('0.0.0.0', 7420, 'tok', nets), all);
   assert.deepEqual(urls('::', 7420, 'tok', nets), all);
+  // The likeliest for a phone first: 192.168..., 10..., 172.16 to 172.31, then the rest; but a
+  // virtual network's after them all: this computer's side of one (.1, as Hyper-V's Default
+  // Switch and WSL's here) after an adapter with a hypervisor's MAC (Hyper-V's, Parallels').
+  const ip = (/** @type {string} */ address, mac = 'ac:b4:80:01:02:03') => [{ address, family: 'IPv4', internal: false, mac }];
+  const many = /** @type {any} */ ({
+    wsl: ip('172.26.96.1', '00:15:5d:aa:bb:cc'), vpn: ip('100.64.1.2', '00:00:00:00:00:00'), switch: ip('192.168.64.1', '00:15:5D:AA:BB:CD'),
+    corp: ip('10.1.2.3'), odd: ip('172.32.0.1'), external: ip('192.168.1.40', '00:15:5d:aa:bb:ce'), wifi: ip('192.168.1.23'), parallels: ip('10.211.55.2', '00:1c:42:00:00:08'),
+  });
+  assert.deepEqual(urls('0.0.0.0', 7420, 'tok', many).map((u) => new URL(u).hostname), [
+    '192.168.1.23', '10.1.2.3', '100.64.1.2', '192.168.1.40', '10.211.55.2', '172.32.0.1', '192.168.64.1', '172.26.96.1', '127.0.0.1',
+  ]);
+});
+
+test('what --serve prints: its addresses, the first as a QR code for a phone, and what to know', () => {
+  const lan = ['http://192.168.1.5:7420/tok/', 'http://10.0.0.7:7420/tok/', 'http://127.0.0.1:7420/tok/'];
+  const opts = { color: true, ascii: false, windows: false };
+  assert.equal(
+    banner('127.0.0.1', ['http://127.0.0.1:7420/tok/'], opts),
+    'The web view, read only, at:\n  http://127.0.0.1:7420/tok/\nOnly this computer can open it; with --host 0.0.0.0, the others on its networks can too.\nCtrl+C stops it.\n',
+  );
+  const out = banner('0.0.0.0', lan, { ...opts, windows: true }).split('\n');
+  const code = qrLines(/** @type {boolean[][]} */ (qr(lan[0]))).map((l) => `  ${l}`);
+  assert.deepEqual(out, [
+    'The web view, read only, at:', ...lan.map((u) => `  ${u}`),
+    'A phone\'s camera opens the first from this code:', ...code,
+    'Anyone with the address sees what it shows.',
+    'Windows can ask whether Node.js may take connections: other computers reach it once allowed.',
+    'Ctrl+C stops it.', '',
+  ]);
+  assert.equal(code.length, 19); // 28 bytes, so version 3: 29 modules and 8 of border, two rows a line
+  // One address: "it". With ascii, spaces; without colors, or with only this computer's own, no code.
+  assert.match(banner('192.168.1.5', [lan[0]], opts), /\nA phone's camera opens it from this code:\n/);
+  assert.ok(banner('192.168.1.5', [lan[0]], { ...opts, ascii: true }).split('\n').every((l) => /^[\x1b\x20-\x7e]*$/.test(l)));
+  assert.doesNotMatch(banner('0.0.0.0', lan, { ...opts, color: false }), /camera|\x1b/);
+  assert.doesNotMatch(banner('0.0.0.0', ['http://127.0.0.1:7420/tok/'], opts), /camera/);
 });
 
 test('the page\'s script: keys as the monitor names them, cells, the wheel; never markup', () => {

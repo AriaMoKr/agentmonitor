@@ -1,13 +1,15 @@
 // The web view: the monitor's list and details as a page a browser keeps up to date, on this
 // computer, or on others when it listens on their network. Read only: it answers GET and HEAD,
 // and what a page sends, its keys and clicks, moves only that page's view. Every address begins
-// with a token, random unless given, that only the addresses printed hold. Text from the files
-// reaches the page as JSON strings, which the page puts in as text, never as markup.
+// with a token, random unless given, that only the addresses printed hold (and, for a phone, the
+// QR code printed of the first). Text from the files reaches the page as JSON strings, which the
+// page puts in as text, never as markup.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { hostname, networkInterfaces } from 'node:os';
 import { clean, clock, graphemes } from './format.js';
+import { qr, qrLines } from './qr.js';
 import { makeTheme } from './view.js';
 import { Viewer } from './viewer.js';
 
@@ -428,9 +430,15 @@ function pieces(text, cls, out) {
   plain(ascii);
 }
 
+/** The MACs of virtual networks' adapters, by their makers' prefixes: Hyper-V's (WSL's too), VMware's, VirtualBox's, Parallels', Docker's, QEMU's and Xen's. */
+const VIRTUAL_MAC = /^(?:00:15:5d|00:50:56|00:0c:29|00:05:69|00:1c:14|0a:00:27|08:00:27|00:1c:42|02:42|52:54:00|00:16:3e)/i;
+
 /**
  * The addresses to open the web view at: the one it listens on, or when that is every
- * interface, each of this computer's network addresses, and its own.
+ * interface, each of this computer's network addresses, and its own. The likeliest for a phone
+ * on the same Wi-Fi come first: a virtual network's last (this computer's side of one mostly ends
+ * in .1, as WSL's, Hyper-V's or Docker's, and a hypervisor's adapter has its maker's MAC), and
+ * before them a home network's 192.168..., then 10..., then 172.16 to 172.31, then the rest.
  * @param {string} host as listened on
  * @param {number} port
  * @param {string} token
@@ -440,6 +448,33 @@ function pieces(text, cls, out) {
 export function urls(host, port, token, nets = networkInterfaces()) {
   const url = (/** @type {string} */ h) => `http://${h.includes(':') ? `[${h}]` : h}:${port}/${token}/`;
   if (host !== '0.0.0.0' && host !== '::' && host !== '') return [url(host)];
-  const own = new Set(Object.values(nets).flatMap((list) => list ?? []).filter((n) => n.family === 'IPv4' && !n.internal).map((n) => n.address));
-  return [...[...own].map(url), url('127.0.0.1')];
+  /** @type {Map<string, number>} each address, and its rank: the lower, the likelier */
+  const own = new Map();
+  for (const n of Object.values(nets).flatMap((list) => list ?? [])) {
+    const a = n.address;
+    if (n.family !== 'IPv4' || n.internal || own.has(a)) continue;
+    const kind = a.startsWith('192.168.') ? 0 : a.startsWith('10.') ? 1 : /^172\.(?:1[6-9]|2\d|3[01])\./.test(a) ? 2 : 3;
+    own.set(a, (a.endsWith('.1') ? 8 : 0) + (VIRTUAL_MAC.test(n.mac ?? '') ? 4 : 0) + kind);
+  }
+  return [...[...own].sort((a, b) => a[1] - b[1]).map(([a]) => url(a)), url('127.0.0.1')];
+}
+
+/**
+ * What --serve prints once it listens: its addresses; the first as a QR code, for a phone's
+ * camera, unless only this computer can open it or there are no colors to draw it in; and what
+ * to know.
+ * @param {string} host as listened on
+ * @param {string[]} list its addresses, as urls() gives them
+ * @param {{ color: boolean, ascii: boolean, windows: boolean }} opts
+ * @returns {string}
+ */
+export function banner(host, list, { color, ascii, windows }) {
+  const local = /^(?:127\.|::1$|localhost$)/.test(host);
+  const lines = ['The web view, read only, at:', ...list.map((u) => `  ${u}`)];
+  const code = color && list.length && !/^http:\/\/(?:127\.|\[::1\]|localhost:)/.test(list[0]) ? qr(list[0]) : undefined;
+  if (code) lines.push(`A phone's camera opens ${list.length > 1 ? 'the first' : 'it'} from this code:`, ...qrLines(code, { ascii }).map((l) => `  ${l}`));
+  lines.push(local ? 'Only this computer can open it; with --host 0.0.0.0, the others on its networks can too.' : 'Anyone with the address sees what it shows.');
+  if (!local && windows) lines.push('Windows can ask whether Node.js may take connections: other computers reach it once allowed.');
+  lines.push('Ctrl+C stops it.');
+  return lines.map((l) => `${l}\n`).join('');
 }

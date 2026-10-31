@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { parseDuration } from '../src/format.js';
 import { Monitor } from '../src/monitor.js';
-import { serve, TOKEN, urls } from '../src/serve.js';
+import { banner, serve, TOKEN, urls } from '../src/serve.js';
 import { runTui } from '../src/tui.js';
 import { AGENTS_SHOWN, makeTheme, table } from '../src/view.js';
 
@@ -38,7 +38,8 @@ Options:
       --serve            serve the list and the details as a web page instead,
                          read only, at an address it prints, which holds a token
       --host <address>   where --serve listens: 127.0.0.1 (the default) is this
-                         computer only; 0.0.0.0, every network it is on
+                         computer only; 0.0.0.0, every network it is on (then
+                         its address is printed as a QR code too, for a phone)
       --port <n>         --serve's port (default 7420; 0 for any free one)
       --token <t>        the token in --serve's address, to keep it the same
                          (16 or more letters, digits, - and _; default: random)
@@ -143,11 +144,7 @@ if (values.serve) {
     process.stderr.write(`agentmonitor: ${why}\n`);
     process.exit(1);
   }
-  const local = /^(?:127\.|::1$|localhost$)/.test(host);
-  process.stdout.write(`The web view, read only, at:\n${urls(host, served.port, served.token).map((u) => `  ${u}\n`).join('')}`);
-  process.stdout.write(local ? 'Only this computer can open it; with --host 0.0.0.0, the others on its networks can too.\n' : 'Anyone with the address sees what it shows.\n');
-  if (!local && process.platform === 'win32') process.stdout.write('Windows can ask whether Node.js may take connections: other computers reach it once allowed.\n');
-  process.stdout.write('Ctrl+C stops it.\n');
+  process.stdout.write(banner(host, urls(host, served.port, served.token), { color, ascii, windows: process.platform === 'win32' }));
   await new Promise((resolve) => {
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(signal, resolve);
   });
