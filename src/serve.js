@@ -23,8 +23,9 @@ import { Viewer } from './viewer.js';
  * @typedef {{ port: number, token: string, close: () => Promise<void> }} Served
  * @typedef {[string] | [string, string] | [string, string, number]} Run text, its classes, and
  *   for characters outside ASCII the columns they take, which the page gives them
- * @typedef {Key | { filter: string }} Input what a page sent: a key, a click or a turn of the
- *   wheel, or the filter as typed so far in its text field (where a phone's keyboard types)
+ * @typedef {Key | { filter: string } | { drag: 'up' | 'down' }} Input what a page sent: a key, a
+ *   click or a turn of the wheel, the filter as typed so far in its text field (where a phone's
+ *   keyboard types), or a finger dragged a line's height
  */
 
 /** What a token may hold: 16 or more letters, digits, - and _. */
@@ -199,6 +200,7 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
     // What it sent acts on the screen it was last sent.
     for (const input of /** @type {Input[]} */ (inputs)) {
       if ('filter' in input) view.typeFilter(input.filter);
+      else if ('drag' in input) view.drag(input.drag === 'up');
       else if (input.mouse) view.mouse(input.mouse);
       else view.key(input);
     }
@@ -310,8 +312,8 @@ function number(text, lo, hi, fallback) {
 /**
  * One thing a page sent: 'k:<name>' a key by its name, 'c:<character>' a character typed,
  * 'm:<x>,<y>' a click on a cell and 'd:<x>,<y>' the second click of a double click, 'w:up' or
- * 'w:down' a turn of the wheel, 'f:<text>' the filter as typed so far in the page's text field.
- * Undefined for anything else.
+ * 'w:down' a turn of the wheel, 't:up' or 't:down' a finger dragged a line's height, 'f:<text>'
+ * the filter as typed so far in the page's text field. Undefined for anything else.
  * @param {string} input
  * @returns {Input | undefined}
  */
@@ -332,6 +334,8 @@ export function parseInput(input) {
     }
     case 'w:':
       return value === 'up' || value === 'down' ? mouse(value === 'up' ? 'wheelup' : 'wheeldown') : undefined;
+    case 't:':
+      return value === 'up' || value === 'down' ? { drag: value } : undefined;
     case 'f:':
       return { filter: typedText(value) };
   }

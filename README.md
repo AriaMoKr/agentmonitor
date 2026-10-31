@@ -151,7 +151,7 @@ Tasks is its task list: the steps done, the one in progress and those to do, and
 | Ctrl+L | draw the screen again |
 | q, Ctrl+C | quit (q in the details goes back) |
 
-In the details: ↑ ↓ and PgUp PgDn scroll the events, Home and End go to the oldest and newest, and Tab and Shift+Tab go to the next and previous row. In the help, when it is taller than the screen, ↑ ↓, PgUp PgDn and Home End scroll it, with how far down it is at the bottom (`12-33/33`); any other key goes back.
+In the details: ↑ ↓ and PgUp PgDn scroll the events, Home and End go to the oldest and newest, and Tab and Shift+Tab go to the next and previous row. In the help, when it is taller than the screen, ↑ ↓, PgUp PgDn and Home End scroll it, with how far down it is at the bottom (`12-33/33`); any other key goes back. On a screen narrower than 88 columns its lines wrap, each under the start of what it says, so nothing is cut at the right.
 
 The mouse: a click selects a row, and a double click opens its details; the wheel moves the selection, or scrolls the events in the details, or the help. A click on a column title sorts by it (NAME, PROJECT, LAST; ACTIVITY and the state column sort by state), one on a key in the footer presses it, and one on an agent in the details opens that agent. While the monitor has the mouse, most terminals select text with Shift held (some on macOS with Option); `--no-mouse` leaves the mouse to the terminal.
 
@@ -182,7 +182,7 @@ Each page has its own view: the row selected, the filter, the details open. A pa
 
 Its title counts the sessions that wait for you: `(2) Claude agents on <computer>`. Each page has its own bell too, a short beep, which `b` turns on or off and `--bell` starts with on; it rings only for what happens once it is on. A browser lets a page sound only after a tap, a click or a key on it, so until then the page says so at the bottom. A page out of sight (in another tab, or minimized) asks every 3 seconds, for its title and its bell only, so it still beeps.
 
-On a phone, a tap is a click: on a row, twice to open it, or on a key in the footer. A finger dragged up or down scrolls as the wheel does: the selection in the list, the events in the details, the help. A tap on `/ filter` opens the phone's keyboard, and what you type shows in the footer, above the keyboard; its Enter keeps the filter, and `esc clear` clears it.
+On a phone, a tap is a click: on a row, twice to open it, or on a key in the footer. A finger dragged up or down takes the list's selection with it, a row for each line it goes, and the events of the details and the help, as a phone scrolls a page: up for what is further down. A tap on `/ filter` opens the phone's keyboard, and what you type shows in the footer, above the keyboard; its Enter keeps the filter, and `esc clear` clears it.
 
 ## Where it looks
 

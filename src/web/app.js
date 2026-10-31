@@ -10,10 +10,7 @@ const KEYS = new Map([
   ['Home', 'home'], ['End', 'end'], ['PageUp', 'pageup'], ['PageDown', 'pagedown'],
   ['Enter', 'enter'], ['Escape', 'escape'], ['Backspace', 'backspace'], ['Delete', 'delete'],
 ]);
-/**
- * How far the wheel turns, or a finger moves, for a step, in pixels: a notch of the wheel is
- * about 100 in most browsers.
- */
+/** How far the wheel turns for a step, in pixels: a notch of it is about 100 in most browsers. */
 const WHEEL_STEP = 50;
 /**
  * How often the page asks while it is in sight (ms); and while it is out of sight, for its title
@@ -67,6 +64,20 @@ export function wheelSteps(rest, delta, mode, line, page) {
   const px = rest + delta * (mode === 1 ? line : mode === 2 ? page : 1);
   const steps = Math.trunc(px / WHEEL_STEP);
   return [steps, px - steps * WHEEL_STEP];
+}
+
+/**
+ * A finger's move as steps of a line's height, with what was left over from before, so that what
+ * it drags (the selection, or the text) keeps up with it.
+ * @param {number} rest what was left over
+ * @param {number} delta how far it moved in pixels, down when more than 0
+ * @param {number} line a line's height in pixels
+ * @returns {[number, number]} the steps (up is less than 0), and what is left over
+ */
+export function dragSteps(rest, delta, line) {
+  const px = rest + delta;
+  const steps = line > 0 ? Math.trunc(px / line) : 0;
+  return [steps, px - steps * line];
 }
 
 /**
@@ -309,9 +320,13 @@ function start() {
     ask();
   }
 
-  /** Steps of the wheel or of a finger, up when less than 0: ten at a time at most. @param {number} steps */
-  function scroll(steps) {
-    for (let i = 0; i < Math.min(Math.abs(steps), 10); i++) queue.push(steps < 0 ? 'w:up' : 'w:down');
+  /**
+   * Steps of the wheel ('w') or of a finger ('t'), up when less than 0: ten at a time at most.
+   * @param {'w' | 't'} kind
+   * @param {number} steps
+   */
+  function scroll(kind, steps) {
+    for (let i = 0; i < Math.min(Math.abs(steps), 10); i++) queue.push(`${kind}:${steps < 0 ? 'up' : 'down'}`);
     if (steps) ask();
   }
 
@@ -363,19 +378,20 @@ function start() {
     e.preventDefault();
     const [steps, rest] = wheelSteps(wheel, e.deltaY, e.deltaMode, cell.h, screen.clientHeight);
     wheel = rest;
-    scroll(steps);
+    scroll('w', steps);
   }, { passive: false });
-  // A finger dragged on the screen scrolls it as the wheel does; two fingers, or a page zoomed
-  // in, are the browser's to zoom and pan.
+  // A finger dragged on the screen takes the list's selection with it, or the text of the details
+  // and the help, a line for a line; two fingers, or a page zoomed in, are the browser's to zoom
+  // and pan.
   screen.addEventListener('touchstart', (e) => {
     finger = e.touches.length === 1 ? { y: e.touches[0].clientY, rest: 0 } : undefined;
   }, { passive: true });
   screen.addEventListener('touchmove', (e) => {
     if (!finger || e.touches.length !== 1 || (window.visualViewport?.scale ?? 1) > 1.01) return;
     const y = e.touches[0].clientY;
-    const [steps, rest] = wheelSteps(finger.rest, finger.y - y, 0, cell.h, screen.clientHeight);
+    const [steps, rest] = dragSteps(finger.rest, y - finger.y, cell.h);
     finger = { y, rest };
-    scroll(steps);
+    scroll('t', steps);
   }, { passive: true });
   for (const type of ['touchend', 'touchcancel']) {
     screen.addEventListener(type, () => {

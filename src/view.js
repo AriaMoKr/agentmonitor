@@ -2,7 +2,7 @@
 // in detail, and the help; and the plain table --once prints. Pure functions of a snapshot and
 // the screen's state, so the tests can draw them; the list and the details also say where a
 // click goes, as they draw it.
-import { ago, bytes, clock, durationLabel, elapsed, fit, shortModel, tokens, truncate, width } from './format.js';
+import { ago, bytes, clock, durationLabel, elapsed, fit, graphemes, shortModel, tokens, truncate, width } from './format.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -433,6 +433,89 @@ export function padStyled(s, cols, ellipsis = '…') {
 }
 
 /**
+ * A styled line wrapped to lines of at most `cols` columns: broken at its spaces, the lines after
+ * the first starting after `indent` columns (half the width at most), and a word wider than a
+ * line cut where it reaches the end. A no-break space keeps the words on either side of it
+ * together, and is drawn as a space. A style goes on across a break: each line closes it, and
+ * the next opens it again.
+ * @param {string} s styled as the theme styles: a code, the text, and a reset
+ * @param {number} cols
+ * @param {number} [indent]
+ * @returns {string[]}
+ */
+export function wrapStyled(s, cols, indent = 0) {
+  /** @typedef {{ g: string, w: number, code: string }} Cell a grapheme, its width, and its style */
+  // The words, each with the spaces before it.
+  /** @type {{ gap: Cell[], word: Cell[] }[]} */
+  const words = [];
+  /** @type {Cell[]} */
+  let gap = [];
+  /** @type {Cell[]} */
+  let word = [];
+  let code = '';
+  s.split(/(\x1b\[[0-9;]*m)/).forEach((part, i) => {
+    if (i % 2) {
+      code = /^\x1b\[0?m$/.test(part) ? '' : part.slice(2, -1);
+      return;
+    }
+    for (const [g, w] of graphemes(part)) {
+      if (g !== ' ') word.push({ g: g === ' ' ? ' ' : g, w, code });
+      else if (!word.length) gap.push({ g, w, code });
+      else {
+        words.push({ gap, word });
+        gap = [{ g, w, code }];
+        word = [];
+      }
+    }
+  });
+  if (word.length) words.push({ gap, word });
+  const lead = Math.min(indent, Math.floor(cols / 2));
+  /** @type {Cell[][]} */
+  const lines = [];
+  /** @type {Cell[]} */
+  let line = [];
+  let used = 0;
+  let empty = true;
+  const next = () => {
+    lines.push(line);
+    line = Array.from({ length: lead }, () => ({ g: ' ', w: 1, code: '' }));
+    used = lead;
+    empty = true;
+  };
+  const sum = (/** @type {Cell[]} */ cells) => cells.reduce((n, c) => n + c.w, 0);
+  for (const { gap, word } of words) {
+    if (!empty && used + sum(gap) + sum(word) > cols) next();
+    // The spaces before a word that begins a line go, but for the first line's own.
+    if (!empty || !lines.length) {
+      line.push(...gap);
+      used += sum(gap);
+    }
+    for (const c of word) {
+      if (!empty && used + c.w > cols) next();
+      line.push(c);
+      used += c.w;
+      empty = false;
+    }
+  }
+  lines.push(line);
+  const style = (/** @type {string} */ text, /** @type {string} */ code) => (code && text ? `\x1b[${code}m${text}\x1b[0m` : text);
+  return lines.map((cells) => {
+    let out = '';
+    let run = '';
+    let at = '';
+    for (const c of cells) {
+      if (c.code !== at) {
+        out += style(run, at);
+        run = '';
+        at = c.code;
+      }
+      run += c.g;
+    }
+    return out + style(run, at);
+  });
+}
+
+/**
  * The list view: header, column titles, the rows, and the footer.
  * @param {Snapshot} snap
  * @param {Row[]} rows
@@ -720,7 +803,8 @@ function eventLine(e, cols, now, t) {
 
 /**
  * The help view: from ui.helpTop on when it is taller than the screen, with the keys that scroll
- * it, and how far down it is, on the last line.
+ * it, and how far down it is, on the last line. Its lines wrap to a screen narrower than 88
+ * columns, a phone's, each under the start of what it says.
  * @param {Ui} ui
  * @param {Screen} screen
  * @param {Theme} t
@@ -729,43 +813,60 @@ function eventLine(e, cols, now, t) {
  */
 export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
   const g = t.glyphs;
-  // A key and what it does, and maybe a second key and what that does.
-  const key = (/** @type {string} */ k, /** @type {string} */ what, k2 = '', what2 = '') =>
-    `   ${fit(k, 13)} ${k2 ? `${fit(what, 15)} ${fit(k2, 20)} ${what2}` : what}`;
+  // No wider than 88 columns on a wide screen: two keys and what they do take 87.
+  const measure = Math.min(cols, 88);
+  const say = (/** @type {string} */ s, indent = 0) => wrapStyled(s, measure, indent);
+  // A key and what it does, from column 17; under the key when the key is wider than that.
+  const key = (/** @type {string} */ k, /** @type {string} */ what) => (width(k) <= 13
+    ? say(`   ${fit(k, 13)} ${what}`, 17)
+    : [...say(`   ${k}`, 3), ...say(`${' '.repeat(17)}${what}`, 17)]);
+  // Two keys and what they do on one line, when it holds them.
+  const pair = (/** @type {string} */ k, /** @type {string} */ what, /** @type {string} */ k2, /** @type {string} */ what2) =>
+    (visibleWidth(k) <= 13 && visibleWidth(what) <= 15 && visibleWidth(k2) <= 20 && 54 + visibleWidth(what2) <= measure
+      ? [`   ${fit(k, 13)} ${fit(what, 15)} ${fit(k2, 20)} ${what2}`]
+      : [...key(k, what), ...key(k2, what2)]);
+  // A state's glyph and name, and what it means from column 15.
+  const state = (/** @type {string} */ glyph, /** @type {string} */ name, /** @type {string} */ what) => say(`   ${glyph} ${fit(name, 9)} ${what}`, 15);
   const [right, left] = t.ascii ? ['right', 'left'] : ['→', '←'];
+  // A no-break space keeps a glyph with its word.
+  const nb = ' ';
   const text = [
-    ` ${t.bold('agentmonitor')}  the Claude agents on this computer`,
+    ...say(` ${t.bold('agentmonitor')}  the Claude agents on this computer`, 15),
     '',
     ` ${t.bold('Keys')}`,
-    key(`${t.arrows} j k`, 'move', 'pgup pgdn home end', 'move by pages'),
-    key(`${t.enter} l ${right}`, 'details', `esc h ${left}`, 'back, or clear the filter'),
-    key('/', 'filter', 'tab', 'next agent, in details'),
-    key('s', `sort: status, most recent, name, project${mouse ? ' (or click a title)' : ''}`),
-    key('e', 'show or hide the sessions that ended'),
-    key('a', 'agents under their session: running, all, none'),
-    key('w', 'window for "recently active": 1h, 6h, 24h, 3d, 7d'),
-    key('b', 'bell on or off: it rings when a session needs you or ends its turn'),
-    t.web ? key('r', 'read again') : key('r', 'read again', 'q ctrl-c', 'quit (q in the details goes back)'),
-    ...(mouse ? [key('click', 'select a row', 'double-click', 'its details'), key('wheel', 'move or scroll', t.web ? 'drag' : 'shift+drag', 'select text')] : []),
+    ...pair(`${t.arrows} j k`, 'move', 'pgup pgdn home end', 'move by pages'),
+    ...pair(`${t.enter} l ${right}`, 'details', `esc h ${left}`, 'back, or clear the filter'),
+    ...pair('/', 'filter', 'tab', 'next agent, in details'),
+    ...key('s', `sort: status, most recent, name, project${mouse ? ' (or click a title)' : ''}`),
+    ...key('e', 'show or hide the sessions that ended'),
+    ...key('a', 'agents under their session: running, all, none'),
+    ...key('w', 'window for "recently active": 1h, 6h, 24h, 3d, 7d'),
+    ...key('b', 'bell on or off: it rings when a session needs you or ends its turn'),
+    ...(t.web ? key('r', 'read again') : pair('r', 'read again', 'q ctrl-c', 'quit (q in the details goes back)')),
+    ...(mouse ? [
+      ...pair('click', 'select a row', 'double-click', 'its details'),
+      ...pair('wheel', 'move or scroll', t.web ? 'drag' : 'shift+drag', 'select text'),
+      ...(t.web ? key('touch', 'a tap is a click; a drag moves or scrolls') : []),
+    ] : []),
     '',
     ` ${t.bold('States')}`,
-    `   ${t.green(g.working)} working   the session is at work, or ${t.green(g.running)} an agent runs`,
-    `   ${t.green(g.tool)} tool      it waits on a tool call it made: a command, a build, a download`,
-    `   ${t.yellowBold(g.waiting)} waiting   it needs you: a permission, a question, a plan to approve`,
-    `   ${t.yellowBold(g.blocked)} blocked   its turn ended on something only you can do, the desktop app says`,
-    `   ${t.blueBold(g.unread)} unread    the desktop app's blue dot: it finished a turn you have not opened`,
-    `   ${t.cyan(g.idle)} idle      it runs, and waits for your next message`,
-    `   ${t.blue(g.active)} active    its transcript moved moments ago, but no process is known`,
-    `   ${t.dim(g.ended)} ended     ${t.dim(g.done)} done   ${t.red(g.failed)} failed   ${t.magenta(g.stopped)} stopped`,
+    ...state(t.green(g.working), 'working', `the session is at work, or ${t.green(g.running)}${nb}an agent runs`),
+    ...state(t.green(g.tool), 'tool', 'it waits on a tool call it made: a command, a build, a download'),
+    ...state(t.yellowBold(g.waiting), 'waiting', 'it needs you: a permission, a question, a plan to approve'),
+    ...state(t.yellowBold(g.blocked), 'blocked', 'its turn ended on something only you can do, the desktop app says'),
+    ...state(t.blueBold(g.unread), 'unread', "the desktop app's blue dot: it finished a turn you have not opened"),
+    ...state(t.cyan(g.idle), 'idle', 'it runs, and waits for your next message'),
+    ...state(t.blue(g.active), 'active', 'its transcript moved moments ago, but no process is known'),
+    ...state(t.dim(g.ended), 'ended', `${t.dim(g.done)}${nb}done   ${t.red(g.failed)}${nb}failed   ${t.magenta(g.stopped)}${nb}stopped`),
     '',
     ` ${t.bold('Columns')}`,
-    '   CTX is the context of the last reply in tokens; EFFORT, the effort it works at,',
-    `   and a ${t.magenta('+')} when ultracode is on; LAST, how long ago it last did anything;`,
-    '   ACTIVITY begins with how many of its tasks are done (4/8) and ends with how long',
-    '   the current step has taken.',
+    ...key('CTX', 'the context of the last reply, in tokens'),
+    ...key('EFFORT', `the effort it works at, and a${nb}${t.magenta('+')} when ultracode is on`),
+    ...key('LAST', 'how long ago it last did anything'),
+    ...key('ACTIVITY', 'what it is doing, with how many of its tasks are done (4/8) and how long the current step has taken'),
     '',
-    ` ${t.dim(`Reading ${dir}`)}`,
-    ` ${t.dim(`${t.arrows} pgup pgdn home end${mouse ? ' and the wheel' : ''} scroll; any other key${mouse ? ' or a click' : ''} goes back.`)}`,
+    ...say(` ${t.dim(`Reading ${dir}`)}`, 1),
+    ...say(` ${t.dim(`${t.arrows} pgup pgdn home end${mouse ? ' and the wheel' : ''} scroll; any other key${mouse ? ' or a click' : ''} goes back.`)}`, 1),
   ];
   const room = Math.max(0, height - 1);
   ui.helpTop = Math.max(0, Math.min(ui.helpTop, text.length - room));

@@ -141,6 +141,19 @@ export class Viewer {
     if (this.ui.view === 'list') Object.assign(this.ui, { filter: text, editingFilter: true, top: 0 });
   }
 
+  /**
+   * A finger dragged a line's height up or down a web page. In the list the selection goes with
+   * it, a row; in the details and the help the text does, a line, as on any page on a phone, so
+   * that a drag up shows what is further down.
+   * @param {boolean} up
+   */
+  drag(up) {
+    const { ui } = this;
+    if (ui.view === 'list') this.move(up ? -1 : 1);
+    else if (ui.view === 'detail') ui.logScroll = Math.max(0, ui.logScroll + (up ? -1 : 1));
+    else ui.helpTop = Math.max(0, ui.helpTop + (up ? 1 : -1));
+  }
+
   /** @param {string} message shown in the footer for a while */
   say(message) {
     Object.assign(this.ui, { message, messageUntil: Date.now() + 2500 });

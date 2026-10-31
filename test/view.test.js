@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { width } from '../src/format.js';
-import { columns, detailLines, helpLines, initialUi, listLines, makeTheme, settleSelection, table, visibleRows } from '../src/view.js';
+import { columns, detailLines, helpLines, initialUi, listLines, makeTheme, settleSelection, table, visibleRows, wrapStyled } from '../src/view.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE, NOW } from './helpers/fixture.js';
 
@@ -522,7 +522,8 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   assert.match(lines.join('\n'), /◇ blocked {3}its turn ended on something only you can do/);
   assert.match(lines.join('\n'), /◐ tool {6}it waits on a tool call it made/);
   assert.match(lines.join('\n'), /• unread {4}the desktop app's blue dot/);
-  assert.match(lines.join('\n'), /EFFORT, the effort it works at, *\n +and a \+ when ultracode is on;/);
+  assert.match(lines.join('\n'), /EFFORT {8}the effort it works at, and a \+ when ultracode is on/);
+  assert.match(lines.join('\n'), /ACTIVITY {6}what it is doing, with how many of its tasks are done \(4\/8\) and how *\n {17}long the current step has taken/);
   assert.match(lines.join('\n'), /click {9}select a row +double-click +its details/);
   assert.match(lines.join('\n'), /↑↓ pgup pgdn home end and the wheel scroll; any other key or a click goes back\./);
   const off = helpLines(initialUi(), { width: 90, height: 40, now: NOW }, plain, '/x', false).join('\n');
@@ -558,6 +559,45 @@ test('on a screen too short for it the help scrolls, and says how far down it is
   assert.equal(ui.helpTop, 0);
 });
 
+test('on a screen as narrow as a phone\'s the help wraps, each line under the start of what it says', () => {
+  const web = makeTheme({ color: false, ascii: false, animate: false, web: true });
+  const narrow = helpLines(initialUi(), { width: 43, height: 200, now: NOW }, web, '/x');
+  const wide = helpLines(initialUi(), { width: 120, height: 200, now: NOW }, web, '/x');
+  const words = (/** @type {string[]} */ lines) => lines.slice(0, -1).join(' ').split(/\s+/).filter(Boolean);
+  assert.deepEqual(words(narrow), words(wide), 'nothing cut, nothing moved');
+  narrow.forEach((l, i) => assert.equal(visible(l), i === narrow.length - 1 ? 42 : 43, l));
+  const text = narrow.map((l) => l.trimEnd());
+  /** The lines from the one that starts with `start`. @param {string} start @param {number} n */
+  const from = (start, n) => text.slice(text.findIndex((l) => l.startsWith(start))).slice(0, n);
+  /** `a`, and `b` from column `n`. @param {string} a @param {number} n @param {string} b */
+  const col = (a, n, b) => a.padEnd(n) + b;
+  assert.deepEqual(from(' agentmonitor', 2), [' agentmonitor  the Claude agents on this', col('', 15, 'computer')]);
+  // A key wider than its column has a line of its own, and what it does goes under it.
+  assert.deepEqual(from('   ↑↓ j k', 3), [col('   ↑↓ j k', 17, 'move'), '   pgup pgdn home end', col('', 17, 'move by pages')]);
+  assert.deepEqual(from('   b ', 3), [col('   b', 17, 'bell on or off: it rings'), col('', 17, 'when a session needs you'), col('', 17, 'or ends its turn')]);
+  assert.deepEqual(from('   touch', 2), [col('   touch', 17, 'a tap is a click; a drag'), col('', 17, 'moves or scrolls')]);
+  // A glyph stays with its word.
+  assert.deepEqual(from('   ● working', 2), [col('   ● working', 15, 'the session is at work, or'), col('', 15, '● an agent runs')]);
+  assert.deepEqual(from('   · ended', 2), [col('   · ended', 15, '✓ done   ✗ failed'), col('', 15, '■ stopped')]);
+  assert.deepEqual(from('   EFFORT', 3), [col('   EFFORT', 17, 'the effort it works at,'), col('', 17, 'and a + when ultracode is'), col('', 17, 'on')]);
+});
+
+test('a styled line wrapped: at its spaces, under an indent, its styles closed at a break and opened again', () => {
+  assert.deepEqual(wrapStyled('one two three', 9), ['one two', 'three']);
+  assert.deepEqual(wrapStyled('a: one two three', 10, 3), ['a: one two', '   three']);
+  assert.deepEqual(wrapStyled('   one   two', 20), ['   one   two'], 'spaces kept within a line');
+  assert.deepEqual(wrapStyled('one   two  ', 4), ['one', 'two'], 'and left out at a break and the end');
+  const styled = ' \x1b[1mKeys\x1b[0m and \x1b[32m●\x1b[0m \x1b[1;33m◆\x1b[0m more';
+  assert.deepEqual(wrapStyled(styled, 80), [styled], 'as it was, when it fits');
+  assert.deepEqual(wrapStyled('\x1b[2mone two three\x1b[0m', 9), ['\x1b[2mone two\x1b[0m', '\x1b[2mthree\x1b[0m']);
+  assert.deepEqual(wrapStyled('x \x1b[32m●\x1b[0m on', 4), ['x', '\x1b[32m●\x1b[0m on'], 'a no-break space binds, drawn as a space');
+  assert.deepEqual(wrapStyled('go abcdefghij', 6, 2), ['go', '  abcd', '  efgh', '  ij'], 'a word wider than a line, cut');
+  assert.deepEqual(wrapStyled('漢字 漢字', 5), ['漢字', '漢字']);
+  assert.deepEqual(wrapStyled('one two', 8, 30), ['one two']);
+  assert.deepEqual(wrapStyled('one two three', 10, 30), ['one two', '     three'], 'indented half the width at most');
+  assert.deepEqual(wrapStyled('', 10), ['']);
+});
+
 test('with --ascii, nothing but ASCII is drawn', () => {
   const ascii = makeTheme({ color: false, ascii: true, animate: true });
   const busy = busySession();
@@ -585,6 +625,7 @@ test('with --ascii, nothing but ASCII is drawn', () => {
     detailLines(unread, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
     detailLines(blocked, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
     helpLines(initialUi(), { width: 120, height: 30, now: NOW }, ascii, '/home/me/.claude'),
+    helpLines(initialUi(), { width: 43, height: 80, now: NOW }, ascii, '/home/me/.claude'),
     table(snap, { width: 120, now: NOW, agents: 'all', showEnded: true }, ascii).split('\n'),
   ];
   for (const line of screens.flat()) assert.match(line, /^[\x20-\x7e]*$/, line);

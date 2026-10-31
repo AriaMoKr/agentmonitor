@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { clean } from '../src/format.js';
 import { qr, qrLines } from '../src/qr.js';
 import { banner, parseInput, runs, serve, urls } from '../src/serve.js';
-import { beep, cellAt, keyAt, keyInput, wheelSteps } from '../src/web/app.js';
+import { beep, cellAt, dragSteps, keyAt, keyInput, wheelSteps } from '../src/web/app.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE } from './helpers/fixture.js';
 
@@ -225,6 +225,31 @@ test('a click selects a row, a double click opens it, a click on a title sorts; 
   assert.match(a.text.at(-1) ?? '', /sorted by name/);
 });
 
+test('a finger\'s drag takes the list\'s selection with it, and the text of the details and of the help', async (t) => {
+  const s = await start(t, fakeMonitor(() => {
+    const snap = sessions();
+    snap.rows[0].events = Array.from({ length: 50 }, (_, k) => ({ ts: Date.now() - (50 - k) * 1000, kind: /** @type {const} */ ('reply'), text: `event ${k}` }));
+    return snap;
+  }));
+  let a = await s.screen('page-aaaa');
+  assert.match(selected(a), /<img src=x/);
+  a = await s.screen('page-aaaa', ['t:down']);
+  assert.match(selected(a), /Fix the parser/, 'a row down, as the finger went');
+  a = await s.screen('page-aaaa', ['t:down', 't:up', 't:up']);
+  assert.match(selected(a), /<img src=x/);
+  // In the details a finger going down brings back what is older, a line for a line.
+  a = await s.screen('page-aaaa', ['t:down', 'k:enter', 't:down', 't:down'], { h: 30 });
+  assert.match(a.text.join('\n'), /Activity \(2 newer below\)/);
+  a = await s.screen('page-aaaa', ['t:up'], { h: 30 });
+  assert.match(a.text.join('\n'), /Activity \(1 newer below\)/);
+  // In the help, going up, what is further down.
+  const phone = { w: 43, h: 20 };
+  a = await s.screen('page-aaaa', ['k:escape', 'c:?', 't:up', 't:up'], phone);
+  assert.match(a.text.at(-1) ?? '', / 3-21\/\d+ $/);
+  a = await s.screen('page-aaaa', ['t:down', 't:down', 't:down'], phone);
+  assert.match(a.text.at(-1) ?? '', / 1-19\/\d+ $/);
+});
+
 test('what a phone needs: where / is, for its tap to open the keyboard, and the filter typed in the page\'s field', async (t) => {
   const s = await start(t, fakeMonitor(() => sessions()));
   let a = await s.screen('page-aaaa');
@@ -369,7 +394,7 @@ test('runs: the styles made classes, and characters outside ASCII in boxes as wi
   assert.deepEqual(runs('\x1b[0m'), []);
 });
 
-test('what a page sends: keys by name, characters, clicks, the wheel and a filter typed; nothing else', () => {
+test('what a page sends: keys by name, characters, clicks, the wheel, a finger\'s drag and a filter typed; nothing else', () => {
   assert.deepEqual(parseInput('f:docs'), { filter: 'docs' });
   assert.deepEqual(parseInput('f:'), { filter: '' });
   assert.deepEqual(parseInput('f:fix  the '), { filter: 'fix  the ' }, 'its spaces as typed');
@@ -384,7 +409,9 @@ test('what a page sends: keys by name, characters, clicks, the wheel and a filte
   assert.equal(parseInput('d:3,14')?.mouse?.double, true);
   assert.equal(parseInput('w:up')?.mouse?.button, 'wheelup');
   assert.equal(parseInput('w:down')?.mouse?.button, 'wheeldown');
-  for (const bad of ['', 'up', 'k:', 'k:quit', 'k:Up', 'c:', 'c:ab', 'c:\x1b', 'c:\t', 'c:\u202e', 'c:\u00a0', 'm:3', 'm:-1,2', 'm:1,2,3', 'm:12345,1', 'w:left', 'x:1']) {
+  assert.deepEqual(parseInput('t:up'), { drag: 'up' });
+  assert.deepEqual(parseInput('t:down'), { drag: 'down' });
+  for (const bad of ['', 'up', 'k:', 'k:quit', 'k:Up', 'c:', 'c:ab', 'c:\x1b', 'c:\t', 'c:\u202e', 'c:\u00a0', 'm:3', 'm:-1,2', 'm:1,2,3', 'm:12345,1', 'w:left', 't:', 't:left', 'x:1']) {
     assert.equal(parseInput(bad), undefined, JSON.stringify(bad));
   }
 });
@@ -462,6 +489,10 @@ test('the page\'s script: keys as the monitor names them, cells, the wheel; neve
   assert.deepEqual(wheelSteps(30, 40, 0, 17.5, 500), [1, 20]);
   assert.deepEqual(wheelSteps(0, -3, 1, 17.5, 500), [-1, -2.5]);
   assert.deepEqual(wheelSteps(0, 1, 2, 17.5, 500), [10, 0]);
+  assert.deepEqual(dragSteps(0, -40, 17.5), [-2, -5]);
+  assert.deepEqual(dragSteps(-5, 10, 17.5), [0, 5]);
+  assert.deepEqual(dragSteps(5, 30, 17.5), [2, 0]);
+  assert.deepEqual(dragSteps(3, 10, 0), [0, 13], 'no steps before a line is measured');
   const keys = [[11, 21, 29, '/'], [11, 31, 44, 's'], 'junk', [11, 1, 9]];
   assert.equal(keyAt(keys, 21, 11), '/');
   assert.equal(keyAt(keys, 28, 11), '/');
