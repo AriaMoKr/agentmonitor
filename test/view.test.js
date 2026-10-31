@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { width } from '../src/format.js';
+import { timeOfDay, weekday, width } from '../src/format.js';
 import { columns, detailLines, helpLines, initialUi, listLines, makeTheme, settleSelection, table, visibleRows, wrapStyled } from '../src/view.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE, NOW } from './helpers/fixture.js';
@@ -259,6 +259,36 @@ test('the plan\'s usage at the top, before the time: how old once it is, and wha
   // Without it, the same: what goes, goes whole, not cut.
   assert.match(top(undefined, 80), /^ Claude agents {2}● 1 working {2}◆ 1 waiting {2}○ 1 idle {2}◌ 1 active {2}· 1 ended +$/);
   assert.match(top(undefined, 43), /^ Claude agents {2}● 1 working {2}◆ 1 waiting +$/);
+});
+
+test('when the limits reset, after their percent where the samples tell it closely enough; the percent gone once it surely reset', () => {
+  /** The header with this usage. @param {import('../src/usage.js').Usage} usage @param {number} [cols] @param {ReturnType<typeof makeTheme>} [t] */
+  const top = (usage, cols = 160, t = plain) => {
+    const snap = snapshot(sessions(), { usage });
+    const ui = initialUi();
+    return listLines(snap, visibleRows(snap, ui, t), ui, { width: cols, height: 10, now: NOW }, t)[0];
+  };
+  /** A reset likeliest at `at`, from and to so many minutes off it. @param {number} at @param {number} from @param {number} to */
+  const reset = (at, from, to) => ({ at, from: at + from * MINUTE, to: at + to * MINUTE });
+  const S = NOW + 2 * HOUR + 7 * MINUTE;
+  const W = NOW + 3 * 24 * HOUR;
+  const u = { at: NOW - 10 * MINUTE, session: 64, week: 29, sessionReset: reset(S, -10, 5), weekReset: reset(W, -9, 5) };
+  const sessionAt = timeOfDay(NOW + 2 * HOUR + 5 * MINUTE);
+  assert.match(top(u), new RegExp(`at work +session 64% resets ${sessionAt} {2}week 29% resets ${weekday(W)} {2}\\d\\d:\\d\\d:\\d\\d $`), 'the session\'s to five minutes; the week\'s day, more than a day off');
+  const soon = NOW + 5 * HOUR;
+  assert.match(top({ ...u, weekReset: reset(soon, -9, 5) }), new RegExp(`week 29% resets ${timeOfDay(soon)} {2}\\d`), 'less than a day off: its time');
+  assert.match(top({ ...u, weekReset: reset(soon, -60, 60) }), new RegExp(`week 29% resets ${weekday(soon)} {2}\\d`), 'but known only within two hours: its day');
+  assert.match(top({ ...u, sessionReset: reset(S, -40, 0), weekReset: reset(W, -13 * 60, 0) }), /at work +session 64% {2}week 29% {2}\d/, 'not known closely enough');
+  assert.match(top({ ...u, sessionReset: reset(NOW - 20 * MINUTE, -10, -1) }), /at work +week 29% resets \w{3} {2}\d/, 'the session surely reset since');
+  assert.match(top({ ...u, weekReset: reset(NOW - 2 * MINUTE, -9, -1) }), new RegExp(`at work +session 64% resets ${sessionAt} {2}\\d`), 'and the week');
+  const color = makeTheme({ color: true, ascii: false, animate: false });
+  assert.ok(top(u, 160, color).includes(`\x1b[2msession\x1b[0m 64% \x1b[2mresets\x1b[0m ${sessionAt}`));
+  // Narrower, the resets go with those at work, before those waiting and the usage; then of those
+  // gone, the most worth first, as many as fit come back.
+  assert.match(top(u, 80), new RegExp(`^ ● 1 working {2}◆ 1 waiting +session 64% resets ${sessionAt} {2}week 29% resets ${weekday(W)} $`));
+  assert.match(top(u, 60), new RegExp(`^ ● 1 working {2}◆ 1 waiting +session 64% {2}week 29% resets ${weekday(W)} $`));
+  assert.match(top(u, 43), /^ ◆ 1 waiting +session 64% {2}week 29% $/);
+  for (const cols of [160, 80, 60, 43]) assert.equal(visible(top(u, cols)), cols);
 });
 
 test('the selected row: marked with > without color, inverse with color', () => {
@@ -548,8 +578,8 @@ test('the activity log shows the newest events, and scrolls back', () => {
 });
 
 test('the help fills the screen, the keys that scroll it on its last line, one column short', () => {
-  const lines = helpLines(initialUi(), { width: 90, height: 40, now: NOW }, plain, '/home/me/.claude');
-  assert.equal(lines.length, 40);
+  const lines = helpLines(initialUi(), { width: 90, height: 45, now: NOW }, plain, '/home/me/.claude');
+  assert.equal(lines.length, 45);
   assert.match(lines.join('\n'), /Keys[\s\S]*States[\s\S]*Columns[\s\S]*Reading \/home\/me\/\.claude/);
   assert.match(lines.join('\n'), /◇ blocked {3}its turn ended on something only you can do/);
   assert.match(lines.join('\n'), /◐ tool {6}it waits on a tool call it made/);
@@ -557,13 +587,14 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   assert.match(lines.join('\n'), /EFFORT {8}the effort it works at, and a \+ when ultracode is on/);
   assert.match(lines.join('\n'), /ACTIVITY {6}what it is doing, with how many of its tasks are done \(4\/8\) and how *\n {17}long the current step has taken/);
   assert.match(lines.join('\n'), /click {9}select a row +double-click +its details/);
+  assert.match(lines.join('\n'), /resets {8}about when that limit resets, from the app's samples: the week's at the *\n {17}same time each week, the session's five hours after its first use/);
   assert.match(lines.join('\n'), /↑↓ pgup pgdn home end and the wheel scroll; any other key or a click goes back\./);
-  const off = helpLines(initialUi(), { width: 90, height: 40, now: NOW }, plain, '/x', false).join('\n');
+  const off = helpLines(initialUi(), { width: 90, height: 45, now: NOW }, plain, '/x', false).join('\n');
   assert.doesNotMatch(off, /click|wheel/, 'not with the mouse off');
   assert.match(off, /↑↓ pgup pgdn home end scroll; any other key goes back\./);
   lines.slice(0, -1).forEach((l) => assert.equal(visible(l), 90, l));
   // All of it fits: no telling how far down it is.
-  assert.equal(lines[39], ` esc back  ↑↓ scroll  home/end${' '.repeat(59)}`);
+  assert.equal(lines[44], ` esc back  ↑↓ scroll  home/end${' '.repeat(59)}`);
   assert.equal(helpLines(initialUi(), { width: 90, height: 10, now: NOW }, plain, '/x').length, 10);
 });
 

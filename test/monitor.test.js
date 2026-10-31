@@ -28,8 +28,13 @@ test('the plan\'s usage, as the desktop app last sampled it', async (t) => {
   const cfg = makeConfig(t);
   const { monitor } = monitorOf(cfg);
   assert.equal((await monitor.refresh(NOW)).usage, undefined, 'none until the app samples it');
-  cfg.planUsage([[NOW - 20 * MINUTE, 40, 10], [NOW - 5 * MINUTE, 64, 29]]);
-  assert.deepEqual((await monitor.refresh(NOW + 5000)).usage, { at: NOW - 5 * MINUTE, session: 64, week: 29 });
+  cfg.planUsage([[NOW - 35 * MINUTE, 0, 10], [NOW - 20 * MINUTE, 40, 10], [NOW - 5 * MINUTE, 64, 29]]);
+  assert.deepEqual((await monitor.refresh(NOW + 5000)).usage, {
+    at: NOW - 5 * MINUTE,
+    session: 64,
+    week: 29,
+    sessionReset: { at: NOW - 35 * MINUTE + 5 * HOUR, from: NOW - 35 * MINUTE + 5 * HOUR, to: NOW - 20 * MINUTE + 5 * HOUR },
+  }, 'the session began after its last 0%; the week has not dropped');
 });
 
 test('a running session: its state, title, folder, model, context and the tool it is in', async (t) => {

@@ -2,7 +2,7 @@
 // in detail, and the help; and the plain table --once prints. Pure functions of a snapshot and
 // the screen's state, so the tests can draw them; the list and the details also say where a
 // click goes, as they draw it.
-import { ago, bytes, clock, durationLabel, elapsed, fit, graphemes, shortModel, tokens, truncate, width } from './format.js';
+import { ago, bytes, clock, durationLabel, elapsed, fit, graphemes, shortModel, timeOfDay, tokens, truncate, weekday, width } from './format.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -372,8 +372,9 @@ function activityCell(a, w, t, now, plain) {
 }
 
 /**
- * @typedef {[string, number]} Part a part of the header, and what it is worth its room: on a
- *   narrow screen the least worth go first
+ * @typedef {[string, number, Part?]} Part a part of the header, and what it is worth its room (on
+ *   a narrow screen the least worth go first); and the part it belongs to, if any, after which it
+ *   comes with one space, and without which it goes
  */
 
 /**
@@ -409,14 +410,18 @@ function counts(snap, t) {
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
 /** The desktop app samples the usage about every 15 minutes: one older than this is not fresh. */
 const USAGE_FRESH = 45 * MINUTE;
 
 /**
  * The plan's usage in the header, as the desktop app last sampled it: how much of the session's
- * limit and of the week's is used, yellow from 75% and red from 90%, and how long ago that was
- * once it is no longer fresh. The session's goes once its five hours have surely ended since,
- * and the week's after seven days.
+ * limit and of the week's is used, yellow from 75% and red from 90%, each with when it resets
+ * where the samples tell that closely enough, and how long ago they were taken once that is no
+ * longer fresh. The session's reset is shown when known within half an hour, to five minutes; the
+ * week's to the minute when known within an hour and less than a day off, else by its day when
+ * known within half a day. Each goes once it has surely reset since: without a reset known, the
+ * session's after five hours and the week's after seven days.
  * @param {import('./usage.js').Usage | undefined} u
  * @param {number} now
  * @param {Theme} t
@@ -428,8 +433,21 @@ function usageParts(u, now, t) {
   const level = (/** @type {number} */ n) => (n >= 90 ? t.red(`${n}%`) : n >= 75 ? t.yellow(`${n}%`) : `${n}%`);
   /** @type {Part[]} */
   const parts = [];
-  if (u.session !== undefined && age < 5 * HOUR) parts.push([`${t.dim('session')} ${level(u.session)}`, 6]);
-  if (u.week !== undefined && age < 7 * 24 * HOUR) parts.push([`${t.dim('week')} ${level(u.week)}`, 6]);
+  /** @param {string} label @param {number} n @param {string | false | undefined} resets */
+  const add = (label, n, resets) => {
+    /** @type {Part} */
+    const part = [`${t.dim(label)} ${level(n)}`, 6];
+    parts.push(part);
+    if (resets) parts.push([`${t.dim('resets')} ${resets}`, 4, part]);
+  };
+  const s = u.sessionReset;
+  if (u.session !== undefined && now < (s ? s.to : u.at + 5 * HOUR)) {
+    add('session', u.session, s && s.to - s.from <= 30 * MINUTE && timeOfDay(Math.round(s.at / (5 * MINUTE)) * 5 * MINUTE));
+  }
+  const w = u.weekReset;
+  if (u.week !== undefined && now < (w ? w.to : u.at + 7 * DAY)) {
+    add('week', u.week, w && (w.to - w.from <= HOUR && w.at - now < DAY ? timeOfDay(w.at) : w.to - w.from <= 12 * HOUR && weekday(w.at)));
+  }
   if (parts.length && age >= USAGE_FRESH) parts.push([t.dim(`${ago(age)} ago`), 6]);
   return parts;
 }
@@ -438,9 +456,9 @@ function usageParts(u, now, t) {
  * The first line of the list and of the table: the title and the sessions counted by state on
  * the left, the plan's usage and the time on the right. Where it is too narrow for all of them
  * the least worth go first: the time, the sessions that ended and the agents at work, the title
- * and the sessions idle or active, those at work, those that wait for you; the usage last. Of
- * those left out, as many as the room left takes come back, the most worth first. Narrower
- * still, the left as it fits.
+ * and the sessions idle or active, those at work and when the limits reset, those that wait for
+ * you; the usage last. Of those left out, as many as the room left takes come back, the most
+ * worth first. Narrower still, the left as it fits.
  * @param {Snapshot} snap
  * @param {number} cols
  * @param {number} now
@@ -455,8 +473,13 @@ function header(snap, cols, now, t, time = true) {
   const all = [...left, ...right];
   /** The line of these parts, when they fit. @param {Set<Part>} keep */
   const line = (keep) => {
-    const l = ` ${left.filter((p) => keep.has(p)).map(([s]) => s).join('  ')}`;
-    const r = right.filter((p) => keep.has(p)).map(([s]) => s).join('  ');
+    /** @param {Part[]} parts */
+    const join = (parts) => parts
+      .filter((p) => keep.has(p) && (!p[2] || keep.has(p[2])))
+      .map(([s, , of], i) => (i ? (of ? ' ' : '  ') : '') + s)
+      .join('');
+    const l = ` ${join(left)}`;
+    const r = join(right);
     return visibleWidth(l) + (r ? visibleWidth(r) + 3 : 0) <= cols ? spread(l, r && `${r} `, cols, t) : undefined;
   };
   for (let worth = 0; worth <= 5; worth++) {
@@ -930,6 +953,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     ` ${t.bold('Usage')}`,
     ...key('session', "how much of the plan's limit for five hours is used"),
     ...key('week', `and of its limit for the week: the desktop app's latest sample, taken every 15 minutes or so while it runs; ${t.yellow('yellow')} from 75%, ${t.red('red')} from 90%`),
+    ...key('resets', "about when that limit resets, from the app's samples: the week's at the same time each week, the session's five hours after its first use"),
     '',
     ` ${t.bold('Columns')}`,
     ...key('CTX', 'the context of the last reply, in tokens'),

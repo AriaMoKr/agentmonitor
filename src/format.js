@@ -356,3 +356,22 @@ export function clock(ts, now) {
   }
   return `${MONTHS[d.getMonth()]} ${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
 }
+
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * A moment's local time of day, to the minute: 'HH:MM'.
+ * @param {number} ts
+ */
+export function timeOfDay(ts) {
+  const d = new Date(ts);
+  return `${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+
+/**
+ * A moment's local day of the week: 'Thu'.
+ * @param {number} ts
+ */
+export function weekday(ts) {
+  return DAYS[new Date(ts).getDay()];
+}

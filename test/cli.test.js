@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { width } from '../src/format.js';
+import { timeOfDay, width } from '../src/format.js';
 import { HOUR, makeConfig, MINUTE, rec, sessionId } from './helpers/fixture.js';
 
 const BIN = fileURLToPath(new URL('../bin/agentmonitor.js', import.meta.url));
@@ -109,13 +109,20 @@ test('--once and --json with the plan\'s usage, as the desktop app sampled it', 
   const now = Date.now();
   cfg.transcript(sessionId(), [rec.prompt('Some session', now - HOUR)], { mtime: now - HOUR });
   const app = appHome(cfg.root);
-  cfg.planUsage([[now - 20 * MINUTE, 60, 28], [now - 5 * MINUTE, 64, 29]], app.dir);
+  cfg.planUsage([[now - 35 * MINUTE, 0, 28], [now - 20 * MINUTE, 60, 28], [now - 5 * MINUTE, 64, 29]], app.dir);
   const once = await run(['--once', '--dir', cfg.dir], { COLUMNS: '100', ...app.env });
   const [first] = once.stdout.split('\n');
-  assert.match(first, /^ Claude agents {2}· 1 ended +session 64% {2}week 29%$/);
+  // The session began after the sample at 0%: it resets five hours on, shown to five minutes.
+  const resets = timeOfDay(Math.round((now - 35 * MINUTE + 5 * HOUR) / (5 * MINUTE)) * 5 * MINUTE);
+  assert.match(first, new RegExp(`^ Claude agents {2}· 1 ended +session 64% resets ${resets} {2}week 29%$`));
   assert.equal(width(first), 99, 'at the right, a column short as with the time');
   const json = JSON.parse((await run(['--json', '--dir', cfg.dir], app.env)).stdout);
-  assert.deepEqual(json.usage, { at: now - 5 * MINUTE, session: 64, week: 29 });
+  assert.deepEqual(json.usage, {
+    at: now - 5 * MINUTE,
+    session: 64,
+    week: 29,
+    sessionReset: { at: now - 35 * MINUTE + 5 * HOUR, from: now - 35 * MINUTE + 5 * HOUR, to: now - 20 * MINUTE + 5 * HOUR },
+  });
 });
 
 test('--json prints what was found, without the events', async (t) => {

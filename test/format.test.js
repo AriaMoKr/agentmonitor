@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   ago, bytes, clean, clock, durationLabel, elapsed, fit, kindLabel, lastPart, parseDuration,
-  relativeTo, shortModel, tokens, toolName, toolSummary, truncate, width,
+  relativeTo, shortModel, timeOfDay, tokens, toolName, toolSummary, truncate, weekday, width,
 } from '../src/format.js';
 
 test('clean takes out escape sequences and control characters, and makes one line', () => {
@@ -166,4 +166,11 @@ test('clock shows the time today, and the date on other days', () => {
   assert.equal(clock(new Date(2026, 9, 29, 9, 5, 7).getTime(), now), '09:05:07');
   assert.equal(clock(new Date(2026, 9, 28, 23, 59, 0).getTime(), now), 'Oct 28 23:59');
   assert.equal(clock(0, now), '');
+});
+
+test('timeOfDay and weekday: a moment\'s local time to the minute, and its day', () => {
+  assert.equal(timeOfDay(new Date(2026, 9, 29, 9, 5, 59).getTime()), '09:05');
+  assert.equal(timeOfDay(new Date(2026, 9, 29, 23, 0, 0).getTime()), '23:00');
+  assert.equal(weekday(new Date(2026, 9, 29, 12, 0, 0).getTime()), 'Thu');
+  assert.equal(weekday(new Date(2026, 10, 1, 0, 0, 0).getTime()), 'Sun');
 });
