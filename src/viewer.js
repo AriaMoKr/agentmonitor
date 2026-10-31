@@ -125,11 +125,8 @@ export class Viewer {
    */
   rings(snap) {
     const before = this.states;
-    this.states = new Map(snap.rows.map((r) => [r.key, r.state]));
-    return this.ui.bell && snap.rows.some((r) => {
-      const was = before.get(r.key);
-      return was !== undefined && was !== r.state && (r.state === 'waiting' || (was === 'working' && r.state === 'idle'));
-    });
+    this.states = sessionStates(snap);
+    return this.ui.bell && ringing(before, snap).length > 0;
   }
 
   /**
@@ -314,6 +311,30 @@ export class Viewer {
         return;
     }
   }
+}
+
+/**
+ * Each session's state, by its key.
+ * @param {Snapshot} snap
+ * @returns {Map<string, string>}
+ */
+export function sessionStates(snap) {
+  return new Map(snap.rows.map((r) => [r.key, r.state]));
+}
+
+/**
+ * The sessions in `snap` that ring the bell: those that started waiting for you, or went from
+ * working to idle, since `before` (each session's state as last seen). A session not seen before
+ * rings for nothing.
+ * @param {Map<string, string>} before
+ * @param {Snapshot} snap
+ * @returns {Agent[]}
+ */
+export function ringing(before, snap) {
+  return snap.rows.filter((r) => {
+    const was = before.get(r.key);
+    return was !== undefined && was !== r.state && (r.state === 'waiting' || (was === 'working' && r.state === 'idle'));
+  });
 }
 
 /**

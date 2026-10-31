@@ -110,7 +110,7 @@ const ORDER = /** @type {Record<Shown, number>} */ ({ waiting: 0, blocked: 0, un
  * @param {Agent} a
  * @returns {Shown}
  */
-const shown = (a) => (a.blocked ? 'blocked' : a.unread ? 'unread' : a.inTool ? 'tool' : a.state);
+export const shown = (a) => (a.blocked ? 'blocked' : a.unread ? 'unread' : a.inTool ? 'tool' : a.state);
 
 /**
  * A state's glyph: a spinner while at work, a slower one while it waits on a tool call.
@@ -427,7 +427,7 @@ const USAGE_FRESH = 45 * MINUTE;
  * @param {Theme} t
  * @returns {Part[]}
  */
-function usageParts(u, now, t) {
+export function usageParts(u, now, t) {
   if (!u) return [];
   const age = Math.max(0, now - u.at);
   const level = (/** @type {number} */ n) => (n >= 90 ? t.red(`${n}%`) : n >= 75 ? t.yellow(`${n}%`) : `${n}%`);

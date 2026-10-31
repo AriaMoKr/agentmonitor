@@ -20,7 +20,9 @@ import { Viewer } from './viewer.js';
  * @typedef {import('node:http').ServerResponse} Response
  * @typedef {{ viewer: Viewer, seen: number, read: boolean }} Page a page's view, when the page
  *   last asked, and whether what it sent wants everything read again before it is answered
- * @typedef {{ port: number, token: string, close: () => Promise<void> }} Served
+ * @typedef {{ port: number, token: string, snapshot: () => Promise<import('./monitor.js').Snapshot | null>, close: () => Promise<void> }} Served
+ *   where it listens, the latest read (made again first when older than the interval, as for a
+ *   page), and how to stop it
  * @typedef {[string] | [string, string] | [string, string, number]} Run text, its classes, and
  *   for characters outside ASCII the columns they take, which the page gives them
  * @typedef {Key | { filter: string } | { drag: 'up' | 'down' }} Input what a page sent: a key, a
@@ -268,6 +270,10 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
   return {
     port: /** @type {import('node:net').AddressInfo} */ (server.address()).port,
     token,
+    snapshot: async () => {
+      await current();
+      return snap;
+    },
     close: () => new Promise((resolve) => {
       server.close(() => resolve());
       server.closeAllConnections();

@@ -1,6 +1,6 @@
 # agentmonitor
 
-The Claude agents on this computer, live in a terminal, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, and about when each resets.
+The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, and about when each resets.
 
 ```
  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread         session 64% resets 15:10  week 29% resets Thu
@@ -32,7 +32,7 @@ node bin/agentmonitor.js
 
 For an `agentmonitor` command, run `npm link` in this folder.
 
-In a terminal it runs full screen until you press q, reading everything again each second. When its output is not a terminal (a pipe, a file) it prints the table once instead, as `--once` does, and `--json` prints what it found as JSON. `--serve` shows it as a web page instead ([In a browser](#in-a-browser)).
+In a terminal it runs full screen until you press q, reading everything again each second. When its output is not a terminal (a pipe, a file) it prints the table once instead, as `--once` does, and `--json` prints what it found as JSON. `--serve` shows it as a web page instead ([In a browser](#in-a-browser)), and `desktop/` holds it as an app with a window and a tray icon, to start from the Start menu with no terminal ([The agentmonitor app](#the-agentmonitor-app)).
 
 On Windows it needs a console, which Windows Terminal, the console window, VS Code's terminal and the Claude desktop app's Terminal panel give programs whatever shell runs in them. MSYS2's bash runs there too: `C:\msys64\msys2_shell.cmd -defterm -here -no-start -ucrt64` starts it in the terminal it is run from. mintty (MSYS2, Git Bash, Cygwin) gives programs pipes instead, so there agentmonitor prints the table once and exits.
 
@@ -188,6 +188,49 @@ Its title counts the sessions that wait for you: `(2) Claude agents on <computer
 
 On a phone, a tap is a click: on a row, twice to open it, or on a key in the footer. A finger dragged up or down takes the list's selection with it, a row for each line it goes, and the events of the details and the help, as a phone scrolls a page: up for what is further down. A tap on `/ filter` opens the phone's keyboard, and what you type shows in the footer, above the keyboard; its Enter keeps the filter, and `esc clear` clears it.
 
+## The agentmonitor app
+
+`desktop/` holds agentmonitor as an app, made with Electron: the web page in a window of its own, and an icon in the system tray that shows when a session needs you. Once set up it needs no terminal, and it goes on in the tray with its window closed.
+
+```bash
+cd desktop
+npm install
+npm start
+```
+
+Electron is its only dependency, kept in that folder: the monitor itself has none. The first start downloads Electron's own program, about 100 MB (360 MB unpacked), once; `npx install-electron` does that ahead. It also puts agentmonitor in the Start menu on Windows, or in the applications menu on Linux, to start it from there after that.
+
+The window shows the page `--serve` serves, with the same keys and clicks. The monitor runs inside it and serves the page to its window alone: on 127.0.0.1, at a free port, with a new token each time. Ctrl+= and Ctrl+- make the page bigger and smaller, and Ctrl+0 sets it back; it keeps that, and where the window was.
+
+Closing the window, or Ctrl+W, leaves agentmonitor running in the tray, and so does minimizing it, unless you turn that off. A click on the icon shows the window again, and so does starting agentmonitor again. Ctrl+Q, or Quit in the icon's menu, quits it.
+
+The icon shows what matters most now:
+
+| Icon | |
+|---|---|
+| ◆ yellow | a session waits for you, or is blocked |
+| • blue | one is unread |
+| ● green | one is at work |
+| ○ cyan | the sessions that run are idle |
+| ○ grey | none runs |
+
+Its tooltip counts the sessions and gives the plan's usage. Its menu lists the sessions that need you, then the unread ones (a click on one shows the window), and the counts and the usage under them, then these switches, which it keeps:
+
+- Notify when a session needs you or ends its turn: a notification when the bell would ring. Off until you turn it on, and on Windows shown only while its settings let apps notify (Settings, System, Notifications).
+- Minimize to the tray: on at first.
+- Start at login, in the tray: off at first.
+- In the Start menu, or In the applications menu: there after the first start. Taken out here, it stays out.
+
+How many sessions need you shows on the window's taskbar button on Windows, next to the icon on macOS, and as a badge where a Linux desktop shows one. `npm start -- --hidden` starts it in the tray with the window not shown, as it starts at login, and `npm start -- --quit` quits the one that runs.
+
+It writes only its own files:
+
+- its settings and its icons, in its folder: `%APPDATA%\agentmonitor` on Windows, `~/Library/Application Support/agentmonitor` on macOS, `~/.config/agentmonitor` on Linux. Electron keeps its caches there too.
+- its Start menu shortcut, `%APPDATA%\Microsoft\Windows\Start Menu\Programs\agentmonitor.lnk`, or on Linux `~/.local/share/applications/agentmonitor.desktop`. On Windows its notifications go with the shortcut: without it, they may not show.
+- to start at login, Windows' Run key for your account, or `~/.config/autostart/agentmonitor.desktop` on Linux.
+
+It reads what `--serve` reads, from `$CLAUDE_CONFIG_DIR` or `~/.claude`, with "recently active" at 24 hours. It was tried on Windows 11. It should run on macOS and Linux, untried there: on macOS it offers no start at login or menu entry, which would take a packaged app, and a Linux desktop shows the icon only when it has a tray (GNOME needs an extension for one).
+
 ## Where it looks
 
 All in Claude Code's config folder (`~/.claude`, or `$CLAUDE_CONFIG_DIR`, or `--dir`), but for the desktop app's files:
@@ -241,7 +284,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
 npm test
 ```
 
-`bin/agentmonitor.js` reads the options and starts `src/tui.js` (the screen, the keys and the mouse) or `src/serve.js` (the web view, with its page in `src/web/`), or prints once with `src/view.js` (what is drawn, and where a click on it goes). `src/viewer.js` holds what one look at the monitor shows and what keys and clicks do to it: the terminal has one, and the web view one for each page. `src/monitor.js` puts a snapshot together from `src/registry.js`, `src/transcript.js`, `src/agents.js`, `src/jobs.js`, `src/desktop.js` and `src/procs.js`. The tests write a config folder as Claude Code does, drive the monitor through a fake terminal, and ask the web view on a free port of 127.0.0.1.
+`bin/agentmonitor.js` reads the options and starts `src/tui.js` (the screen, the keys and the mouse) or `src/serve.js` (the web view, with its page in `src/web/`), or prints once with `src/view.js` (what is drawn, and where a click on it goes). `src/viewer.js` holds what one look at the monitor shows and what keys and clicks do to it: the terminal has one, and the web view one for each page. `src/monitor.js` puts a snapshot together from `src/registry.js`, `src/transcript.js`, `src/agents.js`, `src/jobs.js`, `src/desktop.js` and `src/procs.js`. `desktop/main.js` is the agentmonitor app, around `src/serve.js`: the window, the tray and the settings; `desktop/tray.js` says what the tray shows and what to notify, `desktop/icons.js` draws its icons as PNG and ICO, and `desktop/launch.js` writes Linux's menu entries. The tests write a config folder as Claude Code does, drive the monitor through a fake terminal, ask the web view on a free port of 127.0.0.1, and check the agentmonitor app's parts that need no Electron.
 
 ## License
 

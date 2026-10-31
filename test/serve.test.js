@@ -70,6 +70,7 @@ async function start(t, monitor, o = {}) {
   t.after(() => served.close());
   const base = `http://127.0.0.1:${served.port}`;
   return {
+    served,
     logs,
     /** @param {string} path @param {RequestInit} [init] */
     get: (path, init = {}) => fetch(base + path, { redirect: 'manual', ...init }),
@@ -325,6 +326,22 @@ test('a read serves every page, and is made again when older than the interval, 
   await s.screen('page-bbbb', ['c:w']);
   assert.equal(monitor.windowMs, 72 * HOUR);
   assert.equal(monitor.refreshes, 4);
+});
+
+test('the latest read, as the agentmonitor app\'s tray asks for it: the pages\' own, read again once older than the interval', async (t) => {
+  const monitor = fakeMonitor(() => sessions());
+  const s = await start(t, monitor, { intervalMs: 300 });
+  const snap = await s.served.snapshot();
+  assert.deepEqual(snap?.rows.map((r) => r.key), ['s:a', 's:b']);
+  await s.screen('page-aaaa');
+  assert.equal(await s.served.snapshot(), snap, 'the same read');
+  assert.equal(monitor.refreshes, 1);
+  await sleep(350);
+  const again = await s.served.snapshot();
+  assert.equal(monitor.refreshes, 2);
+  assert.notEqual(again, snap);
+  assert.equal((await s.screen('page-aaaa')).text.some((l) => l.includes('Fix the parser')), true);
+  assert.equal(monitor.refreshes, 2, 'which the page is shown');
 });
 
 test('a page\'s bell: on with b or --bell, it rings once when a session ends its turn or starts waiting', async (t) => {
