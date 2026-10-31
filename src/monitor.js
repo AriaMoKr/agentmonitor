@@ -4,13 +4,15 @@
 // sessions/<pid>.json (the running processes and their status), projects/*/<session>.jsonl (the
 // transcripts) and the agents' files beside them, and jobs/*/state.json (background sessions);
 // with the desktop app's own records of its sessions for titles, settings, which are unread, and
-// the app's summary of each one's last turn; and its samples of the plan's usage.
+// the app's summary of each one's last turn; and its samples of the plan's usage, carried on to
+// now with what the replies in the transcripts used since.
 import { join } from 'node:path';
 import { SessionAgents } from './agents.js';
 import { DesktopSessions, desktopDataDirs } from './desktop.js';
 import { entries, JsonFiles, statOf } from './files.js';
 import { clean, kindLabel, lastPart } from './format.js';
 import { Jobs } from './jobs.js';
+import { Ledger } from './ledger.js';
 import { isRunning, looksLikeClaude, processTable, sameDomain } from './procs.js';
 import { Registry } from './registry.js';
 import { Transcript } from './transcript.js';
@@ -121,7 +123,7 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  * @property {boolean} found whether the config folder holds sessions or transcripts
  * @property {Agent[]} rows the sessions, each with its agents as children
  * @property {import('./usage.js').Usage} [usage] how much of the plan's usage limits is used, as
- *   the desktop app last sampled it
+ *   the desktop app last sampled it, and as carried on to now
  */
 
 /** The states of something still at work, or waiting to be. */
@@ -135,14 +137,17 @@ export class Monitor {
    * @param {() => Promise<string[]>} [o.desktopDirs] the desktop app's data folders
    * @param {(pid: number) => boolean} [o.isRunning]
    * @param {() => Promise<import('./procs.js').ProcessTable>} [o.processTable]
+   * @param {boolean} [o.wait] whether a refresh waits for what is read in the background (the
+   *   replies the usage is carried on with): for a snapshot printed once
    */
-  constructor({ dir, windowMs, desktopDirs = () => desktopDataDirs(), isRunning: running = isRunning, processTable: table = () => processTable() }) {
+  constructor({ dir, windowMs, desktopDirs = () => desktopDataDirs(), isRunning: running = isRunning, processTable: table = () => processTable(), wait = false }) {
     this.dir = dir;
     this.windowMs = windowMs;
+    this.wait = wait;
     this.registry = new Registry(join(dir, 'sessions'));
     this.jobs = new Jobs(join(dir, 'jobs'));
     this.desktop = new DesktopSessions(desktopDirs);
-    this.planUsage = new PlanUsage(desktopDirs);
+    this.planUsage = new PlanUsage(desktopDirs, new Ledger(join(dir, 'projects')));
     this.sessionAgents = new SessionAgents();
     this.json = new JsonFiles();
     this.isRunning = running;
@@ -181,7 +186,7 @@ export class Monitor {
       this.jobs.read(),
       this.desktop.read(now),
       this.scanProjects(),
-      this.planUsage.read(now),
+      this.planUsage.read(now, { wait: this.wait }),
     ]);
     const live = await this.liveness(records, now);
     const cutoff = now - this.windowMs;

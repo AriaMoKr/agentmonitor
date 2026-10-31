@@ -26,6 +26,24 @@ export async function statOf(path) {
   }
 }
 
+/**
+ * Bytes [start, end) of an open file (fewer if it shrank meanwhile).
+ * @param {import('node:fs/promises').FileHandle} fh
+ * @param {number} start
+ * @param {number} end
+ */
+export async function readRange(fh, start, end) {
+  const length = Math.max(0, end - start);
+  const buf = Buffer.allocUnsafe(length);
+  let got = 0;
+  while (got < length) {
+    const { bytesRead } = await fh.read(buf, got, length - got, start + got);
+    if (bytesRead === 0) break;
+    got += bytesRead;
+  }
+  return got < length ? buf.subarray(0, got) : buf;
+}
+
 /** Parsed JSON files, read again only when their size or modification time changes. */
 export class JsonFiles {
   constructor() {

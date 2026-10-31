@@ -292,6 +292,29 @@ test('when the limits reset, after their percent where the samples tell it close
   for (const cols of [160, 80, 60, 43]) assert.equal(visible(top(u, cols)), cols);
 });
 
+test('the usage carried on to now with this computer\'s replies, marked ~; how long ago only for what is sampled', () => {
+  /** The header with this usage. @param {import('../src/usage.js').Usage} usage @param {ReturnType<typeof makeTheme>} [t] */
+  const top = (usage, t = plain) => {
+    const snap = snapshot(sessions(), { usage });
+    const ui = initialUi();
+    return listLines(snap, visibleRows(snap, ui, t), ui, { width: 160, height: 10, now: NOW }, t)[0];
+  };
+  /** A reset likeliest at `at`, from and to so many minutes off it. @param {number} at @param {number} from @param {number} to */
+  const reset = (at, from, to) => ({ at, from: at + from * MINUTE, to: at + to * MINUTE });
+  const W = NOW + 3 * 24 * HOUR;
+  const sample = { at: NOW - 6 * HOUR, session: 10, week: 36, weekReset: reset(W, -9, 5) };
+  const session = { session: 54, sessionReset: reset(NOW + 3 * HOUR + 2 * MINUTE, -10, 0) };
+  const sessionAt = timeOfDay(NOW + 3 * HOUR);
+  assert.match(
+    top({ ...sample, tracked: { at: NOW, ...session, week: 43, weekReset: reset(W, -9, 5) } }),
+    new RegExp(`at work +session ~54% resets ${sessionAt} {2}week ~43% resets ${weekday(W)} {2}\\d\\d:\\d\\d:\\d\\d $`),
+  );
+  assert.match(top({ ...sample, tracked: { at: NOW, ...session } }), new RegExp(`at work +session ~54% resets ${sessionAt} {2}week 36% resets ${weekday(W)} {2}6h ago {2}\\d`), 'the week as sampled');
+  assert.match(top({ ...sample, tracked: { at: NOW, session: 0 } }), /at work +session ~0% {2}week 36% resets \w{3} {2}6h ago {2}\d/, 'no window: no reset');
+  const color = makeTheme({ color: true, ascii: false, animate: false });
+  assert.ok(top({ ...sample, tracked: { at: NOW, ...session, session: 92 } }, color).includes('\x1b[2msession\x1b[0m \x1b[31m~92%\x1b[0m'));
+});
+
 test('the selected row: marked with > without color, inverse with color', () => {
   const snap = snapshot(sessions());
   const ui = { ...initialUi(), selected: 's:idle' };
@@ -588,7 +611,8 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   assert.match(lines.join('\n'), /EFFORT {8}the effort it works at, and a \+ when ultracode is on/);
   assert.match(lines.join('\n'), /ACTIVITY {6}what it is doing, with how many of its tasks are done \(4\/8\) and how *\n {17}long the current step has taken/);
   assert.match(lines.join('\n'), /click {9}select a row +double-click +its details/);
-  assert.match(lines.join('\n'), /resets {8}about when that limit resets, from the app's samples: the week's at the *\n {17}same time each week, the session's five hours after its first use/);
+  assert.match(lines.join('\n'), /~34% {10}that sample carried on to now with what this computer's sessions used *\n {17}since: an estimate, blind to use elsewhere/);
+  assert.match(lines.join('\n'), /resets {8}about when that limit resets: the week's at the same time each week, *\n {17}the session's five hours after its first use/);
   assert.match(lines.join('\n'), /↑↓ pgup pgdn home end and the wheel scroll; any other key or a click goes back\./);
   const off = helpLines(initialUi(), { width: 90, height: 45, now: NOW }, plain, '/x', false).join('\n');
   assert.doesNotMatch(off, /click|wheel/, 'not with the mouse off');

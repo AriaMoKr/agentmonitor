@@ -123,8 +123,9 @@ if (values.port !== undefined) {
 if (values.token !== undefined && !TOKEN.test(values.token)) fail('--token takes 16 or more letters, digits, - and _');
 
 const dir = resolve(values.dir ?? (process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')));
-const monitor = new Monitor({ dir, windowMs });
 const interactive = Boolean(process.stdout.isTTY && process.stdin.isTTY) && !values.once && !values.json;
+// Printed once, the usage waits for the transcripts it is carried on with.
+const monitor = new Monitor({ dir, windowMs, wait: !interactive && !values.serve });
 const forced = process.env.FORCE_COLOR !== undefined && process.env.FORCE_COLOR !== '0';
 const color = values['no-color'] ? false : values.color || forced || (Boolean(process.stdout.isTTY) && !process.env.NO_COLOR);
 const ascii = Boolean(values.ascii);

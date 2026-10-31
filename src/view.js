@@ -415,13 +415,14 @@ const DAY = 24 * HOUR;
 const USAGE_FRESH = 45 * MINUTE;
 
 /**
- * The plan's usage in the header, as the desktop app last sampled it: how much of the session's
- * limit and of the week's is used, yellow from 75% and red from 90%, each with when it resets
- * where the samples tell that closely enough, and how long ago they were taken once that is no
- * longer fresh. The session's reset is shown when known within half an hour, to five minutes; the
- * week's to the minute when known within an hour and less than a day off, else by its day when
- * known within half a day. Each goes once it has surely reset since: without a reset known, the
- * session's after five hours and the week's after seven days.
+ * The plan's usage in the header: how much of the session's limit and of the week's is used,
+ * yellow from 75% and red from 90%, each with when it resets where that is known closely enough.
+ * As carried on to now with this computer's replies (`~34%`) where they tell how, else as the
+ * desktop app last sampled it, with how long ago once that is no longer fresh. The session's reset
+ * is shown when known within half an hour, to five minutes; the week's to the minute when known
+ * within an hour and less than a day off, else by its day when known within half a day. A sampled
+ * percent goes once it has surely reset since: without a reset known, the session's after five
+ * hours and the week's after seven days.
  * @param {import('./usage.js').Usage | undefined} u
  * @param {number} now
  * @param {Theme} t
@@ -430,25 +431,34 @@ const USAGE_FRESH = 45 * MINUTE;
 export function usageParts(u, now, t) {
   if (!u) return [];
   const age = Math.max(0, now - u.at);
-  const level = (/** @type {number} */ n) => (n >= 90 ? t.red(`${n}%`) : n >= 75 ? t.yellow(`${n}%`) : `${n}%`);
+  /** @param {number} n @param {boolean} near carried on, not sampled */
+  const level = (n, near) => {
+    const s = `${near ? '~' : ''}${n}%`;
+    return n >= 90 ? t.red(s) : n >= 75 ? t.yellow(s) : s;
+  };
   /** @type {Part[]} */
   const parts = [];
-  /** @param {string} label @param {number} n @param {string | false | undefined} resets */
-  const add = (label, n, resets) => {
+  let sampled = false;
+  /** @param {string} label @param {number} n @param {boolean} near @param {string | false | undefined} resets */
+  const add = (label, n, near, resets) => {
     /** @type {Part} */
-    const part = [`${t.dim(label)} ${level(n)}`, 6];
+    const part = [`${t.dim(label)} ${level(n, near)}`, 6];
     parts.push(part);
     if (resets) parts.push([`${t.dim('resets')} ${resets}`, 4, part]);
+    if (!near) sampled = true;
   };
+  /** @param {import('./usage.js').Reset | undefined} r */
+  const sessionAt = (r) => r && r.to - r.from <= 30 * MINUTE && timeOfDay(Math.round(r.at / (5 * MINUTE)) * 5 * MINUTE);
+  /** @param {import('./usage.js').Reset | undefined} r */
+  const weekAt = (r) => r && (r.to - r.from <= HOUR && r.at - now < DAY ? timeOfDay(r.at) : r.to - r.from <= 12 * HOUR && weekday(r.at));
+  const k = u.tracked;
   const s = u.sessionReset;
-  if (u.session !== undefined && now < (s ? s.to : u.at + 5 * HOUR)) {
-    add('session', u.session, s && s.to - s.from <= 30 * MINUTE && timeOfDay(Math.round(s.at / (5 * MINUTE)) * 5 * MINUTE));
-  }
+  if (k?.session !== undefined) add('session', k.session, true, sessionAt(k.sessionReset));
+  else if (u.session !== undefined && now < (s ? s.to : u.at + 5 * HOUR)) add('session', u.session, false, sessionAt(s));
   const w = u.weekReset;
-  if (u.week !== undefined && now < (w ? w.to : u.at + 7 * DAY)) {
-    add('week', u.week, w && (w.to - w.from <= HOUR && w.at - now < DAY ? timeOfDay(w.at) : w.to - w.from <= 12 * HOUR && weekday(w.at)));
-  }
-  if (parts.length && age >= USAGE_FRESH) parts.push([t.dim(`${ago(age)} ago`), 6]);
+  if (k?.week !== undefined) add('week', k.week, true, weekAt(k.weekReset));
+  else if (u.week !== undefined && now < (w ? w.to : u.at + 7 * DAY)) add('week', u.week, false, weekAt(w));
+  if (sampled && age >= USAGE_FRESH) parts.push([t.dim(`${ago(age)} ago`), 6]);
   return parts;
 }
 
@@ -953,7 +963,8 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     ` ${t.bold('Usage')}`,
     ...key('session', "how much of the plan's limit for five hours is used"),
     ...key('week', `and of its limit for the week: the desktop app's latest sample, taken every 15 minutes or so while it runs; ${t.yellow('yellow')} from 75%, ${t.red('red')} from 90%`),
-    ...key('resets', "about when that limit resets, from the app's samples: the week's at the same time each week, the session's five hours after its first use"),
+    ...key('~34%', "that sample carried on to now with what this computer's sessions used since: an estimate, blind to use elsewhere"),
+    ...key('resets', "about when that limit resets: the week's at the same time each week, the session's five hours after its first use"),
     '',
     ` ${t.bold('Columns')}`,
     ...key('CTX', 'the context of the last reply, in tokens'),

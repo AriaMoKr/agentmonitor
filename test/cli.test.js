@@ -125,6 +125,25 @@ test('--once and --json with the plan\'s usage, as the desktop app sampled it', 
   });
 });
 
+test('--once and --json with the session\'s usage carried on to now with the replies in the transcripts', async (t) => {
+  const cfg = makeConfig(t);
+  const now = Date.now();
+  /** A reply `m` minutes ago that used `x`: the fixture's input, 292 tokens of output's worth, and output. @param {number} m @param {number} x */
+  const reply = (m, x) => rec.reply('Done.', now - m * MINUTE, { ctx: 1010, out: x - 292 });
+  const replies = [reply(160, 1000), reply(140, 10_000), reply(125, 10_000), reply(110, 10_000), reply(60, 20_000)];
+  cfg.transcript(sessionId(), [rec.prompt('Busy session', now - 161 * MINUTE), ...replies], { mtime: now - HOUR });
+  const app = appHome(cfg.root);
+  // The session rose 30 points while 30,000 were used, then 20,000 more: 50%. The week's reset is not known.
+  cfg.planUsage([[now - 150 * MINUTE, 0, 20], [now - 135 * MINUTE, 10, 22], [now - 120 * MINUTE, 20, 24], [now - 105 * MINUTE, 30, 26]], app.dir);
+  const once = await run(['--once', '--dir', cfg.dir], { COLUMNS: '120', ...app.env });
+  const [first] = once.stdout.split('\n');
+  // Its window began with the reply 160 minutes ago: it resets five hours on, shown to five minutes.
+  const resets = timeOfDay(Math.round((now - 160 * MINUTE + 5 * HOUR) / (5 * MINUTE)) * 5 * MINUTE);
+  assert.match(first, new RegExp(`^ Claude agents {2}· 1 ended +session ~50% resets ${resets} {2}week 26% {2}1h ago$`));
+  const json = JSON.parse((await run(['--json', '--dir', cfg.dir], app.env)).stdout);
+  assert.deepEqual({ week: json.usage.week, tracked: json.usage.tracked.session }, { week: 26, tracked: 50 });
+});
+
 test('--json prints what was found, without the events', async (t) => {
   const cfg = makeConfig(t);
   const now = Date.now();

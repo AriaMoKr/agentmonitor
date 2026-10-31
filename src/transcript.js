@@ -6,6 +6,7 @@
 // runs in the background, its task list, the last prompt and reply, the titles and the latest
 // events.
 import { open } from 'node:fs/promises';
+import { readRange } from './files.js';
 import { clean, toolSummary } from './format.js';
 
 /** How much of a transcript is read on first sight: enough for the current turn. */
@@ -181,24 +182,6 @@ export class Transcript {
     }
     this.carry = pos < buf.length ? Buffer.from(buf.subarray(pos)) : null;
   }
-}
-
-/**
- * Bytes [start, end) of an open file (fewer if it shrank meanwhile).
- * @param {import('node:fs/promises').FileHandle} fh
- * @param {number} start
- * @param {number} end
- */
-async function readRange(fh, start, end) {
-  const length = Math.max(0, end - start);
-  const buf = Buffer.allocUnsafe(length);
-  let got = 0;
-  while (got < length) {
-    const { bytesRead } = await fh.read(buf, got, length - got, start + got);
-    if (bytesRead === 0) break;
-    got += bytesRead;
-  }
-  return got < length ? buf.subarray(0, got) : buf;
 }
 
 /**
