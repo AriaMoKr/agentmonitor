@@ -163,9 +163,9 @@ test('the screen comes as runs of text and classes; the text from the files stay
   assert.equal(text.length, 12);
   for (const l of text) assert.ok(l.length <= 100, l);
   assert.match(text[0], /^ Claude agents {2}● 1 working {2}◆ 1 waiting {2}1 agent at work +\d\d:\d\d:\d\d $/);
-  assert.match(text[1], /NAME +PROJECT/);
+  assert.match(text[1], /PROJECT +NAME/);
   // The session that waits comes first, selected: its line drawn inverse, the title as it is.
-  assert.match(selected({ title, lines, text }), /^ ◆ <img src=x onerror=alert\(1\)…/);
+  assert.match(selected({ title, lines, text }), /^ ◆ docs +<img src=x onerror=alert\(1\)…/);
   assert.match((await s.screen('page-aaaa', ['k:enter'])).text[0], /^ ◆ <img src=x onerror=alert\(1\)> & "docs" +waiting $/);
   const row = text.findIndex((l) => l.includes('Fix the parser'));
   // A glyph outside ASCII is a run of its own, with the column it takes.

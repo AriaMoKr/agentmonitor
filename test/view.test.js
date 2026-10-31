@@ -91,9 +91,9 @@ test('a session the desktop app shows unread: its dot, counted, and listed after
   ]);
   const lines = listLines(snap, rows, ui, { width: 120, height: 12, now: NOW }, plain);
   assert.match(lines[0], /◆ 1 waiting {2}• 2 unread {2}○ 1 idle {2}◌ 1 active {2}· 1 ended /);
-  assert.match(lines[3], /^ • Unread session /);
+  assert.match(lines[3], /^ • delta +Unread session /);
   const ascii = makeTheme({ color: false, ascii: true, animate: false });
-  assert.match(listLines(snap, rows, ui, { width: 120, height: 12, now: NOW }, ascii)[3], /^ @ Unread session /);
+  assert.match(listLines(snap, rows, ui, { width: 120, height: 12, now: NOW }, ascii)[3], /^ @ delta +Unread session /);
 });
 
 /**
@@ -120,7 +120,7 @@ test('a session whose last turn ended blocked on you: its mark, counted, listed 
   const lines = listLines(snap, rows, ui, { width: 160, height: 12, now: NOW }, plain);
   assert.match(lines[0], /◆ 1 waiting {2}◇ 2 blocked {2}○ 1 idle/);
   assert.doesNotMatch(lines[0], /unread/, 'blocked shows before unread');
-  assert.match(lines[3], /^ ◇ Blocked session +theta +blocked: say whether the stutter was picture or sound +30m/);
+  assert.match(lines[3], /^ ◇ theta +Blocked session +blocked: say whether the stutter was picture or sound +30m/);
   const color = makeTheme({ color: true, ascii: false, animate: false });
   const ended = listLines(snap, visibleRows(snap, ui, color), ui, { width: 160, height: 12, now: NOW }, color)[4];
   assert.ok(ended.includes('\x1b[1;33mblocked: say whether'), `a session that ended, blocked, still waits on you: ${JSON.stringify(ended)}`);
@@ -152,10 +152,11 @@ test('the columns fill the width; a narrow screen drops the least needed', () =>
   for (const cols of [20, 40, 72, 80, 100, 120, 160, 200]) {
     assert.equal(columns(cols).reduce((n, c) => n + c.width + 1, 0), cols, `${cols} columns`);
   }
-  assert.deepEqual(columns(80).map((c) => c.key), ['state', 'title', 'project', 'activity', 'last']);
-  assert.deepEqual(columns(109).map((c) => c.key), ['state', 'title', 'project', 'model', 'ctx', 'activity', 'last']);
-  assert.deepEqual(columns(110).map((c) => c.key), ['state', 'title', 'project', 'model', 'effort', 'ctx', 'activity', 'last']);
-  assert.deepEqual(columns(160).map((c) => c.key), ['state', 'title', 'project', 'kind', 'model', 'effort', 'ctx', 'activity', 'last', 'pid']);
+  assert.deepEqual(columns(80).map((c) => c.key), ['state', 'project', 'title', 'activity', 'last']);
+  assert.deepEqual(columns(109).map((c) => c.key), ['state', 'project', 'title', 'model', 'ctx', 'activity', 'last']);
+  assert.deepEqual(columns(110).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last']);
+  assert.deepEqual(columns(118).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'kind']);
+  assert.deepEqual(columns(160).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'pid', 'kind']);
 });
 
 test("the effort each one works at: a column after the model, and in an agent's details", () => {
@@ -167,7 +168,7 @@ test("the effort each one works at: a column after the model, and in an agent's 
   const snap = snapshot([busy, agent({ key: 's:old', title: 'Old session', state: 'idle', model: 'claude-sonnet-5-5' })]);
   const ui = initialUi();
   const lines = listLines(snap, visibleRows(snap, ui, plain), ui, { width: 120, height: 10, now: NOW }, plain);
-  assert.match(lines[1], /^ {3}NAME +PROJECT +KIND +MODEL +EFFORT +CTX +ACTIVITY +LAST$/);
+  assert.match(lines[1], /^ {3}PROJECT +NAME +MODEL +EFFORT +CTX +ACTIVITY +LAST +KIND +$/);
   assert.match(lines.find((l) => l.includes('Busy session')) ?? '', /opus 5\.5 +max +/);
   assert.match(lines.find((l) => l.includes('find the parser')) ?? '', /haiku 4\.5 +medium +/);
   assert.match(lines.find((l) => l.includes('Old session')) ?? '', /sonnet 5\.5 {8}/, 'none known: the cell is empty');
@@ -419,9 +420,9 @@ test('in a tool: its own mark, counted apart; a task list at work says how far i
   const lines = listLines(snap, visibleRows(snap, ui, plain), ui, { width: 120, height: 8, now: NOW }, plain);
   const line = (/** @type {string} */ title) => lines.find((l) => l.includes(title)) ?? '';
   assert.match(lines[0], / Claude agents {2}● 1 working {2}◐ 1 in a tool {2}○ 1 idle /);
-  assert.match(line('Tool session'), /^[ >]◐ Tool session +demo +4\/8 Bash: Build +1m05s +1m/);
-  assert.match(line('Thinking session'), /demo +thinking +5s +1m/, 'a task list of an earlier turn: no count');
-  assert.match(line('Idle session'), /demo +Done\. +1m/, 'nor that of a session not at work');
+  assert.match(line('Tool session'), /^[ >]◐ demo +Tool session +4\/8 Bash: Build +1m05s +1m/);
+  assert.match(line('Thinking session'), /Thinking session +thinking +5s +1m/, 'a task list of an earlier turn: no count');
+  assert.match(line('Idle session'), /Idle session +Done\. +1m/, 'nor that of a session not at work');
   const color = makeTheme({ color: true, ascii: false, animate: true });
   const out = table(snap, { width: 120, now: NOW, agents: 'running', showEnded: true }, color);
   assert.match(out, /\x1b\[32m[◐◓◑◒]\x1b\[0m/, 'its mark turns, slower than one at work');
@@ -493,7 +494,7 @@ test('the detail view: the fields of a session, its agents and its activity', ()
     /Totals {5}\$1\.50 · 2k out · 34k in · \+10 -2 lines · as Claude Code last saved them/,
     /Transcript C:\\Users\\me\\\.claude\\projects\\C--work-demo\\x\.jsonl · 803 KB/,
     /Agents {2}1 agent *\n/,
-    /helper +Explore/,
+    /Explore +helper/,
     /Activity/,
     /you {4}Fix the parser/,
     /error {2}Bash: npm test failed: Exit code 1/,
@@ -678,7 +679,7 @@ test('with --ascii, nothing but ASCII is drawn', () => {
   settleSelection(ui, rows, 17);
   assert.ok(rows.some((r) => r.prefix === '|  |- '), rows.map((r) => r.prefix).join(','));
   const list = listLines(snap, rows, ui, { width: 120, height: 20, now: NOW }, ascii);
-  assert.match(list.find((l) => l.includes('Tool session')) ?? '', /^ % Tool session .* 5\/12 Bash: Build +1m05s/);
+  assert.match(list.find((l) => l.includes('Tool session')) ?? '', /^ % +Tool session .* 5\/12 Bash: Build +1m05s/);
   const details = detailLines(tool, snap, ui, { width: 120, height: 30, now: NOW }, ascii);
   assert.match(details.join('\n'), / Tasks {2}5\/12 done *\n {3}\+ 4 more done *\n {3}\+ step 5 *\n {3}> step 6 *\n {3}- step 7 *\n/);
   const screens = [
@@ -699,7 +700,7 @@ test('the table printed once: no selection, no trailing spaces', () => {
   assert.ok(out.endsWith('\n'));
   const lines = out.trimEnd().split('\n');
   assert.match(lines[0], /^ Claude agents {2}● 1 working/);
-  assert.match(lines[1], /^ {3}NAME +PROJECT +CTX +ACTIVITY +LAST$/);
+  assert.match(lines[1], /^ {3}PROJECT +NAME +CTX +ACTIVITY +LAST$/);
   assert.equal(lines.length, 2 + 7);
   assert.ok(!out.includes('Ended session'));
   for (const l of lines) {

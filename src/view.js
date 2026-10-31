@@ -241,15 +241,15 @@ export function columns(cols) {
   /** @type {(Column & { from?: number })[]} */
   const all = [
     { key: 'state', title: '', width: 1 },
-    { key: 'title', title: 'NAME', width: 0, flex: 42, min: 12 },
     { key: 'project', title: 'PROJECT', width: 16, from: 72 },
-    { key: 'kind', title: 'KIND', width: 8, from: 118 },
+    { key: 'title', title: 'NAME', width: 0, flex: 42, min: 12 },
     { key: 'model', title: 'MODEL', width: 10, from: 104 },
     { key: 'effort', title: 'EFFORT', width: 7, from: 110 },
     { key: 'ctx', title: 'CTX', width: 5, align: 'right', from: 90 },
     { key: 'activity', title: 'ACTIVITY', width: 0, flex: 58, min: 10 },
     { key: 'last', title: 'LAST', width: 4, align: 'right' },
     { key: 'pid', title: 'PID', width: 6, align: 'right', from: 140 },
+    { key: 'kind', title: 'KIND', width: 8, from: 118 },
   ];
   const shown = all.filter((c) => !c.from || cols >= c.from);
   // One column of margin on the left, one space between columns.

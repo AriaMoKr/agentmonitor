@@ -4,19 +4,19 @@ The Claude agents on this computer, live in a terminal, in a window of its own w
 
 ```
  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread         session 64% resets 15:10  week 29% resets Thu
-   NAME                      PROJECT          KIND     MODEL      EFFORT    CTX ACTIVITY                            LAST
->◆ Release 2.0               shop             cli      opus 5.5   high      88k waiting: permission: Bash     2m03s   2m
- ◇ Pick the payment provider shop             desktop  opus 5.5   xhigh+    73k blocked: choose Stripe or Adyen       7m
- • Plan the migration        infra            desktop  opus 5.5   max      201k plan in MIGRATION.md: three steps,…  18m
- ● Write the API docs        docs             vscode   sonnet 5.5 xhigh     64k 1 agent running               4m00s   2s
- ● └─ review-docs            Review           workflow                          Review: 2 running, 3/5 done   4m00s   2s
- ●    ├─ review:examples     Review           agent    sonnet 5.5 high      52k Bash: Run the examples          41s   2s
- ●    └─ review:links        Review           agent    sonnet 5.5 low       24k WebFetch: https://example.com/a… 6s   6s
- ◐ Fix the flaky upload test shop             desktop  opus 5.5   high     142k 2/4 Bash: Run the upload tests  14s  14s
- ● └─ find the retry logic   Explore          agent    haiku 4.5  medium    31k Grep: retry in src               3s   3s
- ○ Preview the docs site     docs             cli      sonnet 5.5 medium    38k background: Bash: Serve the… 25m00s  24m
- ○ Triage the issues         shop             bg       sonnet 5.5 high      41k Labelled 14 issues; 3 need a perso…   1h
- · Upgrade the linter        tools            cli      opus 5.5   xhigh     96k Done: eslint 10 with the flat conf…   5h
+   PROJECT          NAME                      MODEL      EFFORT    CTX ACTIVITY                            LAST KIND
+>◆ shop             Release 2.0               opus 5.5   high      88k waiting: permission: Bash     2m03s   2m cli
+ ◇ shop             Pick the payment provider opus 5.5   xhigh+    73k blocked: choose Stripe or Adyen       7m desktop
+ • infra            Plan the migration        opus 5.5   max      201k plan in MIGRATION.md: three steps,…  18m desktop
+ ● docs             Write the API docs        sonnet 5.5 xhigh     64k 1 agent running               4m00s   2s vscode
+ ● Review           └─ review-docs                                     Review: 2 running, 3/5 done   4m00s   2s workflow
+ ● Review              ├─ review:examples     sonnet 5.5 high      52k Bash: Run the examples          41s   2s agent
+ ● Review              └─ review:links        sonnet 5.5 low       24k WebFetch: https://example.com/a… 6s   6s agent
+ ◐ shop             Fix the flaky upload test opus 5.5   high     142k 2/4 Bash: Run the upload tests  14s  14s desktop
+ ● Explore          └─ find the retry logic   haiku 4.5  medium    31k Grep: retry in src               3s   3s agent
+ ○ docs             Preview the docs site     sonnet 5.5 medium    38k background: Bash: Serve the… 25m00s  24m cli
+ ○ shop             Triage the issues         sonnet 5.5 high      41k Labelled 14 issues; 3 need a perso…   1h bg
+ · tools            Upgrade the linter        opus 5.5   xhigh     96k Done: eslint 10 with the flat conf…   5h cli
  ↑↓ move  ⏎ details  / filter  s sort:status  e ended:on  a agents:running  w window  b bell:off  ? help  q quit  1/12
 ```
 
@@ -87,7 +87,7 @@ Each session is a row, with the agents it started under it: its subagents (the A
 | · ended | its process is gone |
 | ✓ done, ✗ failed, ■ stopped | an agent or workflow that is over |
 
-The columns: NAME is the session's title (the one you gave it, the desktop app's, Claude's, or else the first prompt); PROJECT, its folder (for an agent, its type; for a workflow, the phase it is in); KIND, how it was started (`cli`, `desktop`, `vscode`, `sdk`, `bg` for a background session); MODEL, the model of its last reply; EFFORT, the reasoning effort it works at (`low`, `medium`, `high`, `xhigh` or `max`), with a `+` when ultracode is on (`max+`, or `ultra` when no effort is known); CTX, the context of its last reply in tokens; ACTIVITY, what it is doing, with how long that has taken; LAST, how long ago it last did anything; PID, its process. On a narrow terminal the least needed columns go first.
+The columns: PROJECT is the session's folder (for an agent, its type; for a workflow, the phase it is in); NAME, its title (the one you gave it, the desktop app's, Claude's, or else the first prompt); MODEL, the model of its last reply; EFFORT, the reasoning effort it works at (`low`, `medium`, `high`, `xhigh` or `max`), with a `+` when ultracode is on (`max+`, or `ultra` when no effort is known); CTX, the context of its last reply in tokens; ACTIVITY, what it is doing, with how long that has taken; LAST, how long ago it last did anything; PID, its process; KIND, how it was started (`cli`, `desktop`, `vscode`, `sdk`, `bg` for a background session). On a narrow terminal the least needed columns go first.
 
 ACTIVITY is the tool call it is in (`Bash: Run the tests`, `Edit: src/a.js`, `Agent: Explore: find the parser`), `thinking`, the agents it waits for, or what it waits for you to do (`waiting: a question: Which branch?`). While it works through a task list (the desktop app's, or TodoWrite's), it begins with how many of the steps are done: `2/4`. For a session that is idle or ended it is the desktop app's summary of its last turn (`blocked:` and what you are to do, when the turn ended on you), else its last reply, or the error that stopped it (a usage limit, say). A session that runs with a command left going on in the background shows that in place of the summary or the reply: `background: Bash: Serve the site`.
 
@@ -119,7 +119,7 @@ Enter shows everything known about the selected row, and its latest events: your
    ○ Check the other retries in src
 
  Agents  1 agent · 1 running
- ● find the retry logic         Explore            31k Grep: retry in src                    3s   3s
+ ● Explore          find the retry logic           31k Grep: retry in src                    3s   3s
 
  Activity
  21:08:05     you    The upload test fails about one run in ten. Find out why and fix it.
