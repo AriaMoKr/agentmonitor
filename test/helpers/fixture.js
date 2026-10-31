@@ -139,10 +139,10 @@ export function makeConfig(t) {
     job(id, state) {
       return write(join(dir, 'jobs', id, 'state.json'), JSON.stringify(state));
     },
-    /** The desktop app's record of a session. @param {object} session */
-    desktopSession(session) {
+    /** The desktop app's record of a session. @param {object} session @param {number} [mtime] */
+    desktopSession(session, mtime) {
       const id = /** @type {any} */ (session).sessionId ?? 'local_x';
-      return write(join(desktop, 'claude-code-sessions', 'acct', 'org', `${id}.json`), JSON.stringify(session));
+      return write(join(desktop, 'claude-code-sessions', 'acct', 'org', `${id}.json`), JSON.stringify(session), mtime);
     },
   };
 }

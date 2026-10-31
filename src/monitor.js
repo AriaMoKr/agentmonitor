@@ -3,7 +3,7 @@
 // the subagents and workflow runs it started. Sources, all under the config folder (~/.claude):
 // sessions/<pid>.json (the running processes and their status), projects/*/<session>.jsonl (the
 // transcripts) and the agents' files beside them, and jobs/*/state.json (background sessions);
-// with the desktop app's own records of its sessions for titles and settings.
+// with the desktop app's own records of its sessions for titles, settings and which are unread.
 import { join } from 'node:path';
 import { SessionAgents } from './agents.js';
 import { DesktopSessions, desktopDataDirs } from './desktop.js';
@@ -74,6 +74,9 @@ const STALE_AGENT = 15 * 60_000;
  * @property {string} [transcript]
  * @property {number} [transcriptSize]
  * @property {boolean} [archived] in the desktop app
+ * @property {boolean} [unread] the desktop app shows it unread, with its blue dot: a session not
+ *   at work whose last turn ended while another one was open there
+ * @property {number} [openedAt] when it was last opened in the desktop app
  * @property {string} [hostSessionId] the desktop app's ID for the session
  * @property {import('./jobs.js').Job} [job]
  * @property {{ summary: string, ts: number }[]} pending tool calls waiting for their result
@@ -332,6 +335,8 @@ export class Monitor {
         transcript: s.file?.path,
         transcriptSize: s.file?.size,
         archived: d?.archived,
+        unread: d ? (state === 'idle' || state === 'ended') && this.desktop.unread(d) : undefined,
+        openedAt: d?.openedAt,
         hostSessionId: record?.hostSessionId ?? d?.id,
         job: s.job,
         pending: pendingOf(info),

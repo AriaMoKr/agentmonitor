@@ -7,6 +7,8 @@ import { ago, bytes, clock, durationLabel, elapsed, fit, shortModel, tokens, tru
  * @typedef {import('./monitor.js').Agent} Agent
  * @typedef {import('./monitor.js').Snapshot} Snapshot
  * @typedef {import('./monitor.js').State} State
+ * @typedef {State | 'unread'} Shown the state a row shows: unread, the desktop app's blue dot,
+ *   in place of idle or ended
  * @typedef {'status' | 'recent' | 'name' | 'project'} Sort
  * @typedef {'running' | 'all' | 'none'} AgentsShown
  *
@@ -61,14 +63,15 @@ export function makeTheme({ color, ascii, animate = true }) {
     magenta: sgr('35'),
     cyan: sgr('36'),
     yellowBold: sgr('1;33'),
+    blueBold: sgr('1;34'),
     ellipsis: ascii ? '~' : '…',
     rule: ascii ? '-' : '─',
     /** between the parts of a field */
     sep: ascii ? ', ' : ' · ',
     spinner: ascii ? ['|', '/', '-', '\\'] : ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-    glyphs: /** @type {Record<State, string>} */ (ascii
-      ? { working: '*', running: '*', waiting: '!', idle: 'o', active: '?', done: '+', failed: 'x', stopped: '#', ended: '.' }
-      : { working: '●', running: '●', waiting: '◆', idle: '○', active: '◌', done: '✓', failed: '✗', stopped: '■', ended: '·' }),
+    glyphs: /** @type {Record<Shown, string>} */ (ascii
+      ? { working: '*', running: '*', waiting: '!', unread: '@', idle: 'o', active: '?', done: '+', failed: 'x', stopped: '#', ended: '.' }
+      : { working: '●', running: '●', waiting: '◆', unread: '•', idle: '○', active: '◌', done: '✓', failed: '✗', stopped: '■', ended: '·' }),
     tree: ascii ? { mid: '|- ', last: '`- ', pipe: '|  ', none: '   ' } : { mid: '├─ ', last: '└─ ', pipe: '│  ', none: '   ' },
     arrows: ascii ? 'up/down' : '↑↓',
     enter: ascii ? 'enter' : '⏎',
@@ -78,11 +81,19 @@ export function makeTheme({ color, ascii, animate = true }) {
 }
 /** @typedef {ReturnType<typeof makeTheme>} Theme */
 
-const ORDER = /** @type {Record<State, number>} */ ({ waiting: 0, working: 1, running: 1, active: 2, idle: 3, done: 4, failed: 4, stopped: 4, ended: 4 });
+// What needs you first: waiting, then unread.
+const ORDER = /** @type {Record<Shown, number>} */ ({ waiting: 0, unread: 1, working: 2, running: 2, active: 3, idle: 4, done: 5, failed: 5, stopped: 5, ended: 5 });
+
+/**
+ * The state an agent's row shows.
+ * @param {Agent} a
+ * @returns {Shown}
+ */
+const shown = (a) => (a.unread ? 'unread' : a.state);
 
 /**
  * A state's glyph: a spinner while at work.
- * @param {State} state
+ * @param {Shown} state
  * @param {Theme} t
  * @param {number} now
  */
@@ -93,7 +104,7 @@ function glyphChar(state, t, now) {
 
 /**
  * A state's glyph, colored.
- * @param {State} state
+ * @param {Shown} state
  * @param {Theme} t
  * @param {number} now
  */
@@ -103,6 +114,7 @@ function glyph(state, t, now) {
     case 'working':
     case 'running': return t.green(g);
     case 'waiting': return t.yellowBold(g);
+    case 'unread': return t.blueBold(g);
     case 'idle': return t.cyan(g);
     case 'active': return t.blue(g);
     case 'failed': return t.red(g);
@@ -112,7 +124,7 @@ function glyph(state, t, now) {
 }
 
 /** @param {State} state */
-const over = (state) => ORDER[state] === 4;
+const over = (state) => ORDER[state] === 5;
 
 /**
  * Whether an agent's activity goes on now, so that how long it has taken means something.
@@ -165,7 +177,7 @@ function compare(sort) {
     case 'recent': return recent;
     case 'name': return (a, b) => a.title.localeCompare(b.title) || recent(a, b);
     case 'project': return (a, b) => (a.project ?? '').localeCompare(b.project ?? '') || recent(a, b);
-    default: return (a, b) => ORDER[a.state] - ORDER[b.state] || recent(a, b);
+    default: return (a, b) => ORDER[shown(a)] - ORDER[shown(b)] || recent(a, b);
   }
 }
 
@@ -232,7 +244,7 @@ function rowText(row, cols, t, now, plain) {
   const cells = cols.map((c) => {
     switch (c.key) {
       case 'state':
-        return plain ? glyphChar(a.state, t, now) : glyph(a.state, t, now);
+        return plain ? glyphChar(shown(a), t, now) : glyph(shown(a), t, now);
       case 'title': {
         const prefix = row.prefix;
         const text = fit(prefix + a.title, c.width, 'left', t.ellipsis);
@@ -313,16 +325,16 @@ function activityCell(a, w, t, now, plain) {
 }
 
 /**
- * The counts in the header: sessions by state, and agents at work.
+ * The counts in the header: sessions by the state their rows show, and agents at work.
  * @param {Snapshot} snap
  * @param {Theme} t
  */
 function summary(snap, t) {
-  /** @type {Partial<Record<State, number>>} */
+  /** @type {Partial<Record<Shown, number>>} */
   const n = {};
   let agents = 0;
   for (const r of snap.rows) {
-    n[r.state] = (n[r.state] ?? 0) + 1;
+    n[shown(r)] = (n[shown(r)] ?? 0) + 1;
     for (const c of r.children) {
       if (c.type === 'workflow') agents += c.children.filter((g) => g.state === 'running').length;
       else if (c.state === 'running') agents++;
@@ -331,6 +343,7 @@ function summary(snap, t) {
   const parts = [];
   if (n.working) parts.push(`${t.green(t.glyphs.working)} ${n.working} working`);
   if (n.waiting) parts.push(`${t.yellowBold(t.glyphs.waiting)} ${t.yellowBold(`${n.waiting} waiting`)}`);
+  if (n.unread) parts.push(`${t.blueBold(t.glyphs.unread)} ${n.unread} unread`);
   if (n.idle) parts.push(`${t.cyan(t.glyphs.idle)} ${n.idle} idle`);
   if (n.active) parts.push(`${t.blue(t.glyphs.active)} ${n.active} active`);
   if (n.ended) parts.push(t.dim(`${t.glyphs.ended} ${n.ended} ended`));
@@ -452,8 +465,8 @@ function footer(ui, rows, t, cols, now) {
  */
 export function detailLines(a, snap, ui, { width: cols, height, now }, t) {
   const lines = [];
-  const status = [a.state, ongoing(a) ? elapsed(now - a.activityAt) : ''].filter(Boolean).join(t.sep);
-  lines.push(spread(` ${glyph(a.state, t, now)} ${t.bold(truncate(a.title, Math.max(10, cols - width(status) - 6), t.ellipsis))}`, `${t.dim(status)} `, cols, t));
+  const status = [a.state, a.unread && 'unread', ongoing(a) && elapsed(now - a.activityAt)].filter(Boolean).join(t.sep);
+  lines.push(spread(` ${glyph(shown(a), t, now)} ${t.bold(truncate(a.title, Math.max(10, cols - width(status) - 6), t.ellipsis))}`, `${t.dim(status)} `, cols, t));
   lines.push(t.dim(t.rule.repeat(cols)));
 
   const body = Math.max(0, height - 3);
@@ -508,7 +521,7 @@ function* fieldLines(a, now, t, cols) {
   const join = (/** @type {(string | false | undefined)[]} */ parts) => parts.filter(Boolean).join(t.sep) || undefined;
   const waiting = a.state === 'waiting';
   const lines = [
-    field(waiting ? 'Waiting' : ongoing(a) ? 'Doing' : 'Last', a.activity
+    field(waiting ? 'Waiting' : ongoing(a) ? 'Doing' : a.unread ? 'Unread' : 'Last', a.activity
       ? (waiting ? a.activity.replace(/^waiting: /, '') : a.activity) + (ongoing(a) ? `  (${elapsed(now - a.activityAt)})` : '')
       : undefined),
   ];
@@ -532,7 +545,7 @@ function* fieldLines(a, now, t, cols) {
       ]) : undefined),
       field('Started', when(a.startedAt)),
       field('Last', when(a.lastActive)),
-      field('Desktop', join([a.hostSessionId, a.archived && 'archived'])),
+      field('Desktop', join([a.hostSessionId, a.openedAt && `last opened ${when(a.openedAt)}`, a.archived && 'archived'])),
       field('Job', a.job ? join([a.job.id, a.job.state, a.job.needs ?? a.job.detail]) : undefined),
     );
   } else {
@@ -595,6 +608,7 @@ export function helpLines({ width: cols, height }, t, dir) {
     ` ${t.bold('States')}`,
     `   ${t.green(g.working)} working   the session is at work, or ${t.green(g.running)} an agent runs`,
     `   ${t.yellowBold(g.waiting)} waiting   it needs you: a permission, an answer`,
+    `   ${t.blueBold(g.unread)} unread    the desktop app's blue dot: it finished a turn you have not opened`,
     `   ${t.cyan(g.idle)} idle      it runs, and waits for your next message`,
     `   ${t.blue(g.active)} active    its transcript moved moments ago, but no process is known`,
     `   ${t.dim(g.ended)} ended     ${t.dim(g.done)} done   ${t.red(g.failed)} failed   ${t.magenta(g.stopped)} stopped`,

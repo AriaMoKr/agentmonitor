@@ -329,6 +329,62 @@ test("a background job, and the desktop app's title and settings", async (t) => 
   assert.equal(d?.permissionMode, 'acceptEdits');
 });
 
+/**
+ * A session of the desktop app: its transcript, its process, and the app's record of it.
+ * @param {ReturnType<typeof makeConfig>} cfg
+ * @param {number} pid
+ * @param {string} local the app's ID for it
+ * @param {Record<string, unknown>} app the record's fields
+ * @param {string} [status]
+ */
+function desktopSession(cfg, pid, local, app, status = 'idle') {
+  const id = sessionId();
+  cfg.transcript(id, [rec.prompt(`Work on ${local}`, NOW - 30 * MINUTE), rec.reply('Done.', NOW - 2 * MINUTE)], { mtime: NOW - 2 * MINUTE });
+  cfg.registry({ pid, sessionId: id, status, entrypoint: 'claude-desktop', hostSessionId: local, statusUpdatedAt: NOW - 2 * MINUTE });
+  cfg.desktopSession({ sessionId: local, cliSessionId: id, title: local, ...app });
+  return id;
+}
+
+test('a desktop app session is unread, as the app shows it, when its last turn ended while another one was open', async (t) => {
+  const cfg = makeConfig(t);
+  desktopSession(cfg, 1, 'local_left', { lastFocusedAt: NOW - 10 * MINUTE, lastTurnEdgeAt: NOW - 2 * MINUTE });
+  desktopSession(cfg, 2, 'local_watched', { lastFocusedAt: NOW - 5 * MINUTE, lastTurnEdgeAt: NOW - 3 * MINUTE });
+  desktopSession(cfg, 3, 'local_reopened', { lastFocusedAt: NOW - MINUTE, lastTurnEdgeAt: NOW - 4 * MINUTE });
+  desktopSession(cfg, 4, 'local_unopened', { lastTurnEdgeAt: NOW - 6 * MINUTE });
+  desktopSession(cfg, 5, 'local_older', { lastFocusedAt: NOW - 7 * MINUTE, lastActivityAt: NOW - 4 * MINUTE });
+  desktopSession(cfg, 6, 'local_busy', { lastFocusedAt: NOW - 8 * MINUTE, lastTurnEdgeAt: NOW - 90_000 }, 'busy');
+  desktopSession(cfg, 7, 'local_archived', { lastFocusedAt: NOW - 9 * MINUTE, lastTurnEdgeAt: NOW - 2 * MINUTE, isArchived: true });
+  const running = Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((pid) => [pid, 'claude.exe']));
+  const rows = (await monitorOf(cfg, { running }).monitor.refresh(NOW)).rows;
+  assert.deepEqual(Object.fromEntries(rows.map((r) => [r.hostSessionId, r.unread])), {
+    local_left: true, // local_watched was opened before its turn ended
+    local_watched: false, // nothing else was opened after it before its turn ended
+    local_reopened: false, // opened after its turn ended
+    local_unopened: true,
+    local_older: true, // no turn edge on record: its last activity
+    local_busy: false, // at work
+    local_archived: false,
+  });
+  assert.equal(rows.find((r) => r.hostSessionId === 'local_left')?.openedAt, NOW - 10 * MINUTE);
+});
+
+test('the monitor remembers the openings it saw, which a record forgets when its session is opened again', async (t) => {
+  const cfg = makeConfig(t);
+  // x was opened, then y, and x's turn ended while y was open.
+  const x = desktopSession(cfg, 1, 'local_x', { lastFocusedAt: NOW - 10 * MINUTE, lastTurnEdgeAt: NOW - 2 * MINUTE });
+  const y = desktopSession(cfg, 2, 'local_y', { lastFocusedAt: NOW - 5 * MINUTE, lastTurnEdgeAt: NOW - 20 * MINUTE });
+  const running = { 1: 'claude.exe', 2: 'claude.exe' };
+  const { monitor } = monitorOf(cfg, { running });
+  const unread = async (/** @type {Monitor} */ m, /** @type {number} */ at) => (await m.refresh(at)).rows.find((r) => r.sessionId === x)?.unread;
+  assert.equal(await unread(monitor, NOW), true);
+  cfg.desktopSession({ sessionId: 'local_y', cliSessionId: y, lastFocusedAt: NOW + MINUTE, lastTurnEdgeAt: NOW - 20 * MINUTE }, NOW + MINUTE);
+  assert.equal(await unread(monitor, NOW + 2 * MINUTE), true);
+  // One started now knows only each session's last opening: x looks as if it was open.
+  assert.equal(await unread(monitorOf(cfg, { running }).monitor, NOW + 2 * MINUTE), false);
+  cfg.desktopSession({ sessionId: 'local_x', cliSessionId: x, lastFocusedAt: NOW + 3 * MINUTE, lastTurnEdgeAt: NOW - 2 * MINUTE }, NOW + 3 * MINUTE);
+  assert.equal(await unread(monitor, NOW + 4 * MINUTE), false);
+});
+
 test('the window can change between refreshes', async (t) => {
   const cfg = makeConfig(t);
   const id = sessionId();

@@ -78,6 +78,24 @@ test('the sorts: most recent, name, project', () => {
   assert.deepEqual(titles('project'), ['Waiting session', 'Ended session', 'Busy session', 'Active session', 'Idle session']);
 });
 
+test('a session the desktop app shows unread: its dot, counted, and listed after those waiting', () => {
+  const snap = snapshot([
+    ...sessions(),
+    agent({ key: 's:new', title: 'Unread session', state: 'idle', project: 'delta', lastActive: NOW - 20 * MINUTE, unread: true }),
+    agent({ key: 's:old', title: 'Unread and ended', state: 'ended', live: false, project: 'eta', lastActive: NOW - 2 * HOUR, unread: true }),
+  ]);
+  const ui = { ...initialUi(), agents: /** @type {const} */ ('none') };
+  const rows = visibleRows(snap, ui, plain);
+  assert.deepEqual(rows.map((r) => r.agent.title), [
+    'Waiting session', 'Unread session', 'Unread and ended', 'Busy session', 'Active session', 'Idle session', 'Ended session',
+  ]);
+  const lines = listLines(snap, rows, ui, { width: 120, height: 12, now: NOW }, plain);
+  assert.match(lines[0], /◆ 1 waiting {2}• 2 unread {2}○ 1 idle {2}◌ 1 active {2}· 1 ended /);
+  assert.match(lines[3], /^ • Unread session /);
+  const ascii = makeTheme({ color: false, ascii: true, animate: false });
+  assert.match(listLines(snap, rows, ui, { width: 120, height: 12, now: NOW }, ascii)[3], /^ @ Unread session /);
+});
+
 test('the selection stays on its row as rows move, and at its place when its row goes', () => {
   const rows = (/** @type {string[]} */ keys) => keys.map((key) => ({ agent: agent({ key, title: key }), depth: 0, prefix: '' }));
   const ui = initialUi();
@@ -228,6 +246,19 @@ test('the detail view: the fields of a session, its agents and its activity', ()
   lines.forEach((l, i) => assert.equal(visible(l), i === lines.length - 1 ? 99 : 100, `line ${i}: ${l}`));
 });
 
+test('the detail view of an unread session: the reply not read yet, and when it was last opened', () => {
+  const s = agent({
+    key: 's:u', title: 'Unread session', state: 'idle', kind: 'desktop', sessionId: 'u1', unread: true,
+    activity: 'All done: the tests pass.', activityKind: 'reply', activityAt: NOW - 3 * MINUTE,
+    hostSessionId: 'local_u', openedAt: NOW - 10 * MINUTE,
+  });
+  const lines = detailLines(s, snapshot([s]), initialUi(), { width: 100, height: 20, now: NOW }, plain);
+  assert.match(lines[0], /^ • Unread session +idle · unread $/);
+  const text = lines.join('\n');
+  assert.match(text, /Unread {5}All done: the tests pass\./);
+  assert.match(text, /Desktop {4}local_u · last opened .+ \(10m ago\)/);
+});
+
 test('the detail view of an agent at work: how long it has been at it', () => {
   const a = agent({
     key: 'a:w', type: 'subagent', title: 'find the parser', state: 'running', agentId: 'a1', agentType: 'Explore',
@@ -277,6 +308,7 @@ test('the help fills the screen, its last line one column short', () => {
   const lines = helpLines({ width: 90, height: 40, now: NOW }, plain, '/home/me/.claude');
   assert.equal(lines.length, 40);
   assert.match(lines.join('\n'), /Keys[\s\S]*States[\s\S]*Columns[\s\S]*Reading \/home\/me\/\.claude/);
+  assert.match(lines.join('\n'), /• unread {4}the desktop app's blue dot/);
   lines.slice(0, -1).forEach((l) => assert.equal(visible(l), 90, l));
   assert.equal(lines[39], ' '.repeat(89));
   assert.equal(helpLines({ width: 90, height: 10, now: NOW }, plain, '/x').length, 10);
@@ -287,7 +319,8 @@ test('with --ascii, nothing but ASCII is drawn', () => {
   const busy = busySession();
   // A workflow that is not the last agent: a line runs down past its agents to the next.
   busy.children.reverse();
-  const snap = snapshot([busy, ...sessions().filter((a) => a.key !== 's:busy')]);
+  const unread = agent({ key: 's:u', title: 'Unread session', state: 'idle', unread: true, hostSessionId: 'local_u', openedAt: NOW - HOUR });
+  const snap = snapshot([busy, unread, ...sessions().filter((a) => a.key !== 's:busy')]);
   const ui = { ...initialUi(), agents: /** @type {const} */ ('all') };
   const rows = visibleRows(snap, ui, ascii);
   settleSelection(ui, rows, 17);
@@ -295,6 +328,7 @@ test('with --ascii, nothing but ASCII is drawn', () => {
   const screens = [
     listLines(snap, rows, ui, { width: 120, height: 20, now: NOW }, ascii),
     detailLines(busy, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
+    detailLines(unread, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
     helpLines({ width: 120, height: 30, now: NOW }, ascii, '/home/me/.claude'),
     table(snap, { width: 120, now: NOW, agents: 'all', showEnded: true }, ascii).split('\n'),
   ];
