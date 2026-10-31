@@ -4,7 +4,7 @@
 // sessions/<pid>.json (the running processes and their status), projects/*/<session>.jsonl (the
 // transcripts) and the agents' files beside them, and jobs/*/state.json (background sessions);
 // with the desktop app's own records of its sessions for titles, settings, which are unread, and
-// the app's summary of each one's last turn.
+// the app's summary of each one's last turn; and its samples of the plan's usage.
 import { join } from 'node:path';
 import { SessionAgents } from './agents.js';
 import { DesktopSessions, desktopDataDirs } from './desktop.js';
@@ -14,6 +14,7 @@ import { Jobs } from './jobs.js';
 import { isRunning, looksLikeClaude, processTable, sameDomain } from './procs.js';
 import { Registry } from './registry.js';
 import { Transcript } from './transcript.js';
+import { PlanUsage } from './usage.js';
 
 const SESSION_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
 /** How often the process table is read again for the processes' memory (ms). */
@@ -119,6 +120,8 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  * @property {number} windowMs
  * @property {boolean} found whether the config folder holds sessions or transcripts
  * @property {Agent[]} rows the sessions, each with its agents as children
+ * @property {import('./usage.js').Usage} [usage] how much of the plan's usage limits is used, as
+ *   the desktop app last sampled it
  */
 
 /** The states of something still at work, or waiting to be. */
@@ -139,6 +142,7 @@ export class Monitor {
     this.registry = new Registry(join(dir, 'sessions'));
     this.jobs = new Jobs(join(dir, 'jobs'));
     this.desktop = new DesktopSessions(desktopDirs);
+    this.planUsage = new PlanUsage(desktopDirs);
     this.sessionAgents = new SessionAgents();
     this.json = new JsonFiles();
     this.isRunning = running;
@@ -172,11 +176,12 @@ export class Monitor {
    */
   async refresh(now = Date.now()) {
     this.usedTranscripts.clear();
-    const [records, jobs, desktop, files] = await Promise.all([
+    const [records, jobs, desktop, files, usage] = await Promise.all([
       this.registry.read(),
       this.jobs.read(),
       this.desktop.read(now),
       this.scanProjects(),
+      this.planUsage.read(now),
     ]);
     const live = await this.liveness(records, now);
     const cutoff = now - this.windowMs;
@@ -209,7 +214,7 @@ export class Monitor {
     }
     this.sessionAgents.sweep();
     this.json.sweep();
-    return { at: now, dir: this.dir, windowMs: this.windowMs, found: files.size > 0 || records.length > 0, rows };
+    return { at: now, dir: this.dir, windowMs: this.windowMs, found: files.size > 0 || records.length > 0, rows, usage };
   }
 
   /**

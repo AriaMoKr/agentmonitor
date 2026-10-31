@@ -372,11 +372,17 @@ function activityCell(a, w, t, now, plain) {
 }
 
 /**
+ * @typedef {[string, number]} Part a part of the header, and what it is worth its room: on a
+ *   narrow screen the least worth go first
+ */
+
+/**
  * The counts in the header: sessions by the state their rows show, and agents at work.
  * @param {Snapshot} snap
  * @param {Theme} t
+ * @returns {Part[]}
  */
-function summary(snap, t) {
+function counts(snap, t) {
   /** @type {Partial<Record<Shown, number>>} */
   const n = {};
   let agents = 0;
@@ -387,17 +393,81 @@ function summary(snap, t) {
       else if (c.state === 'running') agents++;
     }
   }
+  /** @type {Part[]} */
   const parts = [];
-  if (n.working) parts.push(`${t.green(t.glyphs.working)} ${n.working} working`);
-  if (n.tool) parts.push(`${t.green(t.glyphs.tool)} ${n.tool} in a tool`);
-  if (n.waiting) parts.push(`${t.yellowBold(t.glyphs.waiting)} ${t.yellowBold(`${n.waiting} waiting`)}`);
-  if (n.blocked) parts.push(`${t.yellowBold(t.glyphs.blocked)} ${t.yellowBold(`${n.blocked} blocked`)}`);
-  if (n.unread) parts.push(`${t.blueBold(t.glyphs.unread)} ${n.unread} unread`);
-  if (n.idle) parts.push(`${t.cyan(t.glyphs.idle)} ${n.idle} idle`);
-  if (n.active) parts.push(`${t.blue(t.glyphs.active)} ${n.active} active`);
-  if (n.ended) parts.push(t.dim(`${t.glyphs.ended} ${n.ended} ended`));
-  if (agents) parts.push(`${t.green(String(agents))} agent${agents === 1 ? '' : 's'} at work`);
-  return parts.join('  ');
+  if (n.working) parts.push([`${t.green(t.glyphs.working)} ${n.working} working`, 4]);
+  if (n.tool) parts.push([`${t.green(t.glyphs.tool)} ${n.tool} in a tool`, 4]);
+  if (n.waiting) parts.push([`${t.yellowBold(t.glyphs.waiting)} ${t.yellowBold(`${n.waiting} waiting`)}`, 5]);
+  if (n.blocked) parts.push([`${t.yellowBold(t.glyphs.blocked)} ${t.yellowBold(`${n.blocked} blocked`)}`, 5]);
+  if (n.unread) parts.push([`${t.blueBold(t.glyphs.unread)} ${n.unread} unread`, 4]);
+  if (n.idle) parts.push([`${t.cyan(t.glyphs.idle)} ${n.idle} idle`, 3]);
+  if (n.active) parts.push([`${t.blue(t.glyphs.active)} ${n.active} active`, 3]);
+  if (n.ended) parts.push([t.dim(`${t.glyphs.ended} ${n.ended} ended`), 2]);
+  if (agents) parts.push([`${t.green(String(agents))} agent${agents === 1 ? '' : 's'} at work`, 2]);
+  return parts;
+}
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+/** The desktop app samples the usage about every 15 minutes: one older than this is not fresh. */
+const USAGE_FRESH = 45 * MINUTE;
+
+/**
+ * The plan's usage in the header, as the desktop app last sampled it: how much of the session's
+ * limit and of the week's is used, yellow from 75% and red from 90%, and how long ago that was
+ * once it is no longer fresh. The session's goes once its five hours have surely ended since,
+ * and the week's after seven days.
+ * @param {import('./usage.js').Usage | undefined} u
+ * @param {number} now
+ * @param {Theme} t
+ * @returns {Part[]}
+ */
+function usageParts(u, now, t) {
+  if (!u) return [];
+  const age = Math.max(0, now - u.at);
+  const level = (/** @type {number} */ n) => (n >= 90 ? t.red(`${n}%`) : n >= 75 ? t.yellow(`${n}%`) : `${n}%`);
+  /** @type {Part[]} */
+  const parts = [];
+  if (u.session !== undefined && age < 5 * HOUR) parts.push([`${t.dim('session')} ${level(u.session)}`, 6]);
+  if (u.week !== undefined && age < 7 * 24 * HOUR) parts.push([`${t.dim('week')} ${level(u.week)}`, 6]);
+  if (parts.length && age >= USAGE_FRESH) parts.push([t.dim(`${ago(age)} ago`), 6]);
+  return parts;
+}
+
+/**
+ * The first line of the list and of the table: the title and the sessions counted by state on
+ * the left, the plan's usage and the time on the right. Where it is too narrow for all of them
+ * the least worth go first: the time, the sessions that ended and the agents at work, the title
+ * and the sessions idle or active, those at work, those that wait for you; the usage last. Of
+ * those left out, as many as the room left takes come back, the most worth first. Narrower
+ * still, the left as it fits.
+ * @param {Snapshot} snap
+ * @param {number} cols
+ * @param {number} now
+ * @param {Theme} t
+ * @param {boolean} [time] whether the time is in it
+ */
+function header(snap, cols, now, t, time = true) {
+  /** @type {Part[]} */
+  const left = [[t.bold('Claude agents'), 3], ...counts(snap, t)];
+  /** @type {Part[]} */
+  const right = [...usageParts(snap.usage, now, t), ...(time ? /** @type {Part[]} */ ([[t.dim(clock(now, now)), 1]]) : [])];
+  const all = [...left, ...right];
+  /** The line of these parts, when they fit. @param {Set<Part>} keep */
+  const line = (keep) => {
+    const l = ` ${left.filter((p) => keep.has(p)).map(([s]) => s).join('  ')}`;
+    const r = right.filter((p) => keep.has(p)).map(([s]) => s).join('  ');
+    return visibleWidth(l) + (r ? visibleWidth(r) + 3 : 0) <= cols ? spread(l, r && `${r} `, cols, t) : undefined;
+  };
+  for (let worth = 0; worth <= 5; worth++) {
+    const keep = new Set(all.filter(([, w]) => w > worth));
+    if (!line(keep)) continue;
+    for (let w = worth; w >= 1; w--) {
+      for (const p of all) if (p[1] === w && line(new Set([...keep, p]))) keep.add(p);
+    }
+    return /** @type {string} */ (line(keep));
+  }
+  return t.pad(` ${left.map(([s]) => s).join('  ')}`, cols);
 }
 
 /**
@@ -526,9 +596,7 @@ export function wrapStyled(s, cols, indent = 0) {
  * @returns {string[]}
  */
 export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits = []) {
-  const lines = [];
-  const left = ` ${t.bold('Claude agents')}  ${summary(snap, t)}`;
-  lines.push(spread(left, `${t.dim(clock(now, now))} `, cols, t));
+  const lines = [header(snap, cols, now, t)];
   const cs = columns(cols);
   lines.push(t.dim(t.pad(' ' + cs.map((c) => fit(c.title, c.width, c.align, t.ellipsis)).join(' '), cols)));
   let x = 1;
@@ -859,6 +927,10 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     ...state(t.blue(g.active), 'active', 'its transcript moved moments ago, but no process is known'),
     ...state(t.dim(g.ended), 'ended', `${t.dim(g.done)}${nb}done   ${t.red(g.failed)}${nb}failed   ${t.magenta(g.stopped)}${nb}stopped`),
     '',
+    ` ${t.bold('Usage')}`,
+    ...key('session', "how much of the plan's limit for five hours is used"),
+    ...key('week', `and of its limit for the week: the desktop app's latest sample, taken every 15 minutes or so while it runs; ${t.yellow('yellow')} from 75%, ${t.red('red')} from 90%`),
+    '',
     ` ${t.bold('Columns')}`,
     ...key('CTX', 'the context of the last reply, in tokens'),
     ...key('EFFORT', `the effort it works at, and a${nb}${t.magenta('+')} when ultracode is on`),
@@ -889,7 +961,7 @@ export function table(snap, { width: cols, now, agents, showEnded }, t) {
   const rows = visibleRows(snap, ui, t);
   const cs = columns(cols);
   const lines = [
-    ` ${t.bold('Claude agents')}  ${summary(snap, t)}`.trimEnd(),
+    header(snap, cols, now, t, false).trimEnd(),
     t.dim((' ' + cs.map((c) => fit(c.title, c.width, c.align, t.ellipsis)).join(' ')).trimEnd()),
   ];
   for (const row of rows) lines.push(rowText(row, cs, t, now, false).trimEnd());

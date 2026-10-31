@@ -229,6 +229,38 @@ test('the header counts the sessions by state, and the agents at work', () => {
   assert.match(header, /^ Claude agents {2}● 1 working {2}◆ 1 waiting {2}○ 1 idle {2}◌ 1 active {2}· 1 ended {2}2 agents at work +\d\d:\d\d:\d\d $/);
 });
 
+test('the plan\'s usage at the top, before the time: how old once it is, and what is over left out', () => {
+  /** The header with this usage. @param {import('../src/usage.js').Usage} usage @param {number} [cols] @param {ReturnType<typeof makeTheme>} [t] */
+  const top = (usage, cols = 160, t = plain) => {
+    const snap = snapshot(sessions(), { usage });
+    const ui = initialUi();
+    return listLines(snap, visibleRows(snap, ui, t), ui, { width: cols, height: 10, now: NOW }, t)[0];
+  };
+  const fresh = { at: NOW - 10 * MINUTE, session: 64, week: 29 };
+  assert.match(top(fresh), /^ Claude agents {2}● 1 working .* 2 agents at work +session 64% {2}week 29% {2}\d\d:\d\d:\d\d $/);
+  assert.match(top({ ...fresh, at: NOW - 2 * HOUR }), /at work +session 64% {2}week 29% {2}2h ago {2}\d\d:\d\d:\d\d $/);
+  assert.match(top({ ...fresh, at: NOW - 6 * HOUR }), /at work +week 29% {2}6h ago {2}\d\d:\d\d:\d\d $/, 'the session\'s five hours are over');
+  assert.match(top({ ...fresh, at: NOW - 8 * 24 * HOUR }), /at work +\d\d:\d\d:\d\d $/, 'and the week');
+  assert.match(top({ at: NOW, week: 100 }), /at work +week 100% {2}\d\d:\d\d:\d\d $/);
+  // Yellow from 75%, red from 90%.
+  const color = makeTheme({ color: true, ascii: false, animate: false });
+  const high = top({ at: NOW, session: 92, week: 75 }, 160, color);
+  assert.ok(high.includes('\x1b[2msession\x1b[0m \x1b[31m92%\x1b[0m  \x1b[2mweek\x1b[0m \x1b[33m75%\x1b[0m'), JSON.stringify(high));
+  assert.ok(top({ at: NOW, session: 74, week: 0 }, 160, color).includes('\x1b[2msession\x1b[0m 74%  \x1b[2mweek\x1b[0m 0%'));
+  // Narrower, the least worth go first: the time, the sessions that ended and the agents at work,
+  // the title and those idle or active, those at work, those waiting; the usage last. Then of
+  // those, as many as fit come back, the most worth first.
+  assert.match(top(fresh, 80), /^ Claude agents {2}● 1 working {2}◆ 1 waiting {2}○ 1 idle +session 64% {2}week 29% $/);
+  assert.match(top(fresh, 52), /^ ● 1 working {2}◆ 1 waiting +session 64% {2}week 29% $/);
+  assert.match(top(fresh, 43), /^ ◆ 1 waiting +session 64% {2}week 29% $/);
+  assert.match(top(fresh, 30), /^ +session 64% {2}week 29% $/);
+  assert.equal(top(fresh, 20), ' Claude agents  ● 1…');
+  for (const cols of [160, 80, 52, 43, 30, 20]) assert.equal(visible(top(fresh, cols)), cols);
+  // Without it, the same: what goes, goes whole, not cut.
+  assert.match(top(undefined, 80), /^ Claude agents {2}● 1 working {2}◆ 1 waiting {2}○ 1 idle {2}◌ 1 active {2}· 1 ended +$/);
+  assert.match(top(undefined, 43), /^ Claude agents {2}● 1 working {2}◆ 1 waiting +$/);
+});
+
 test('the selected row: marked with > without color, inverse with color', () => {
   const snap = snapshot(sessions());
   const ui = { ...initialUi(), selected: 's:idle' };

@@ -24,6 +24,14 @@ function monitorOf(cfg, { running = {}, windowMs = 24 * HOUR } = {}) {
   return { monitor, calls };
 }
 
+test('the plan\'s usage, as the desktop app last sampled it', async (t) => {
+  const cfg = makeConfig(t);
+  const { monitor } = monitorOf(cfg);
+  assert.equal((await monitor.refresh(NOW)).usage, undefined, 'none until the app samples it');
+  cfg.planUsage([[NOW - 20 * MINUTE, 40, 10], [NOW - 5 * MINUTE, 64, 29]]);
+  assert.deepEqual((await monitor.refresh(NOW + 5000)).usage, { at: NOW - 5 * MINUTE, session: 64, week: 29 });
+});
+
 test('a running session: its state, title, folder, model, context and the tool it is in', async (t) => {
   const cfg = makeConfig(t);
   const id = sessionId();

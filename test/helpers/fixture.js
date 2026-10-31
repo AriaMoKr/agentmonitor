@@ -178,5 +178,13 @@ export function makeConfig(t) {
       const id = /** @type {any} */ (session).sessionId ?? 'local_x';
       return write(join(desktop, 'claude-code-sessions', 'acct', 'org', `${id}.json`), JSON.stringify(session), mtime);
     },
+    /**
+     * The desktop app's samples of the plan's usage, as [time, session %, week %], oldest first.
+     * @param {[number, number, number][]} samples @param {string} [base] the app's folder
+     */
+    planUsage(samples, base = desktop) {
+      const json = { version: 2, samples: samples.map(([t, fh, sd]) => ({ t, org: 'org-1', u: { fh, sd } })) };
+      return write(join(base, 'plan-usage-history.json'), JSON.stringify(json));
+    },
   };
 }

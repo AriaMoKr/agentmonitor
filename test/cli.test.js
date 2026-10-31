@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { width } from '../src/format.js';
@@ -8,13 +10,27 @@ import { HOUR, makeConfig, MINUTE, rec, sessionId } from './helpers/fixture.js';
 const BIN = fileURLToPath(new URL('../bin/agentmonitor.js', import.meta.url));
 
 /**
- * This environment without the variables agentmonitor reads, and with `env`.
+ * Where the desktop app's data folder is on this platform for a home of folders under `root`,
+ * and the variables that put it there.
+ * @param {string} root
+ */
+function appHome(root) {
+  const env = { APPDATA: join(root, 'roaming'), LOCALAPPDATA: join(root, 'local'), HOME: join(root, 'home'), XDG_CONFIG_HOME: join(root, 'config') };
+  const dir = process.platform === 'win32'
+    ? join(env.APPDATA, 'Claude')
+    : process.platform === 'darwin' ? join(env.HOME, 'Library', 'Application Support', 'Claude') : join(env.XDG_CONFIG_HOME, 'Claude');
+  return { env, dir };
+}
+
+/**
+ * This environment without the variables agentmonitor reads, the desktop app's folder in a place
+ * that is not there (not this computer's app), and with `env`.
  * @param {Record<string, string>} [env]
  */
 function environment(env = {}) {
   const base = { ...process.env };
   for (const k of ['FORCE_COLOR', 'NO_COLOR', 'CLAUDE_CONFIG_DIR', 'COLUMNS']) delete base[k];
-  return { ...base, ...env };
+  return { ...base, ...appHome(join(tmpdir(), 'agentmonitor-no-app')).env, ...env };
 }
 
 /**
@@ -86,6 +102,20 @@ test('--once prints a table of the sessions, and so does a run whose output is n
     for (const l of lines) assert.ok(width(l) <= 120, l);
     assert.doesNotMatch(stdout, /\x1b\[/, 'no colors in a pipe');
   }
+});
+
+test('--once and --json with the plan\'s usage, as the desktop app sampled it', async (t) => {
+  const cfg = makeConfig(t);
+  const now = Date.now();
+  cfg.transcript(sessionId(), [rec.prompt('Some session', now - HOUR)], { mtime: now - HOUR });
+  const app = appHome(cfg.root);
+  cfg.planUsage([[now - 20 * MINUTE, 60, 28], [now - 5 * MINUTE, 64, 29]], app.dir);
+  const once = await run(['--once', '--dir', cfg.dir], { COLUMNS: '100', ...app.env });
+  const [first] = once.stdout.split('\n');
+  assert.match(first, /^ Claude agents {2}· 1 ended +session 64% {2}week 29%$/);
+  assert.equal(width(first), 99, 'at the right, a column short as with the time');
+  const json = JSON.parse((await run(['--json', '--dir', cfg.dir], app.env)).stdout);
+  assert.deepEqual(json.usage, { at: now - 5 * MINUTE, session: 64, week: 29 });
 });
 
 test('--json prints what was found, without the events', async (t) => {

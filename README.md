@@ -1,9 +1,9 @@
 # agentmonitor
 
-The Claude agents on this computer, live in a terminal, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread.
+The Claude agents on this computer, live in a terminal, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked.
 
 ```
- Claude agents  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread  ○ 2 idle  · 1 ended  3 agents at work
+ Claude agents  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread  ○ 2 idle        session 64%  week 29%
    NAME                      PROJECT          KIND     MODEL      EFFORT    CTX ACTIVITY                            LAST
 >◆ Release 2.0               shop             cli      opus 5.5   high      88k waiting: permission: Bash     2m03s   2m
  ◇ Pick the payment provider shop             desktop  opus 5.5   xhigh+    73k blocked: choose Stripe or Adyen       7m
@@ -90,6 +90,8 @@ Each session is a row, with the agents it started under it: its subagents (the A
 The columns: NAME is the session's title (the one you gave it, the desktop app's, Claude's, or else the first prompt); PROJECT, its folder (for an agent, its type; for a workflow, the phase it is in); KIND, how it was started (`cli`, `desktop`, `vscode`, `sdk`, `bg` for a background session); MODEL, the model of its last reply; EFFORT, the reasoning effort it works at (`low`, `medium`, `high`, `xhigh` or `max`), with a `+` when ultracode is on (`max+`, or `ultra` when no effort is known); CTX, the context of its last reply in tokens; ACTIVITY, what it is doing, with how long that has taken; LAST, how long ago it last did anything; PID, its process. On a narrow terminal the least needed columns go first.
 
 ACTIVITY is the tool call it is in (`Bash: Run the tests`, `Edit: src/a.js`, `Agent: Explore: find the parser`), `thinking`, the agents it waits for, or what it waits for you to do (`waiting: a question: Which branch?`). While it works through a task list (the desktop app's, or TodoWrite's), it begins with how many of the steps are done: `2/4`. For a session that is idle or ended it is the desktop app's summary of its last turn (`blocked:` and what you are to do, when the turn ended on you), else its last reply, or the error that stopped it (a usage limit, say). A session that runs with a command left going on in the background shows that in place of the summary or the reply: `background: Bash: Serve the site`.
+
+The first line counts the sessions by the state they show, and the agents at work. At its right are how much of your plan's usage limits is used, and the time: `session 64%` of its limit for five hours (the current session, as `/usage` calls it), `week 29%` of its limit for the week, yellow from 75% and red from 90%. They are the desktop app's: it checks them about every 15 minutes while it runs, and the monitor shows its latest check. Once that is 45 minutes old it says how old (`2h ago`), and it leaves out the session's once five hours have gone by since, and the week's after seven days. Without the desktop app there are none. On a narrow screen the first line leaves out what is needed least first: the time, the sessions that ended and the agents at work, the title and the sessions idle or active, those at work, then those that wait for you; the usage goes last.
 
 ## Details
 
@@ -186,13 +188,14 @@ On a phone, a tap is a click: on a row, twice to open it, or on a key in the foo
 
 ## Where it looks
 
-All in Claude Code's config folder (`~/.claude`, or `$CLAUDE_CONFIG_DIR`, or `--dir`), but for the desktop app's records:
+All in Claude Code's config folder (`~/.claude`, or `$CLAUDE_CONFIG_DIR`, or `--dir`), but for the desktop app's files:
 
 - `sessions/<pid>.json`: one for each running Claude Code process, wherever it runs, with its session, folder, title and status (busy, waiting and for what, idle). Claude Code removes it when it exits.
 - `projects/<project>/<session>.jsonl`: each session's transcript. The monitor reads its last MiB on first sight (more when that holds no message, or changes a task list made before it), then only what was appended, so a refresh costs a few milliseconds however long the transcripts are. The first prompt comes from its first bytes.
 - `projects/<project>/<session>/subagents/agent-<id>.jsonl` and `.meta.json`: the session's subagents. `subagents/workflows/<run>/` holds a workflow's agents and its `journal.jsonl` (which agents started, returned or failed); `workflows/<run>.json` is the run's record once it ended, and `workflows/scripts/<name>-<run>.js` its script, which gives it its name.
 - `jobs/<id>/state.json`: background sessions, with what they are doing or need.
 - The Claude desktop app's records of its Code tab sessions: `claude-code-sessions/<account>/<org>/local_<id>.json` in `%APPDATA%\Claude` and `%LOCALAPPDATA%\Claude-Data\<package>\` on Windows, `~/Library/Application Support/Claude` on macOS, and `~/.config/Claude` elsewhere. They give each session's title, whether it is archived, its model, effort and permission mode, whether ultracode is on, and the app's summary of its last turn. They also give when you last opened it and when its last turn started or ended, which tell which sessions are unread.
+- The desktop app's `plan-usage-history.json`, in the same folders: how much of your plan's usage limits was used, as the app checked about every 15 minutes while it ran, for the last month or so. The monitor reads its latest check.
 
 And the processes: whether each PID in `sessions/` exists (signal 0, which only asks), and the process table (`tasklist` on Windows, `ps` elsewhere), read when a new PID turns up and every 10 seconds, for the program's name and memory.
 
@@ -223,6 +226,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
 - CTX is the context of the last reply (input, cache reads and cache writes). The output tokens are those of the part of the transcript read; the totals in the details are Claude Code's own, as it last saved them.
 - It sees one config folder: one user's sessions.
 - The turn summaries are the desktop app's: a session in a terminal or an IDE has none, and so is never blocked.
+- The usage is the desktop app's too, as fresh as its last check: it gets old while the app is closed, and without the app there is none. The app keeps no reset times with it, so the monitor can't say when a limit resets; `/usage` in Claude Code says.
 - The desktop app's yellow dot is a session that waits on you: a permission to give, or a question to answer. Its questions, plans to approve and offers of a session are tool calls in the transcript, so they show as waiting. Its permission prompts are kept in the app's memory, in no file: a session waiting on one shows as in a tool, the call it asks about.
 - The app keeps its own list of unread sessions in its browser storage, which the monitor does not read. The monitor works the list out from the session records instead, so it can differ from the app in two ways:
   - A dot you set by hand with Mark as unread does not show.
