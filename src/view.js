@@ -514,10 +514,10 @@ function footer(ui, rows, t, cols, now, onHit) {
   const pos = rows.length ? `${ui.index + 1}/${rows.length}` : '';
   const filter = ui.filter ? `${t.yellow(`filter "${ui.filter}"`)} ${t.dim('esc clears')}  ` : '';
   // Each key with what it is worth its room (on a narrow screen the least worth go first), and
-  // the key a click on it presses.
+  // the key a click on it presses. A phone has no keys but these, the filter among them.
   /** @type {[string, number, string | undefined][]} */
   const all = [
-    [`${t.arrows} move`, 3, undefined], [`${t.enter} details`, 4, 'enter'], ['/ filter', 3, '/'], [`s sort:${ui.sort}`, 2, 's'],
+    [`${t.arrows} move`, 3, undefined], [`${t.enter} details`, 4, 'enter'], ['/ filter', 4, '/'], [`s sort:${ui.sort}`, 2, 's'],
     [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'],
     [`b bell:${ui.bell ? 'on' : 'off'}`, 1, 'b'], ['? help', 5, '?'],
   ];

@@ -37,6 +37,8 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
+  /* A finger's drag scrolls the screen's lines, never the page (nor reloads it). */
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--fg);
 }
@@ -54,6 +56,8 @@ body {
   inset: 6px 8px;
   overflow: hidden;
   cursor: default;
+  /* Two taps open a row, not zoom in. */
+  touch-action: manipulation;
 }
 
 .screen > div,
@@ -70,6 +74,21 @@ body {
   left: 0;
   width: max-content;
   visibility: hidden;
+}
+
+/* The text field a phone's keyboard types a filter into, out of sight: the filter shows in the
+   footer. At 16px, or iOS zooms in on it. */
+.field {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+  pointer-events: none;
 }
 
 /* A character outside ASCII, in a box as wide as the columns it takes. */

@@ -4,7 +4,7 @@ import { hostname } from 'node:os';
 import { test } from 'node:test';
 import { clean } from '../src/format.js';
 import { parseInput, runs, serve, urls } from '../src/serve.js';
-import { beep, cellAt, keyInput, wheelSteps } from '../src/web/app.js';
+import { beep, cellAt, keyAt, keyInput, wheelSteps } from '../src/web/app.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE } from './helpers/fixture.js';
 
@@ -50,7 +50,8 @@ function sessions(now = Date.now()) {
 }
 
 /**
- * @typedef {{ title: string, bell: boolean, ring: boolean, lines: import('../src/serve.js').Run[][], text: string[] }} Screen
+ * @typedef {{ title: string, bell: boolean, ring: boolean, lines: import('../src/serve.js').Run[][], keys: [number, number, number, string][],
+ *   filter: string, typing: boolean, text: string[] }} Screen
  */
 
 /**
@@ -223,6 +224,36 @@ test('a click selects a row, a double click opens it, a click on a title sorts; 
   assert.match(a.text.at(-1) ?? '', /sorted by name/);
 });
 
+test('what a phone needs: where / is, for its tap to open the keyboard, and the filter typed in the page\'s field', async (t) => {
+  const s = await start(t, fakeMonitor(() => sessions()));
+  let a = await s.screen('page-aaaa');
+  assert.deepEqual([a.filter, a.typing], ['', false]);
+  const slash = a.keys.find((k) => k[3] === '/');
+  assert.ok(slash, JSON.stringify(a.keys));
+  const [y, x0, x1] = slash;
+  assert.equal(y, a.text.length - 1, 'in the footer');
+  assert.equal(a.text[y].slice(x0, x1), '/ filter');
+  a = await s.screen('page-aaaa', [`m:${x0},${y}`]);
+  assert.equal(a.typing, true);
+  assert.deepEqual(a.keys.map((k) => k[3]), ['enter', 'escape'], 'keep and clear');
+  // What the field holds, sent whole as it changes.
+  a = await s.screen('page-aaaa', ['f:do', 'f:docs']);
+  assert.deepEqual([a.filter, a.typing], ['docs', true]);
+  assert.match(a.text.at(-1) ?? '', /^ \/docs /);
+  assert.doesNotMatch(a.text.join('\n'), /Fix the parser/);
+  a = await s.screen('page-aaaa', ['k:enter']);
+  assert.deepEqual([a.filter, a.typing], ['docs', false]);
+  assert.match(a.text.at(-1) ?? '', /filter "docs"/);
+  // Out of sight, none of it.
+  const quiet = await s.screen('page-aaaa', [], { quiet: true });
+  assert.deepEqual([quiet.keys, quiet.filter, quiet.typing], [undefined, undefined, undefined]);
+  // Only in the list, as /: not in the details.
+  a = await s.screen('page-aaaa', ['k:enter', 'f:parser']);
+  assert.match(a.text[0], /<img src=x/);
+  assert.deepEqual([a.filter, a.typing], ['docs', false]);
+  assert.deepEqual(a.keys.map((k) => k[3]), ['escape', 'tab']);
+});
+
 test('the agents in the pages\' details are read; pages that stop asking are forgotten, and the oldest of too many', async (t) => {
   const monitor = fakeMonitor(() => sessions());
   const s = await start(t, monitor, { pageTtlMs: 300, maxPages: 2 });
@@ -337,7 +368,12 @@ test('runs: the styles made classes, and characters outside ASCII in boxes as wi
   assert.deepEqual(runs('\x1b[0m'), []);
 });
 
-test('what a page sends: keys by name, characters, clicks and the wheel; nothing else', () => {
+test('what a page sends: keys by name, characters, clicks, the wheel and a filter typed; nothing else', () => {
+  assert.deepEqual(parseInput('f:docs'), { filter: 'docs' });
+  assert.deepEqual(parseInput('f:'), { filter: '' });
+  assert.deepEqual(parseInput('f:fix  the '), { filter: 'fix  the ' }, 'its spaces as typed');
+  assert.deepEqual(parseInput('f:a\tb c‮d\x1be'), { filter: 'a b cde' }, 'other spaces made spaces, controls left out');
+  assert.deepEqual(parseInput(`f:${'é'.repeat(300)}`), { filter: 'é'.repeat(200) }, 'as long as the field takes');
   assert.deepEqual(parseInput('k:up'), { name: 'up' });
   assert.deepEqual(parseInput('k:backtab'), { name: 'backtab' });
   assert.deepEqual(parseInput('c:a'), { name: 'a', ch: 'a' });
@@ -390,6 +426,12 @@ test('the page\'s script: keys as the monitor names them, cells, the wheel; neve
   assert.deepEqual(wheelSteps(30, 40, 0, 17.5, 500), [1, 20]);
   assert.deepEqual(wheelSteps(0, -3, 1, 17.5, 500), [-1, -2.5]);
   assert.deepEqual(wheelSteps(0, 1, 2, 17.5, 500), [10, 0]);
+  const keys = [[11, 21, 29, '/'], [11, 31, 44, 's'], 'junk', [11, 1, 9]];
+  assert.equal(keyAt(keys, 21, 11), '/');
+  assert.equal(keyAt(keys, 28, 11), '/');
+  assert.equal(keyAt(keys, 29, 11), undefined, 'between the keys');
+  assert.equal(keyAt(keys, 21, 10), undefined, 'on another line');
+  assert.equal(keyAt(keys, 1, 11), undefined, 'no key named');
   const source = readFileSync(new URL('../src/web/app.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|setAttribute\(/);
 });

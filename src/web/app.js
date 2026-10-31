@@ -1,7 +1,8 @@
 // The web view's page: asks the server for the screen every second, at the size the window
 // holds, and draws its lines; sends it the keys typed, the clicks and the wheel, which the
-// server's view of this page answers; and beeps when the server says its bell rings. What the
-// server sends goes in as text, never as markup.
+// server's view of this page answers, and on a phone a finger's drags, and a filter typed with
+// its keyboard in a text field of the page's own; and beeps when the server says its bell rings.
+// What the server sends goes in as text, never as markup.
 
 /** Keys by their names in a KeyboardEvent, as the monitor names them. */
 const KEYS = new Map([
@@ -9,7 +10,10 @@ const KEYS = new Map([
   ['Home', 'home'], ['End', 'end'], ['PageUp', 'pageup'], ['PageDown', 'pagedown'],
   ['Enter', 'enter'], ['Escape', 'escape'], ['Backspace', 'backspace'], ['Delete', 'delete'],
 ]);
-/** How far the wheel turns for a step, in pixels: a notch is about 100 in most browsers. */
+/**
+ * How far the wheel turns, or a finger moves, for a step, in pixels: a notch of the wheel is
+ * about 100 in most browsers.
+ */
 const WHEEL_STEP = 50;
 /**
  * How often the page asks while it is in sight (ms); and while it is out of sight, for its title
@@ -22,7 +26,7 @@ const RETRY = 3000;
 /** The most inputs one request sends, as the server takes them. */
 const MAX_INPUTS = 64;
 /** What the bell needs, said while it is on and the browser has not let the page sound yet. */
-const HINT = 'The bell rings once you click or press a key on this page.';
+const HINT = 'The bell rings once you tap, click or press a key on this page.';
 
 /**
  * What a key sends: 'k:<name>' for a key with a name, 'c:<character>' for one that types;
@@ -63,6 +67,20 @@ export function wheelSteps(rest, delta, mode, line, page) {
   const px = rest + delta * (mode === 1 ? line : mode === 2 ? page : 1);
   const steps = Math.trunc(px / WHEEL_STEP);
   return [steps, px - steps * WHEEL_STEP];
+}
+
+/**
+ * The key a click on a cell presses, by where the server said the keys are.
+ * @param {unknown[]} keys [line, from column, up to column, key] each
+ * @param {number} x
+ * @param {number} y
+ * @returns {string | undefined}
+ */
+export function keyAt(keys, x, y) {
+  for (const k of keys) {
+    if (Array.isArray(k) && k[0] === y && x >= k[1] && x < k[2] && typeof k[3] === 'string') return k[3];
+  }
+  return undefined;
 }
 
 /**
@@ -124,6 +142,7 @@ function start() {
   const screen = /** @type {HTMLElement} */ (document.getElementById('screen'));
   const banner = /** @type {HTMLElement} */ (document.getElementById('banner'));
   const probe = /** @type {HTMLElement} */ (document.getElementById('probe'));
+  const field = /** @type {HTMLInputElement} */ (document.getElementById('field'));
   const id = pageId();
   let cell = { w: 8, h: 17.5 };
   let size = { w: 80, h: 24 };
@@ -133,6 +152,11 @@ function start() {
   const drawn = [];
   /** @type {unknown[] | undefined} lines that came while text was selected, drawn once it is not */
   let held;
+  /** @type {unknown[]} where a click presses a key, as the server last said */
+  let keys = [];
+  /** the filter, and whether it is being typed, as the server last said */
+  let filter = '';
+  let typing = false;
   /** @type {AudioContext | undefined} the bell's sound, made at a click or a key */
   let audio;
   /** whether the server says this page's bell is on */
@@ -140,17 +164,29 @@ function start() {
   /** why the server can't be asked, said at the bottom */
   let error = '';
   let wheel = 0;
+  /** the kind of pointer last down on the screen: a finger's or a pen's tap can open the keyboard */
+  let pointer = '';
+  /** @type {{ y: number, rest: number } | undefined} a finger on the screen, as it moves */
+  let finger;
+  /** how many times the server was asked; and the first time that holds the tap that opened the field */
+  let asked = 0;
+  let openedFor = 0;
   let busy = false;
   let again = false;
   let gone = false;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let timer;
 
-  /** The size of a cell, and how many columns and lines the window holds. */
+  /** The size of a cell, and how many columns and lines the window shows. */
   function measure() {
     const r = probe.getBoundingClientRect();
     if (r.width > 0 && r.height > 0) cell = { w: r.width / 10, h: r.height };
-    size = { w: Math.floor(screen.clientWidth / cell.w), h: Math.floor(screen.clientHeight / cell.h) };
+    // A phone's keyboard covers the bottom of the window, which stays as tall: the lines go
+    // above it. Less than a line is a rounding, not a keyboard.
+    const vv = window.visualViewport;
+    const covered = vv ? document.documentElement.clientHeight - vv.height * vv.scale : 0;
+    const tall = screen.clientHeight - (covered >= cell.h ? covered : 0);
+    size = { w: Math.floor(screen.clientWidth / cell.w), h: Math.floor(tall / cell.h) };
   }
 
   const selecting = () => {
@@ -178,15 +214,37 @@ function start() {
   }
 
   /**
-   * Takes the server's answer: the title and the bell at once, the lines unless text is
-   * selected, when the screen holds still so that the selection stays.
-   * @param {unknown} data { title, bell, ring, lines }
+   * Opens a phone's keyboard on the text field, with the filter in it: in the tap itself, as a
+   * phone wants. What is typed there is sent as the filter.
    */
-  function take(data) {
-    const { title, bell, ring, lines } = /** @type {Record<string, unknown>} */ (data ?? {});
+  function openField() {
+    openedFor = asked + 1;
+    field.value = filter;
+    // A field focused already, its keyboard closed with the back button, opens it only when
+    // focused again.
+    if (document.activeElement === field) field.blur();
+    field.focus({ preventScroll: true });
+  }
+
+  /**
+   * Takes the server's answer: the title, the bell and what the keys are at once, the lines
+   * unless text is selected, when the screen holds still so that the selection stays.
+   * @param {unknown} data { title, bell, ring, lines, keys, filter, typing }
+   * @param {number} n the request it answers
+   */
+  function take(data, n) {
+    const { title, bell, ring, lines, keys: at, filter: text, typing: now } = /** @type {Record<string, unknown>} */ (data ?? {});
     if (typeof title === 'string') document.title = title;
     bellOn = bell === true;
     if (ring === true && audio?.state === 'running') beep(audio);
+    if (Array.isArray(at)) keys = at;
+    if (typeof text === 'string') filter = text;
+    if (typeof now === 'boolean') {
+      typing = now;
+      // The filter kept or cleared, the keyboard goes; but not for an answer from before the tap
+      // that opened it.
+      if (!typing && n >= openedFor && document.activeElement === field) field.blur();
+    }
     if (!Array.isArray(lines)) return;
     if (selecting()) held = lines;
     else draw(lines);
@@ -216,6 +274,7 @@ function start() {
     }
     busy = true;
     again = false;
+    const n = ++asked;
     const query = new URLSearchParams({ page: id, w: String(size.w), h: String(size.h) });
     // Out of sight, only the title and the bell.
     if (document.hidden) query.set('quiet', '1');
@@ -230,7 +289,7 @@ function start() {
         error = `agentmonitor answered ${res.status}; asking again.`;
         wait = RETRY;
       } else {
-        take(await res.json());
+        take(await res.json(), n);
         error = '';
       }
     } catch {
@@ -250,10 +309,24 @@ function start() {
     ask();
   }
 
-  // Any click or key on the page lets the bell sound.
-  window.addEventListener('pointerdown', unlock);
+  /** Steps of the wheel or of a finger, up when less than 0: ten at a time at most. @param {number} steps */
+  function scroll(steps) {
+    for (let i = 0; i < Math.min(Math.abs(steps), 10); i++) queue.push(steps < 0 ? 'w:up' : 'w:down');
+    if (steps) ask();
+  }
+
+  // Any click, tap or key on the page lets the bell sound: a finger's tap, once it lifts.
+  window.addEventListener('pointerup', unlock);
+  window.addEventListener('touchend', unlock);
   window.addEventListener('keydown', (e) => {
     unlock();
+    // In the text field the keys type the filter there, but Enter keeps it and Escape clears it.
+    if (e.target === field) {
+      if (e.isComposing || (e.key !== 'Enter' && e.key !== 'Escape')) return;
+      e.preventDefault();
+      send(e.key === 'Enter' ? 'k:enter' : 'k:escape');
+      return;
+    }
     const input = keyInput({
       key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey,
       altGraph: e.getModifierState('AltGraph'), isComposing: e.isComposing,
@@ -262,24 +335,53 @@ function start() {
     e.preventDefault();
     send(input);
   });
+  field.addEventListener('input', () => {
+    // Only the last of the filter as typed counts.
+    if (queue.at(-1)?.startsWith('f:')) queue.pop();
+    send(`f:${field.value}`);
+  });
   // A double click selects a word, which would make it no click.
   screen.addEventListener('mousedown', (e) => {
     if (e.detail > 1) e.preventDefault();
+  });
+  screen.addEventListener('pointerdown', (e) => {
+    pointer = e.pointerType;
   });
   screen.addEventListener('click', (e) => {
     // A drag that selected text is no click, nor is a third click.
     if (e.button !== 0 || e.detail > 2 || selecting()) return;
     const r = screen.getBoundingClientRect();
     const { x, y } = cellAt(e.clientX - r.left, e.clientY - r.top, cell);
+    // A tap on / filter, or on the filter being typed at the bottom, opens a phone's keyboard.
+    if (pointer === 'touch' || pointer === 'pen') {
+      const key = keyAt(keys, x, y);
+      if (key === '/' || (typing && !key && y === drawn.length - 1)) openField();
+    }
     send(`${e.detail === 2 ? 'd' : 'm'}:${x},${y}`);
   });
   screen.addEventListener('wheel', (e) => {
     e.preventDefault();
     const [steps, rest] = wheelSteps(wheel, e.deltaY, e.deltaMode, cell.h, screen.clientHeight);
     wheel = rest;
-    for (let i = 0; i < Math.min(Math.abs(steps), 10); i++) queue.push(steps < 0 ? 'w:up' : 'w:down');
-    if (steps) ask();
+    scroll(steps);
   }, { passive: false });
+  // A finger dragged on the screen scrolls it as the wheel does; two fingers, or a page zoomed
+  // in, are the browser's to zoom and pan.
+  screen.addEventListener('touchstart', (e) => {
+    finger = e.touches.length === 1 ? { y: e.touches[0].clientY, rest: 0 } : undefined;
+  }, { passive: true });
+  screen.addEventListener('touchmove', (e) => {
+    if (!finger || e.touches.length !== 1 || (window.visualViewport?.scale ?? 1) > 1.01) return;
+    const y = e.touches[0].clientY;
+    const [steps, rest] = wheelSteps(finger.rest, finger.y - y, 0, cell.h, screen.clientHeight);
+    finger = { y, rest };
+    scroll(steps);
+  }, { passive: true });
+  for (const type of ['touchend', 'touchcancel']) {
+    screen.addEventListener(type, () => {
+      finger = undefined;
+    });
+  }
   document.addEventListener('selectionchange', () => {
     if (held && !selecting()) draw(held);
   });
@@ -287,6 +389,11 @@ function start() {
     if (!document.hidden) ask();
   });
   window.addEventListener('resize', () => {
+    measure();
+    ask();
+  });
+  // A phone's keyboard opening or closing.
+  window.visualViewport?.addEventListener('resize', () => {
     measure();
     ask();
   });

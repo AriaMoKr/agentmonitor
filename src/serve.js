@@ -21,6 +21,8 @@ import { Viewer } from './viewer.js';
  * @typedef {{ port: number, token: string, close: () => Promise<void> }} Served
  * @typedef {[string] | [string, string] | [string, string, number]} Run text, its classes, and
  *   for characters outside ASCII the columns they take, which the page gives them
+ * @typedef {Key | { filter: string }} Input what a page sent: a key, a click or a turn of the
+ *   wheel, or the filter as typed so far in its text field (where a phone's keyboard types)
  */
 
 /** What a token may hold: 16 or more letters, digits, - and _. */
@@ -29,6 +31,8 @@ export const TOKEN = /^[A-Za-z0-9_-]{16,}$/;
 const PAGE = /^[A-Za-z0-9_-]{8,40}$/;
 /** The most inputs one request carries. */
 const MAX_INPUTS = 64;
+/** The most characters of a filter typed in a page's text field (its maxlength). */
+const MAX_FILTER = 200;
 /** The keys a page sends by name. */
 const KEYS = new Set(['up', 'down', 'left', 'right', 'home', 'end', 'pageup', 'pagedown', 'enter', 'escape', 'backspace', 'tab', 'backtab', 'delete']);
 
@@ -176,35 +180,45 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
 
   /**
    * A page's screen, after what it sent: ?page=<id>&w=<columns>&h=<lines>&i=<input>&i=...
-   * Its title, whether its bell is on and rings now, and its lines; with quiet=1, for a page out
-   * of sight, all but the lines.
+   * Its title, whether its bell is on and rings now, and its lines, with where the keys on them
+   * are and the filter, and whether it is being typed; with quiet=1, for a page out of sight,
+   * all but the lines and what goes with them.
    * @param {Request} req
    * @param {Response} res
    * @param {URLSearchParams} query
    */
   async function screen(req, res, query) {
     const id = query.get('page') ?? '';
-    const inputs = query.getAll('i');
-    const keys = inputs.map(parseInput);
-    if (!PAGE.test(id) || inputs.length > MAX_INPUTS || keys.includes(undefined)) return send(req, res, 400, 'bad request\n', TEXT);
+    const sent = query.getAll('i');
+    const inputs = sent.map(parseInput);
+    if (!PAGE.test(id) || sent.length > MAX_INPUTS || inputs.includes(undefined)) return send(req, res, 400, 'bad request\n', TEXT);
     const page = pageFor(id, address(req));
     const view = page.viewer;
     // What it sent acts on the screen it was last sent.
-    for (const key of /** @type {Key[]} */ (keys)) {
-      if (key.mouse) view.mouse(key.mouse);
-      else view.key(key);
+    for (const input of /** @type {Input[]} */ (inputs)) {
+      if ('filter' in input) view.typeFilter(input.filter);
+      else if (input.mouse) view.mouse(input.mouse);
+      else view.key(input);
     }
     await current();
     if (page.read) {
       page.read = false;
       await read();
     }
-    /** @type {{ title: string, bell: boolean, ring: boolean, lines?: Run[][] }} */
+    /**
+     * @type {{ title: string, bell: boolean, ring: boolean, lines?: Run[][], keys?: [number, number, number, string][],
+     *   filter?: string, typing?: boolean }}
+     */
     const answer = { title: title(), bell: view.ui.bell, ring: snap ? view.rings(snap) : false };
     if (query.get('quiet') !== '1') {
       const width = number(query.get('w'), 20, 500, 80);
       const height = number(query.get('h'), 5, 200, 24);
       answer.lines = view.lines(snap, { width, height, now: Date.now() }).map(runs);
+      // Where a click presses a key ([line, from column, up to column, key]), and the filter: a
+      // phone shows its keyboard only for a tap, so the page opens it at a tap on / itself.
+      answer.keys = view.hits.flatMap((h) => ('key' in h.action ? [/** @type {[number, number, number, string]} */ ([h.y, h.x0, h.x1, h.action.key])] : []));
+      answer.filter = view.ui.filter;
+      answer.typing = view.ui.editingFilter;
     }
     send(req, res, 200, JSON.stringify(answer), 'application/json; charset=utf-8');
   }
@@ -292,11 +306,12 @@ function number(text, lo, hi, fallback) {
 }
 
 /**
- * One thing a page sent, as a key: 'k:<name>' a key by its name, 'c:<character>' a character
- * typed, 'm:<x>,<y>' a click on a cell and 'd:<x>,<y>' the second click of a double click,
- * 'w:up' or 'w:down' a turn of the wheel. Undefined for anything else.
+ * One thing a page sent: 'k:<name>' a key by its name, 'c:<character>' a character typed,
+ * 'm:<x>,<y>' a click on a cell and 'd:<x>,<y>' the second click of a double click, 'w:up' or
+ * 'w:down' a turn of the wheel, 'f:<text>' the filter as typed so far in the page's text field.
+ * Undefined for anything else.
  * @param {string} input
- * @returns {Key | undefined}
+ * @returns {Input | undefined}
  */
 export function parseInput(input) {
   const kind = input.slice(0, 2);
@@ -315,6 +330,8 @@ export function parseInput(input) {
     }
     case 'w:':
       return value === 'up' || value === 'down' ? mouse(value === 'up' ? 'wheelup' : 'wheeldown') : undefined;
+    case 'f:':
+      return { filter: typedText(value) };
   }
   return undefined;
 }
@@ -325,6 +342,15 @@ export function parseInput(input) {
  */
 function typed(s) {
   return s === ' ' || (s !== '' && s.length <= 16 && clean(s) === s && graphemes(s).length === 1);
+}
+
+/**
+ * Text typed in a text field, as the characters keys type: other spaces (a tab, a no-break
+ * space) made spaces, and controls left out; MAX_FILTER characters at most.
+ * @param {string} s
+ */
+function typedText(s) {
+  return graphemes(s).slice(0, MAX_FILTER).map(([g]) => (typed(g) ? g : /^\s+$/.test(g) ? ' ' : '')).join('');
 }
 
 const SGR = /\x1b\[([0-9;]*)m/g;

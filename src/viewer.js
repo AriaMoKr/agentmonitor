@@ -132,6 +132,15 @@ export class Viewer {
     });
   }
 
+  /**
+   * The filter as typed so far in a web page's text field, where a phone's keyboard types: it
+   * takes the filter's place, being typed still (Enter keeps it). Only in the list, as / is.
+   * @param {string} text
+   */
+  typeFilter(text) {
+    if (this.ui.view === 'list') Object.assign(this.ui, { filter: text, editingFilter: true, top: 0 });
+  }
+
   /** @param {string} message shown in the footer for a while */
   say(message) {
     Object.assign(this.ui, { message, messageUntil: Date.now() + 2500 });
