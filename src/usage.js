@@ -7,7 +7,8 @@
 // carried on from the latest sample to now with what this computer's replies used since
 // (src/ledger.js), at as many points for so much as the samples rose by with them lately; and the
 // session's pace with the last hour's. At that rate too, what each session and model used of each
-// limit, and the points the replies just written add.
+// limit, and the points the replies just written add. A plan changed shows where the week's percent
+// dropped at no reset of it: the rises before then measured other limits, and are not used.
 import { join } from 'node:path';
 import { JsonFiles } from './files.js';
 
@@ -45,6 +46,8 @@ const PACE_LEAST = 15 * MINUTE;
  * @property {Reset} [sessionReset] when the session's limit resets
  * @property {Reset} [weekReset] when the week's resets
  * @property {Points} [history] the percents of the samples of its org, in time order
+ * @property {Point} [changed] the week's first sample after the plan last seems to have changed
+ *   (changeOf): the week's pace counts from it, where that is after its reset
  * @property {Tracked} [tracked] the percents carried on to a later time
  * @property {{ session?: Share, week?: Share }} [split] what this computer's replies used of
  *   each, as carried on: the session's in its window, the week's since its reset
@@ -130,12 +133,12 @@ export class PlanUsage {
     }
     this.files.sweep();
     let usage = latest?.usage;
-    const needed = latest && repliesSince(latest.points, now);
+    const needed = latest && repliesSince(latest.points, now, latest.usage.changed);
     const back = needed === undefined ? since : Math.min(needed, since ?? needed);
     if (back !== undefined && this.ledger) {
       const replies = await this.ledger.read(now, back, { wait });
       this.replies = replies;
-      const f = latest && replies ? follow(latest.points, replies, now, latest.usage.weekReset) : undefined;
+      const f = latest && replies ? follow(latest.points, replies, now, latest.usage.weekReset, latest.usage.changed) : undefined;
       if (latest && replies && f?.tracked) usage = { ...latest.usage, tracked: f.tracked, ...splitOf(f, replies, now) };
     }
     this.usage = usage;
@@ -187,16 +190,40 @@ function tell(o) {
   const points = (k) => mine.flatMap((s) => (s[k] === undefined ? [] : [{ t: s.t, v: /** @type {number} */ (s[k]) }]));
   const p = { session: points('session'), week: points('week') };
   const sessionAt = latest.session !== undefined ? sessionReset(p.session) : undefined;
-  const weekAt = latest.week !== undefined ? weekReset(p.week) : undefined;
+  const weekly = weekReset(p.week);
+  const weekAt = latest.week !== undefined ? weekly : undefined;
+  const changed = changeOf(p.week, weekly);
   const usage = {
     at: latest.t,
     ...(latest.session !== undefined ? { session: latest.session } : {}),
     ...(latest.week !== undefined ? { week: latest.week } : {}),
     ...(sessionAt ? { sessionReset: sessionAt } : {}),
     ...(weekAt ? { weekReset: weekAt } : {}),
+    ...(changed ? { changed } : {}),
     history: p,
   };
   return { usage, points: p };
+}
+
+/**
+ * When the plan last seems to have changed: the latest drop of the week's percent that none of
+ * its weekly resets came within, as when a new plan's limits begin (or the limits are reset once,
+ * for everyone); the sample after it, the first under the new limits. Undefined where there is
+ * none, or no reset is known to tell one by.
+ * @param {Point[]} p the week's percents, in time order
+ * @param {Reset} [at] one of its weekly resets
+ * @returns {Point | undefined}
+ */
+export function changeOf(p, at) {
+  if (!at) return undefined;
+  for (let i = p.length - 1; i > 0; i--) {
+    const [a, b] = [p[i - 1], p[i]];
+    if (b.v >= a.v - 1 || b.t - a.t >= WEEK) continue;
+    // The first of the resets to end after the sample before the drop: whether it began by the one after.
+    const k = Math.floor((a.t - at.to) / WEEK) + 1;
+    if (at.from + k * WEEK > b.t) return b;
+  }
+  return undefined;
 }
 
 /**
@@ -308,21 +335,24 @@ export function weekReset(p) {
  * back at most.
  * @param {Points} p
  * @param {number} now
+ * @param {Point} [changed] the plan's last change (changeOf): no rise before it is used
  */
-export function repliesSince(p, now) {
+export function repliesSince(p, now, changed) {
   /** @type {number[]} */
   const times = [];
+  const after = changed?.t ?? -Infinity;
   for (const [q, o] of /** @type {[Point[], Rises][]} */ ([[p.session, SESSION_RISES], [p.week, WEEK_RISES]])) {
     const last = q.at(-1);
-    if (last) times.push(last.t, ...rises(q, o).map(([a]) => a.t));
+    if (last) times.push(last.t, ...rises(q, o, (a) => a.t >= after).map(([a]) => a.t));
   }
   return Math.max(now - 8 * DAY, Math.min(now, ...times) - SESSION);
 }
 
 /**
- * The percents carried on from the last samples to `now` with this computer's replies since, at
- * as many points for so much use as the latest rises of the samples came to (each between two
- * samples close together, after the time the replies are known from). The session's: what its
+ * The percents carried on from the last sample to `now` with this computer's replies since, at as
+ * many points for so much use as the latest rises of the samples came to (each between two samples
+ * close together, after the time the replies are known from and the plan's last change); a percent
+ * the last sample leaves out, not at all, as it tells nothing of it now. The session's: what its
  * window used since the sample when the sample was in that window too, else all its window used,
  * and 0 with no window; the windows those the replies began; and in a window its pace, the points
  * the last hour's replies came to, in whatever window they were, as an hour's worth. The week's:
@@ -332,10 +362,11 @@ export function repliesSince(p, now) {
  * @param {import('./ledger.js').Replies} replies
  * @param {number} now
  * @param {Reset} [weekAt] the week's next reset after its last sample
+ * @param {Point} [changed] the plan's last change (changeOf, from the week's percents)
  * @returns {Tracked | undefined}
  */
-export function track(p, replies, now, weekAt) {
-  return follow(p, replies, now, weekAt).tracked;
+export function track(p, replies, now, weekAt, changed = changeOf(p.week, weekAt)) {
+  return follow(p, replies, now, weekAt, changed).tracked;
 }
 
 /**
@@ -354,9 +385,10 @@ export function track(p, replies, now, weekAt) {
  * @param {import('./ledger.js').Replies} replies
  * @param {number} now
  * @param {Reset} [weekAt]
+ * @param {Point} [changed]
  * @returns {Followed}
  */
-function follow(p, { from, replies }, now, weekAt) {
+function follow(p, { from, replies }, now, weekAt, changed) {
   /** @type {Followed} */
   const f = {};
   const sum = [0];
@@ -364,6 +396,8 @@ function follow(p, { from, replies }, now, weekAt) {
   /** What the replies written in (a, b] used. @param {number} a @param {number} b */
   const used = (a, b) => sum[writtenBy(replies, b)] - sum[writtenBy(replies, a)];
   const starts = windowsOf(replies);
+  // The rises the replies are known for, under the limits there are now.
+  const after = Math.max(from, changed?.t ?? -Infinity);
   /**
    * Points for each of use, over the rises `keep` keeps.
    * @param {Point[]} q @param {Rises} o @param {(a: Point, b: Point) => boolean} keep
@@ -371,7 +405,7 @@ function follow(p, { from, replies }, now, weekAt) {
   const scale = (q, o, keep) => {
     let up = 0;
     let x = 0;
-    for (const [a, b] of rises(q, o, (a, b) => a.t >= from && keep(a, b))) {
+    for (const [a, b] of rises(q, o, (a, b) => a.t >= after && keep(a, b))) {
       up += b.v - a.v;
       x += used(a.t, b.t);
     }
@@ -379,7 +413,9 @@ function follow(p, { from, replies }, now, weekAt) {
   };
   /** @type {Tracked} */
   const out = { at: now };
-  const s = p.session.at(-1);
+  // Each percent from the last sample alone: the samples before tell nothing of one it leaves out.
+  const latest = Math.max(p.session.at(-1)?.t ?? -Infinity, p.week.at(-1)?.t ?? -Infinity);
+  const s = p.session.at(-1)?.t === latest ? p.session.at(-1) : undefined;
   // Rises within a window the replies began: none of use elsewhere alone, none across a reset.
   const a = s && scale(p.session, SESSION_RISES, (x, y) => {
     const w = windowAt(starts, y.t);
@@ -399,7 +435,7 @@ function follow(p, { from, replies }, now, weekAt) {
       if (now - since >= PACE_LEAST) out.sessionPace = (a * used(since, now) * HOUR) / (now - since);
     }
   }
-  const last = p.week.at(-1);
+  const last = p.week.at(-1)?.t === latest ? p.week.at(-1) : undefined;
   const b = last && weekAt && scale(p.week, WEEK_RISES, () => true);
   if (last && weekAt && b !== undefined) {
     f.b = b;

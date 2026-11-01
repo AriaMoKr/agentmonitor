@@ -482,6 +482,22 @@ export function limitsOf(u, now) {
 }
 
 /**
+ * The week's pace, in points a day: what it rose by since it last reset, or since the plan last
+ * changed where that is later (the percents before were of other limits), over the time since;
+ * once a day has gone.
+ * @param {import('./usage.js').Usage} u
+ * @param {Limit} week
+ * @param {number} end when it resets next
+ * @param {number} now
+ * @returns {number | undefined}
+ */
+export function weekPace(u, week, end, now) {
+  const c = u.changed;
+  const start = c && c.t > end - WEEK ? c : { t: end - WEEK, v: 0 };
+  return now - start.t >= DAY ? (Math.max(0, week.v - start.v) / (now - start.t)) * DAY : undefined;
+}
+
+/**
  * Text about a limit used `n` percent: yellow from 75 and red from 90.
  * @param {number} n
  * @param {string} s
@@ -867,9 +883,9 @@ export function bar(v, gone, w, t) {
  * The plan's usage below the list, a line for the session's limit and one for the week's, as the
  * header shows them (limitsOf): a bar of how much is used, marked where its time has gone to;
  * when it resets; and its pace, the session's the last hour's (as this computer's replies tell
- * it), the week's since it reset: at that pace, when it reaches 100% where that comes before it
- * resets, else about how much it comes to by then. On a narrow screen without the bar, and
- * wrapped to three lines at most, a time kept with what it goes with.
+ * it), the week's since it reset or the plan changed (weekPace): at that pace, when it reaches
+ * 100% where that comes before it resets, else about how much it comes to by then. On a narrow
+ * screen without the bar, and wrapped to three lines at most, a time kept with what it goes with.
  * @param {import('./usage.js').Usage | undefined} u
  * @param {number} cols
  * @param {number} now
@@ -921,12 +937,11 @@ function paceLines(u, cols, now, t) {
     const said = [];
     if (week.v >= 100) said.push(t.red('used up'));
     if (end !== undefined) said.push(resets(r && r.to - r.from <= HOUR ? `${weekday(end)}${nb}${timeOfDay(end)}` : weekday(end), end));
-    // Its pace since it reset, once a day has gone.
-    const since = end === undefined ? 0 : now - (end - WEEK);
-    if (end !== undefined && since >= DAY && week.v < 100) {
-      said.push(ahead(week, (week.v / since) * DAY, DAY, 'd', end, (at) => `${weekday(at)}${nb}${timeOfDay(at)}`));
+    const pace = end === undefined ? undefined : weekPace(u, week, end, now);
+    if (end !== undefined && pace !== undefined && week.v < 100) {
+      said.push(ahead(week, pace, DAY, 'd', end, (at) => `${weekday(at)}${nb}${timeOfDay(at)}`));
     }
-    line('week', week, end === undefined ? undefined : since / WEEK, said);
+    line('week', week, end === undefined ? undefined : (now - (end - WEEK)) / WEEK, said);
   }
   return lines;
 }

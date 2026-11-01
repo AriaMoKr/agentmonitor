@@ -6,7 +6,7 @@
 // screen's state, as src/view.js's are: those that move do so with the time they are drawn for.
 import { Canvas } from './canvas.js';
 import { ago, clock, durationLabel, elapsed, fit, graphemes, lastPart, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
-import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, sessionEnd, shown, statusOf, till, visibleWidth } from './view.js';
+import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -977,14 +977,16 @@ function chartLines(snap, rows, ui, screen, t) {
   const sEnd = sessionEnd(session?.reset) ?? session?.reset?.at;
   const sFrom = sEnd ? sEnd - SESSION : now - 4 * HOUR;
   const sTo = sEnd ?? now + HOUR;
-  title('session', session, [sEnd && `resets ${timeOfDay(sEnd)}, in ${till(Math.max(0, sEnd - now))}`, session?.pace !== undefined && `+${Math.round(session.pace)}%/h`].filter(Boolean).join(t.sep));
+  // A plan can have no session's limit: the app's checks leave it out then.
+  const sSaid = u.session === undefined ? ['not in the last check'] : [sEnd && `resets ${timeOfDay(sEnd)}, in ${till(Math.max(0, sEnd - now))}`, session?.pace !== undefined && `+${Math.round(session.pace)}%/h`];
+  title('session', session, sSaid.filter(Boolean).join(t.sep));
   plot(c, y, h, u.history.session, { from: sFrom, to: sTo, now, v: session?.v, pace: session?.pace, unit: HOUR, days: false }, t);
   y += h + 1;
   if (both) {
     const r = week?.reset;
     const wEnd = r && r.to - r.from <= 12 * HOUR ? r.at : undefined;
     const wFrom = wEnd ? wEnd - WEEK : now - 6 * DAY;
-    const pace = week && wEnd && now - wFrom >= DAY ? (week.v / (now - wFrom)) * DAY : undefined;
+    const pace = week && wEnd ? weekPace(u, week, wEnd, now) : undefined;
     title('week', week, [wEnd && `resets ${weekday(wEnd)} ${timeOfDay(wEnd)}`, pace !== undefined && `+${Math.round(pace)}%/d`].filter(Boolean).join(t.sep));
     plot(c, y, h, u.history.week, { from: wFrom, to: wEnd ?? now + DAY, now, v: week?.v, pace, unit: DAY, days: true }, t);
     y += h + 1;

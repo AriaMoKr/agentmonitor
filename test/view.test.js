@@ -870,6 +870,15 @@ test('below the rows, where there is room: the selected session, the others that
   assert.ok(session.includes(`\x1b[33m+60%/h: 100% at ${timeOfDay(NOW + 20 * MINUTE)}, 40m before\x1b[0m`), JSON.stringify(session));
 });
 
+test("the week's pace below the rows: since the plan changed, where that was after its reset, once a day has gone", () => {
+  /** The week's line, the plan changed at `changed`. @param {{ t: number, v: number }} changed */
+  const week = (changed) => panelList(120, 40, {}, plain, { ...PANEL_USAGE, changed }).lines.map((l) => l.trimEnd()).find((l) => l.startsWith(' week')) ?? '';
+  const head = ` week    ${'█'.repeat(10)}${'░'.repeat(7)}│${'░'.repeat(6)}  ~41%  resets ${weekday(NOW + 48 * HOUR)} ${timeOfDay(NOW + 48 * HOUR)} in 2d00h`;
+  assert.equal(week({ t: NOW - 48 * HOUR, v: 5 }), `${head} · +18%/d: about 77% by then`, '36 points in the two days since');
+  assert.equal(week({ t: NOW - 12 * HOUR, v: 0 }), head, 'half a day: no pace yet');
+  assert.equal(week({ t: NOW - 6 * 24 * HOUR, v: 0 }), `${head} · +8%/d: about 57% by then`, 'before the reset: since the reset');
+});
+
 test('with less room below the rows, what was said goes first, then what needs you, then the selected session; the usage last', () => {
   /** The panel's sections at a height. @param {number} height */
   const sections = (height) => panelList(120, height).lines.flatMap((l) => /^ ─ (.+?) ─/.exec(l)?.[1] ?? []);

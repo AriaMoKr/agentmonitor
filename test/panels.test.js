@@ -400,6 +400,10 @@ test("the chart: the session's window and the week, as sampled, carried on to no
   assert.match(view[12], /^ {2}0% {2}⢀⣀/, 'its samples from 0, on the left');
   assert.match(view[13], new RegExp(`^ {5}${timeOfDay(NOW - 3 * HOUR)} +▴now +${timeOfDay(NOW + 2 * HOUR)}$`), 'its window: three hours gone, two to go');
   assert.equal(view[14], ` week    ~63%   resets ${weekday(NOW + 2 * DAY)} ${timeOfDay(NOW + 2 * DAY)} · +13%/d`);
+  const changed = draw('chart', { snap: fullSnapshot({ usage: { ...USAGE, changed: { t: NOW - 2 * DAY, v: 43 } } }), height: 48 }).view;
+  assert.equal(changed[14], ` week    ~63%   resets ${weekday(NOW + 2 * DAY)} ${timeOfDay(NOW + 2 * DAY)} · +10%/d`, 'since the plan changed: 20 points in two days');
+  const weekOnly = { ...USAGE, session: undefined, tracked: { at: NOW, week: 63, weekReset: USAGE.tracked.weekReset } };
+  assert.equal(draw('chart', { snap: fullSnapshot({ usage: weekOnly }), height: 48 }).view[2], ` session${' '.repeat(8)}not in the last check`, 'the last check without it');
   assert.match(view[25], /▴now/);
   assert.equal(view[27], ' hour 0           6           12          18');
   const days = view.slice(28, 35);

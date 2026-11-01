@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { PlanUsage, repliesSince, sessionReset, track, usageOf, weekReset } from '../src/usage.js';
+import { changeOf, PlanUsage, repliesSince, sessionReset, track, usageOf, weekReset } from '../src/usage.js';
 import { HOUR, makeConfig, MINUTE, NOW } from './helpers/fixture.js';
 
 const SESSION = 5 * HOUR;
@@ -96,6 +96,31 @@ test('the week resets at the time of the week two drops or more agree on, on the
   assert.equal(weekReset([]), undefined);
 });
 
+test("the plan changed where the week's percent dropped at none of its weekly resets: the first sample after", () => {
+  const R = NOW - 2 * DAY; // a reset
+  const at = { at: R, from: R - 9 * MINUTE, to: R + 5 * MINUTE };
+  const reset = [{ t: R - 10 * MINUTE, v: 80 }, { t: R + 5 * MINUTE, v: 1 }];
+  const p = [...reset, ...points([60, 30], [45, 0], [30, 2])];
+  assert.deepEqual(changeOf(p, at), { t: NOW - 45 * MINUTE, v: 0 });
+  assert.deepEqual(changeOf(p, { at: at.at + WEEK, from: at.from + WEEK, to: at.to + WEEK }), { t: NOW - 45 * MINUTE, v: 0 }, 'told by any of its resets');
+  assert.deepEqual(changeOf([...reset, ...points([400, 40], [385, 0], [60, 30], [45, 29])], at), { t: NOW - 385 * MINUTE, v: 0 }, 'the latest drop, not 1 point down');
+  assert.equal(changeOf([...reset, ...points([60, 30], [45, 31])], at), undefined, 'the drop at the reset');
+  assert.equal(changeOf([{ t: R - 3 * HOUR, v: 80 }, { t: R + 2 * HOUR, v: 10 }], at), undefined, 'samples far apart around the reset');
+  assert.equal(changeOf([{ t: R - WEEK - 2 * DAY, v: 80 }, { t: R - 2 * DAY + MINUTE, v: 10 }], at), undefined, 'a week apart: a reset came between');
+  assert.equal(changeOf(p, undefined), undefined, 'no reset known to tell one by');
+  // As the app's file tells it: the latest sample with no session, the week's back to 0 on a Sunday.
+  const file = {
+    samples: [
+      ...[[R - WEEK - 10 * MINUTE, 10, 80], [R - WEEK + 5 * MINUTE, 12, 1], [R - 10 * MINUTE, 20, 70], [R + 5 * MINUTE, 22, 1], [NOW - 30 * MINUTE, 94, 87]]
+        .map(([t, fh, sd]) => ({ t, org: 'o', u: { fh, sd } })),
+      { t: NOW - 15 * MINUTE, org: 'o', u: { sd: 0 } },
+    ],
+  };
+  const u = usageOf(file);
+  assert.deepEqual(brief(u), { at: NOW - 15 * MINUTE, week: 0 });
+  assert.deepEqual([u?.changed, u?.sessionReset, u?.weekReset?.at], [{ t: NOW - 15 * MINUTE, v: 0 }, undefined, R + WEEK]);
+});
+
 test('the resets come from the samples of the latest one\'s org', () => {
   const file = {
     samples: [
@@ -185,6 +210,30 @@ test('the week carried on from its last sample, or from its reset when one came 
   );
   assert.equal(track(p, known(...ROSE), NOW), undefined, 'no reset known');
   assert.equal(track({ session: [], week: points([150, 20], [135, 21], [120, 22], [105, 24]) }, known(...ROSE), NOW, later), undefined, 'rose 4 points: too few');
+});
+
+test('each percent carried on from the last sample alone: one it leaves out is not, from a sample before', () => {
+  // The session's 20 points for 20,000 would make it 50 now; the last sample has the week alone.
+  const p = { session: points([150, 0], [135, 10], [120, 20]), week: points([150, 20], [135, 22], [120, 24], [105, 26]) };
+  const later = { at: NOW + 2 * DAY, from: NOW + 2 * DAY - 9 * MINUTE, to: NOW + 2 * DAY + 5 * MINUTE };
+  assert.deepEqual(track(p, known(...ROSE, [60, 20_000]), NOW, later), { at: NOW, week: 30, weekReset: later });
+  assert.equal(track({ ...p, week: p.week.slice(0, 2) }, known(...ROSE, [60, 20_000]), NOW, later)?.session, 50, 'the session in the last sample');
+});
+
+test("after the plan changed, the percents scaled by the rises since alone: those before were of other limits", () => {
+  const later = { at: NOW + 2 * DAY, from: NOW + 2 * DAY - 9 * MINUTE, to: NOW + 2 * DAY + 5 * MINUTE };
+  const replies = known(...ROSE, [95, 10_000], [80, 10_000], [60, 10_000]);
+  // 10 points for 10,000 before it dropped at no reset, and 4 since: too few.
+  const week = points([150, 50], [135, 60], [120, 0], [105, 2], [90, 4]);
+  assert.equal(track({ session: [], week }, replies, NOW, later), undefined);
+  // 5 points for 30,000 since, a point for each 6,000: 5 and 10,000's worth, 1.7.
+  assert.deepEqual(track({ session: [], week: [...week, ...points([75, 5])] }, replies, NOW, later), { at: NOW, week: 7, weekReset: later });
+  const before = { t: NOW - 8 * HOUR, v: 0 };
+  assert.equal(track({ session: [], week: [...week, ...points([75, 5])] }, replies, NOW, later, before)?.week, 9, 'changed before the replies are known: all their rises, 15 points for 40,000');
+  // Nor are the replies needed back to them.
+  const back = points([600, 20], [590, 22], [105, 26]);
+  assert.equal(repliesSince({ session: [], week: back }, NOW, { t: NOW - 300 * MINUTE, v: 0 }), NOW - 105 * MINUTE - SESSION);
+  assert.equal(repliesSince({ session: [], week: back }, NOW), NOW - 600 * MINUTE - SESSION);
 });
 
 test('the replies are needed back to the earliest rise the scales may use, or the last sample, and a window before; 8 days at most', () => {
