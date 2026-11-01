@@ -33,13 +33,18 @@ export class Viewer {
    * @param {(key: string | undefined) => void} [o.onFocus] told when the selected agent changes
    *   (in the list, where the panel below the rows shows it, or in its details), whose transcript
    *   is then to be read though it is not at work
+   * @param {(key: string) => void} [o.onOpen] where agents' details open elsewhere (the
+   *   agentmonitor app's flyout hands them to its window): told the key of the agent to open,
+   *   this view staying as it is; and as there is nothing here to step into, one click on a row
+   *   opens it
    */
-  constructor({ monitor, t, agents, showEnded, bell = false, view = 'overview', mouse = true, refresh = () => {}, onFocus = () => {} }) {
+  constructor({ monitor, t, agents, showEnded, bell = false, view = 'overview', mouse = true, refresh = () => {}, onFocus = () => {}, onOpen }) {
     this.monitor = monitor;
     this.t = t;
     this.mouseOn = mouse;
     this.refresh = refresh;
     this.onFocus = onFocus;
+    this.onOpen = onOpen;
     this.ui = { ...initialUi(), agents, showEnded, bell, panel: viewOf(view).name };
     /** @type {Map<string, string>} each session's state as rings was last told it */
     this.states = new Map();
@@ -211,8 +216,23 @@ export class Viewer {
 
   /** Opens the details of the selected row, when one is. */
   open() {
-    if (this.ui.selected !== undefined) Object.assign(this.ui, { view: 'detail', logScroll: 0 });
+    if (this.ui.selected !== undefined) this.goTo(this.ui.selected);
+  }
+
+  /**
+   * Opens the details of the agent with this key, from wherever this view is (a click on it in the
+   * panel below the rows, or the agentmonitor app's taskbar, jump list or menu); or, where they
+   * open elsewhere, hands it on.
+   * @param {string} key
+   */
+  goTo(key) {
+    if (this.onOpen) {
+      this.onOpen(key);
+      return;
+    }
+    Object.assign(this.ui, { view: 'detail', selected: key, logScroll: 0, editingFilter: false });
     this.detail = undefined;
+    this.tell();
   }
 
   sortBy(/** @type {import('./view.js').Sort} */ sort) {
@@ -254,16 +274,12 @@ export class Viewer {
       this.lastClick = { key: '', at: 0 };
       return;
     }
-    if ('open' in action) {
-      Object.assign(ui, { view: 'detail', selected: action.open, logScroll: 0 });
-      this.detail = undefined;
-      return;
-    }
+    if ('open' in action) return this.goTo(action.open);
     const now = Date.now();
     const again = m.double || (action.select === this.lastClick.key && now - this.lastClick.at < DOUBLE_CLICK);
     this.lastClick = again ? { key: '', at: 0 } : { key: action.select, at: now };
     ui.selected = action.select;
-    if (again) this.open();
+    if (again || this.onOpen) this.open();
   }
 
   /**

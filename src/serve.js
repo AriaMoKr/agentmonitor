@@ -1,7 +1,8 @@
 // The web view: the monitor's list and details as a page a browser keeps up to date, on this
 // computer, or on others when it listens on their network. Read only: it answers GET and HEAD,
 // and what a page sends, its keys and clicks, moves only that page's view; only in the
-// agentmonitor app, whose window is its one page, does q quit, as in a terminal. Every address
+// agentmonitor app, whose window and tray flyout are its pages, does q quit, as in a terminal,
+// and a session opened in the flyout opens in the window. Every address
 // begins with a token, random unless given, that only the addresses printed hold (and, for a
 // phone, the QR code printed of the first). Text from the files reaches the page as JSON strings,
 // which the page puts in as text, never as markup.
@@ -21,9 +22,11 @@ import { Viewer } from './viewer.js';
  * @typedef {import('node:http').ServerResponse} Response
  * @typedef {{ viewer: Viewer, seen: number, read: boolean }} Page a page's view, when the page
  *   last asked, and whether what it sent wants everything read again before it is answered
- * @typedef {{ port: number, token: string, snapshot: () => Promise<import('./monitor.js').Snapshot | null>, close: () => Promise<void> }} Served
+ * @typedef {{ port: number, token: string, snapshot: () => Promise<import('./monitor.js').Snapshot | null>,
+ *   open: (page: string, key: string) => void, close: () => Promise<void> }} Served
  *   where it listens, the latest read (made again first when older than the interval, as for a
- *   page), and how to stop it
+ *   page), the details of an agent opened in a page by its ID (its view made when new: the
+ *   agentmonitor app's window, from its taskbar, jump list or menu), and how to stop it
  * @typedef {[string] | [string, string] | [string, string, number]} Run text, its classes, and
  *   for characters outside ASCII the columns they take, which the page gives them
  * @typedef {Key | { filter: string } | { drag: 'up' | 'down' }} Input what a page sent: a key, a
@@ -82,15 +85,20 @@ export function newToken() {
  * @param {number} [o.pageTtlMs] how long a page that stopped asking keeps its view
  * @param {number} [o.maxPages] how many pages' views are kept at most
  * @param {(line: string) => void} [o.log] told of each page opened, and of errors
- * @param {() => void} [o.onQuit] for the agentmonitor app, whose window is its only page: there q
- *   quits as in a terminal, called once the page that sent it is answered
+ * @param {() => void} [o.onQuit] for the agentmonitor app, whose window and flyout are its only
+ *   pages: there q quits as in a terminal, called once the page that sent it is answered
+ * @param {Record<string, (key: string) => void>} [o.elsewhere] for the agentmonitor app: the pages,
+ *   by their IDs, whose agents' details open elsewhere, each with what opens them there (its
+ *   tray's flyout's, in its window)
  * @returns {Promise<Served>}
  */
-export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = newToken(), intervalMs, ascii, agents, showEnded, bell = false, view, pageTtlMs = 10 * 60_000, maxPages = 50, log = () => {}, onQuit }) {
+export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = newToken(), intervalMs, ascii, agents, showEnded, bell = false, view, pageTtlMs = 10 * 60_000, maxPages = 50, log = () => {}, onQuit, elsewhere = {} }) {
   if (!TOKEN.test(token)) throw new Error('a token is 16 or more letters, digits, - or _');
   const t = makeTheme({ color: true, ascii, animate: false, web: true, quit: onQuit ? 'q' : '' });
   const files = new Map(Object.entries(FILES).map(([name, [file, type]]) => [name, { body: readFileSync(new URL(`./web/${file}`, import.meta.url)), type }]));
   const expected = Buffer.from(token);
+  // By the pages' own IDs only: never one an object has of itself, as __proto__.
+  const away = new Map(Object.entries(elsewhere));
   /** @type {Map<string, Page>} in the order they last asked: the first, longest ago */
   const pages = new Map();
   /** @type {import('./monitor.js').Snapshot | null} */
@@ -172,6 +180,7 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
           focusAll();
           if (key?.startsWith('a:')) made.read = true;
         },
+        onOpen: away.get(id),
       });
       page = made;
       log(`${clock(now, now)}  page opened from ${from}`);
@@ -288,6 +297,9 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
     snapshot: async () => {
       await current();
       return snap;
+    },
+    open: (id, key) => {
+      if (PAGE.test(id)) pageFor(id, 'this app').viewer.goTo(key);
     },
     close: () => new Promise((resolve) => {
       server.close(() => resolve());

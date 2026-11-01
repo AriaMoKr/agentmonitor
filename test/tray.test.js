@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { inflateSync } from 'node:zlib';
-import { appIco, appIcon, crc32, ico, png, trayIcon } from '../desktop/icons.js';
+import { appIco, appIcon, countIcon, crc32, donutIcon, glyphIco, ico, png, sessionsIcon, tileIcon, trayIcon, TURNS, turningIcon, usageIcon } from '../desktop/icons.js';
 import { desktopEntry } from '../desktop/launch.js';
 import { menuLabel, notices, trayState } from '../desktop/tray.js';
 import { timeOfDay } from '../src/format.js';
@@ -76,29 +76,43 @@ test('its tooltip and its menu: the counts, the plan\'s usage as the list\'s fir
   ], { usage: { at: NOW - 10 * MINUTE, session: 64, week: 29, sessionReset: { at: S, from: S - 10 * MINUTE, to: S + 5 * MINUTE } } });
   const s = trayState(snap, NOW);
   const usage = `session 64% resets ${timeOfDay(NOW + 2 * HOUR + 5 * MINUTE)} · week 29%`;
-  assert.deepEqual({ ...s, listed: undefined }, {
+  assert.deepEqual({ ...s, listed: undefined, sessions: undefined }, {
     level: 'waiting',
     needs: 2,
     counts: '2 need you, 1 unread, 1 at work, 1 in the background, 1 idle',
     usage,
     tooltip: `Claude agents: 2 need you, 1 unread, 1 at work, 1 in the background, 1 idle\n${usage}`,
     listed: undefined,
+    tally: { waiting: 2, unread: 1, working: 1, background: 1, idle: 1 },
+    sessions: undefined,
   });
   assert.deepEqual(s.listed, [
     { key: 's:Pick a provider', label: '◇ Pick a provider · shop' },
     { key: 's:Release 2.0', label: '◆ Release 2.0 · shop' },
     { key: 's:Plan the migration', label: '• Plan the migration · infra' },
   ], 'those that need you first, the latest first');
+  assert.deepEqual(s.sessions.map((x) => [x.title, x.level, x.project]), [
+    ['Pick a provider', 'waiting', 'shop'],
+    ['Release 2.0', 'waiting', 'shop'],
+    ['Plan the migration', 'unread', 'infra'],
+    ['Fix the parser', 'working', 'demo'],
+    ['Serving one', 'background', ''],
+    ['Idle one', 'idle', ''],
+  ], 'for its other looks, the taskbar and the jump list: every one but that ended, what matters most first, the latest first');
 
   const one = trayState(snapshot([agent({ title: 'x', state: 'waiting' })]), NOW);
   assert.equal(one.counts, '1 needs you');
   assert.deepEqual([one.usage, one.tooltip], ['', 'Claude agents: 1 needs you'], 'no usage without the desktop app');
   assert.equal(trayState(snapshot([]), NOW).tooltip, 'Claude agents: none running');
-  // A title from the files: one clean line, cut; eight sessions at most.
-  const rows = Array.from({ length: 10 }, (_, i) => agent({ key: `s:${i}`, title: `\x1b[31mRed\x1b[0m\nline ${'x'.repeat(80)}`, state: 'waiting', lastActive: NOW - i * MINUTE }));
-  const many = trayState(snapshot(rows), NOW).listed;
-  assert.equal(many.length, 8);
-  assert.equal(many[0].label, `◆ Red line ${'x'.repeat(50)}…`);
+  // A title from the files: one clean line, cut; eight sessions at most in the menu, all of them for the rest.
+  const rows = Array.from({ length: 10 }, (_, i) => agent({
+    key: `s:${i}`, title: `\x1b[31mRed\x1b[0m\nline ${'x'.repeat(80)}`, state: 'waiting', lastActive: NOW - i * MINUTE, activity: 'Bash:\x1b[2m npm\ntest',
+  }));
+  const many = trayState(snapshot(rows), NOW);
+  assert.equal(many.listed.length, 8);
+  assert.equal(many.listed[0].label, `◆ Red line ${'x'.repeat(50)}…`);
+  assert.equal(many.sessions.length, 10);
+  assert.deepEqual(many.sessions[0], { key: 's:0', level: 'waiting', title: `Red line ${'x'.repeat(50)}…`, project: '', activity: 'Bash: npm test' });
 });
 
 test('a notification when a session starts waiting or ends its turn, once; more than three at once, one says how many', () => {
@@ -193,4 +207,57 @@ test('the icons: PNG with each chunk\'s checksum right, the glyph in the middle 
   assert.ok(appIco().equals(ico(sizes.map((size) => ({ size, png: appIcon(size) })))));
   // Any pixels make a PNG.
   assert.deepEqual(readPng(png(2, 1, Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]))).at(1, 0), [5, 6, 7, 8]);
+});
+
+test('the tray icon\'s other looks and the taskbar button\'s overlay: the sessions\' glyphs, the usage\'s ring, a glyph turning, how many need you, the sessions\' ring', () => {
+  const [tile, yellow, blue, green, cyan, grey, red, dim] = [
+    [30, 30, 30, 255], [229, 229, 16, 255], [59, 142, 234, 255], [35, 209, 139, 255],
+    [41, 184, 219, 255], [138, 138, 138, 255], [241, 76, 76, 255], [70, 70, 70, 255],
+  ];
+  const lone = readPng(tileIcon(16));
+  assert.deepEqual([lone.at(8, 8), lone.at(0, 0)[3]], [tile, 0], 'the tile alone, between the flashes');
+
+  // A glyph for each session, up to four: one alone, or none, the tray's own icon.
+  assert.ok(sessionsIcon(['unread'], 16).equals(trayIcon('unread', 16)));
+  assert.ok(sessionsIcon([], 16).equals(trayIcon('none', 16)));
+  const two = readPng(sessionsIcon(['waiting', 'working'], 32));
+  assert.deepEqual([two.at(9, 16), two.at(16, 16), two.at(22, 16)], [yellow, tile, green]);
+  const three = readPng(sessionsIcon(['waiting', 'unread', 'working'], 32));
+  assert.deepEqual([three.at(9, 9), three.at(22, 9), three.at(16, 22)], [yellow, blue, green]);
+  const five = /** @type {import('../desktop/icons.js').Level[]} */ (['waiting', 'unread', 'working', 'background', 'idle']);
+  const four = readPng(sessionsIcon(five, 32));
+  assert.deepEqual([four.at(9, 9), four.at(22, 9), four.at(9, 22), four.at(22, 22)], [yellow, blue, green, cyan]);
+  assert.ok(sessionsIcon(five, 16).equals(sessionsIcon(five.slice(0, 4), 16)), 'four at most');
+
+  // The plan's usage, lit from the top as far round as it is used, colored as the taskbar's bar; the glyph inside.
+  const quarter = readPng(usageIcon('unread', 0.25, 'normal', 32));
+  assert.deepEqual([quarter.at(23, 7), quarter.at(16, 27), quarter.at(16, 16)], [green, dim, blue]);
+  assert.deepEqual(readPng(usageIcon('unread', 0.25, 'paused', 32)).at(23, 7), yellow);
+  assert.deepEqual(readPng(usageIcon('unread', 0.25, 'error', 32)).at(23, 7), red);
+  assert.deepEqual(readPng(usageIcon('unread', 0, 'normal', 32)).at(23, 7), dim);
+  assert.deepEqual(readPng(usageIcon('unread', 1, 'normal', 32)).at(16, 27), green);
+  assert.ok(usageIcon('unread', 1.5, 'normal', 16).equals(usageIcon('unread', 1, 'normal', 16)));
+
+  // A third of a ring round a dot, turning a twelfth a step.
+  const at0 = readPng(turningIcon(0, 32));
+  const half = readPng(turningIcon(TURNS / 2, 32));
+  assert.deepEqual([at0.at(23, 11), at0.at(8, 20), at0.at(16, 16)], [green, tile, green]);
+  assert.deepEqual([half.at(23, 11), half.at(8, 20), half.at(16, 16)], [tile, green, green]);
+  assert.ok(turningIcon(TURNS, 16).equals(turningIcon(0, 16)));
+  assert.ok(turningIcon(-1, 16).equals(turningIcon(TURNS - 1, 16)));
+
+  // How many need you, dark on yellow; more than nine, 9+.
+  const three3 = readPng(countIcon(3, 32));
+  assert.deepEqual([three3.at(12, 8), three3.at(12, 12), three3.at(0, 0)[3]], [tile, yellow, 0]);
+  assert.ok(countIcon(12, 16).equals(countIcon(10, 16)));
+  assert.ok(!countIcon(9, 16).equals(countIcon(10, 16)));
+
+  // The sessions as a ring, round from the top, a gap between the parts; idle's grey.
+  const ring = readPng(donutIcon([['unread', 1], ['working', 1], ['background', 0], ['idle', 2]], 32));
+  assert.deepEqual([ring.at(22, 9), ring.at(22, 22), ring.at(7, 16), ring.at(16, 7)], [blue, green, grey, tile]);
+  assert.deepEqual(readPng(donutIcon([['working', 3]], 32)).at(16, 7), green, 'one part, no gap');
+  assert.ok(donutIcon([['unread', 0], ['idle', 0]], 16).equals(trayIcon('none', 16)));
+
+  // A glyph as ICO, for the jump list.
+  assert.ok(glyphIco('waiting').equals(ico([16, 20, 24, 32, 40, 48].map((size) => ({ size, png: trayIcon('waiting', size) })))));
 });

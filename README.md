@@ -267,7 +267,7 @@ On a phone, a tap is a click: on a row, twice to open it, below the rows to sele
 
 ## The agentmonitor app
 
-`desktop/` holds agentmonitor as an app, made with Electron: the web page in a window of its own, and an icon in the system tray that shows when a session needs you. Once set up it needs no terminal, and it goes on in the tray with its window closed.
+`desktop/` holds agentmonitor as an app, made with Electron: the web page in a window of its own, and an icon in the system tray that shows when a session needs you, with the page again in a small window by it. On Windows its taskbar button shows the plan's usage and the sessions too. Once set up it needs no terminal, and it goes on in the tray with its window closed.
 
 On Windows, take the zip from the latest [release](https://github.com/AriaMoKr/agentmonitor/releases), unzip it anywhere, and run `agentmonitor.exe` in it. It is not signed, so Windows may say it protected your PC: More info, then Run anyway. Elsewhere, or to run it from here:
 
@@ -281,9 +281,9 @@ Electron is its only dependency, kept in that folder: the monitor itself has non
 
 The window shows the page `--serve` serves, with the same keys and clicks, but q quits, as in a terminal (in the details it goes back). The monitor runs inside it and serves the page to its window alone: on 127.0.0.1, at a free port, with a new token each time. Ctrl+= and Ctrl+- make the page bigger and smaller, and Ctrl+0 sets it back; it keeps that, and where the window was.
 
-Closing the window, or Ctrl+W, leaves agentmonitor running in the tray, and so does minimizing it, unless you turn that off. A click on the icon shows the window again, and so does starting agentmonitor again. q, Ctrl+Q, or Quit in the icon's menu, quits it.
+Closing the window, or Ctrl+W, leaves agentmonitor running in the tray, and so does minimizing it, unless you turn that off. A click on the icon shows the flyout, the same page in a small window by the icon: a session opened there, with a click or Enter, opens in the window, and the flyout goes when you click elsewhere or press Esc. A double click on the icon shows the window, and so does starting agentmonitor again; on macOS a click does. q, Ctrl+Q, or Quit in the icon's menu, quits it.
 
-The icon shows what matters most now:
+The icon shows the sessions, a glyph each, up to four, what matters most first; one alone, or none, fills it:
 
 | Icon | |
 |---|---|
@@ -291,22 +291,34 @@ The icon shows what matters most now:
 | • blue | one is unread |
 | ● green | one is at work |
 | ◎ cyan | one waits on what it left running in the background |
-| ○ cyan | the sessions that run are idle |
+| ○ cyan | one is idle |
 | ○ grey | none runs |
 
-Its tooltip counts the sessions and gives the plan's usage. Its menu lists the sessions that need you, then the unread ones (a click on one shows the window), and the counts and the usage under them, then these switches, which it keeps:
+Tray icon, in its menu, gives it another look: what matters most alone, its glyph; that glyph turning while one is at work; that glyph in a ring of the plan's usage, lit round from the top as far as the limit used more, colored as the taskbar button's bar (below); or how many need you, dark on yellow (9+ past nine), else what matters most.
+
+Its tooltip counts the sessions and gives the plan's usage. Its menu lists the sessions that need you, then the unread ones (a click on one opens it in the window), and the counts and the usage under them, then these switches, which it keeps:
 
 - Notify when a session needs you or ends its turn: a notification when the bell would ring. Off until you turn it on, and on Windows shown only while its settings let apps notify (Settings, System, Notifications).
+- Flash when a session needs you or ends its turn: the window's taskbar button flashes until you bring the window to the front; with the window in the tray, the icon blinks a few seconds. On at first.
+- Tray icon: its look, above.
 - Minimize to the tray: on at first.
 - Start at login, in the tray: off at first.
 - In the Start menu, or In the applications menu: there after the first start. Taken out here, it stays out.
 
-How many sessions need you shows on the window's taskbar button on Windows, next to the icon on macOS, and as a badge where a Linux desktop shows one. `npm start -- --hidden` (from a release, `agentmonitor.exe --hidden`) starts it in the tray with the window not shown, as it starts at login, and `npm start -- --quit` (`agentmonitor.exe --quit`) quits the one that runs.
+On Windows the window's taskbar button shows more:
+
+- its bar: the plan's usage, the limit used more, green, yellow from 75% or where at its pace it would reach 100% before it resets, red from 90%. macOS shows it on the dock's icon.
+- on its icon, how many sessions need you, dark on yellow; else, while one is unread, at work or in the background, a ring of the sessions by what they show.
+- under its preview, which shows the top of the list, a button for each session but those idle, seven at most, what matters most first: a click opens it in the window.
+- its jump list (a right click on it, or on agentmonitor pinned to the taskbar): the sessions that need you, those unread and those at work, each opened in the window, then Show Claude agents and Quit agentmonitor. A session taken out of it stays out, and at Quit the list goes.
+
+How many sessions need you shows next to the icon on macOS, and as a badge where a Linux desktop shows one. `npm start -- --hidden` (from a release, `agentmonitor.exe --hidden`) starts it in the tray with the window not shown, as it starts at login, and `npm start -- --quit` (`agentmonitor.exe --quit`) quits the one that runs.
 
 It writes only its own files:
 
 - its settings and its icons, in its folder: `%APPDATA%\agentmonitor` on Windows, `~/Library/Application Support/agentmonitor` on macOS, `~/.config/agentmonitor` on Linux. Electron keeps its caches there too.
 - its Start menu shortcut, `%APPDATA%\Microsoft\Windows\Start Menu\Programs\agentmonitor.lnk`, or on Linux `~/.local/share/applications/agentmonitor.desktop`. On Windows its notifications go with the shortcut: without it, they may not show.
+- on Windows its jump list, which Windows keeps for it while it runs.
 - to start at login, Windows' Run key for your account, or `~/.config/autostart/agentmonitor.desktop` on Linux.
 
 It reads what `--serve` reads, from `$CLAUDE_CONFIG_DIR` or `~/.claude`, with "recently active" at 24 hours. It was tried on Windows 11. It should run on macOS and Linux, untried there: on macOS it offers no start at login or menu entry, which would take a packaged app, and a Linux desktop shows the icon only when it has a tray (GNOME needs an extension for one).

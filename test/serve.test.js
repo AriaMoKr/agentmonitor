@@ -59,7 +59,8 @@ function sessions(now = Date.now()) {
  * Serves `monitor` on a free port of this computer, for the test to ask.
  * @param {import('node:test').TestContext} t
  * @param {ReturnType<typeof fakeMonitor>} monitor
- * @param {{ intervalMs?: number, ascii?: boolean, bell?: boolean, view?: string, pageTtlMs?: number, maxPages?: number, onQuit?: () => void }} [o]
+ * @param {{ intervalMs?: number, ascii?: boolean, bell?: boolean, view?: string, pageTtlMs?: number, maxPages?: number, onQuit?: () => void,
+ *   elsewhere?: Record<string, (key: string) => void> }} [o]
  */
 async function start(t, monitor, o = {}) {
   /** @type {string[]} */
@@ -231,6 +232,34 @@ test('in the agentmonitor app q quits, from the list or the footer; in the help 
   const [line, from] = a.keys.find((k) => k[3] === 'q') ?? [];
   await s.screen('page-aaaa', [`m:${from},${line}`]);
   assert.equal(quits, 2);
+});
+
+test('in the agentmonitor app a session opened in its flyout opens in its window, as the app opens one there', async (t) => {
+  /** @type {string[]} */
+  const opened = [];
+  const s = await start(t, fakeMonitor(() => sessions()), { elsewhere: { 'page-flyout': (key) => opened.push(key) } });
+  await s.screen('page-flyout');
+  let f = await s.screen('page-flyout', ['k:enter']);
+  assert.deepEqual(opened, ['s:b']);
+  assert.match(f.text[1], /NAME/, 'the flyout stays with its list');
+  // One click on a row opens it, as there is nothing to step into here.
+  const y = f.text.findIndex((l) => l.includes('Fix the parser'));
+  f = await s.screen('page-flyout', [`m:10,${y}`]);
+  assert.deepEqual(opened, ['s:b', 's:a']);
+  assert.match(selected(f), /Fix the parser/);
+  // The other pages open it themselves; one named as an object's own property is no exception.
+  for (const page of ['page-window', 'constructor']) {
+    await s.screen(page);
+    assert.match((await s.screen(page, ['k:enter'])).text[0], /^ ◆ <img src=x onerror=alert\(1\)> & "docs" +waiting $/, page);
+  }
+  assert.deepEqual(opened, ['s:b', 's:a']);
+  // The app opens one in its window's page, for the window to show; in one not seen yet too, as it starts.
+  s.served.open('page-window', 's:a');
+  assert.match((await s.screen('page-window')).text[0], /Fix the parser +working/);
+  s.served.open('page-started', 's:b');
+  assert.match((await s.screen('page-started')).text[0], /^ ◆ <img src=x/);
+  s.served.open('no', 's:a');
+  assert.equal(s.logs.filter((l) => l.includes('page opened')).length, 4, 'not a page\'s ID: none made');
 });
 
 test('v steps through the views below the list; one that moves of itself has its page ask more often, where there is room for it', async (t) => {

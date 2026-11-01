@@ -134,8 +134,13 @@ export function beep(audio) {
   tone.stop(at + 0.45);
 }
 
-/** A random ID for this page, which its tab keeps across reloads. */
+/**
+ * This page's ID: the one its address names (the agentmonitor app names its window's and its
+ * flyout's, to act on them), else a random one, which its tab keeps across reloads.
+ */
 function pageId() {
+  const named = new URLSearchParams(location.search).get('page');
+  if (named && /^[A-Za-z0-9_-]{8,40}$/.test(named)) return named;
   try {
     const kept = sessionStorage.getItem('agentmonitor-page');
     if (kept && /^[A-Za-z0-9_-]{8,40}$/.test(kept)) return kept;

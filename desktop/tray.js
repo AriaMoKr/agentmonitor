@@ -1,7 +1,8 @@
 // What the agentmonitor app's tray icon says of a snapshot: the glyph of what matters most (a
 // session that needs you, a turn ended unread, one at work, one waiting on what it left running
-// in the background, all idle, none running), its tooltip, the sessions its menu lists, and what
-// is worth a notification. Pure, so the tests can tell; main.js shows it with Electron.
+// in the background, all idle, none running), its tooltip, the sessions its menu lists, each
+// session's level for the tray's other looks, the taskbar and the jump list, and what is worth a
+// notification. Pure, so the tests can tell; main.js shows it with Electron.
 import { clean, truncate } from '../src/format.js';
 import { makeTheme, shown, usageParts } from '../src/view.js';
 import { ringing } from '../src/viewer.js';
@@ -10,6 +11,7 @@ import { ringing } from '../src/viewer.js';
  * @typedef {import('../src/monitor.js').Agent} Agent
  * @typedef {import('../src/monitor.js').Snapshot} Snapshot
  * @typedef {import('./icons.js').Level} Level
+ * @typedef {Exclude<Level, 'none'>} Shown a level a session can show
  */
 
 /** Text with no styles: the glyphs, and the usage in words. */
@@ -21,6 +23,17 @@ const MAX_LISTED = 8;
 const MAX_NOTICES = 3;
 /** The most a Windows tooltip holds. */
 const MAX_TOOLTIP = 127;
+/** The levels, what matters most first. @type {Shown[]} */
+const LEVELS = ['waiting', 'unread', 'working', 'background', 'idle'];
+
+/**
+ * @typedef {object} Session a session as the tray's looks, the taskbar and the jump list show it
+ * @property {string} key
+ * @property {Shown} level
+ * @property {string} title one clean line, cut
+ * @property {string} project as the title, '' when none
+ * @property {string} activity what it is doing, waits for or did last, as the title; '' when none
+ */
 
 /**
  * @typedef {object} TrayState
@@ -31,7 +44,22 @@ const MAX_TOOLTIP = 127;
  * @property {string} tooltip
  * @property {{ key: string, label: string }[]} listed those that need you, then those unread,
  *   the latest first: a glyph, the title and the project
+ * @property {Record<Shown, number>} tally how many sessions show each level
+ * @property {Session[]} sessions each one running or idle, what matters most first, the latest
+ *   first of those at the same level
  */
+
+/**
+ * A session's level, as the tray counts it: undefined for one that ended.
+ * @param {Agent} a
+ * @returns {Shown | undefined}
+ */
+export function levelOf(a) {
+  const s = shown(a);
+  if (s === 'waiting' || s === 'blocked') return 'waiting';
+  if (s === 'working' || s === 'tool' || s === 'active') return 'working';
+  return s === 'unread' || s === 'background' || s === 'idle' ? s : undefined;
+}
 
 /**
  * What the tray says of `snap`.
@@ -40,40 +68,47 @@ const MAX_TOOLTIP = 127;
  * @returns {TrayState}
  */
 export function trayState(snap, now) {
-  let [needs, unread, work, background, idle] = [0, 0, 0, 0, 0];
-  /** @type {Agent[]} */
-  const listed = [];
-  for (const r of snap.rows) {
-    const s = shown(r);
-    if (s === 'waiting' || s === 'blocked') needs++;
-    else if (s === 'unread') unread++;
-    else if (s === 'working' || s === 'tool' || s === 'active') work++;
-    else if (s === 'background') background++;
-    else if (s === 'idle') idle++;
-    if (s === 'waiting' || s === 'blocked' || s === 'unread') listed.push(r);
+  /** @type {Record<Shown, number>} */
+  const tally = { waiting: 0, unread: 0, working: 0, background: 0, idle: 0 };
+  /** @type {{ a: Agent, level: Shown }[]} */
+  const live = [];
+  for (const a of snap.rows) {
+    const level = levelOf(a);
+    if (!level) continue;
+    tally[level]++;
+    live.push({ a, level });
   }
+  live.sort((x, y) => LEVELS.indexOf(x.level) - LEVELS.indexOf(y.level) || y.a.lastActive - x.a.lastActive);
+  const { waiting: needs, unread, working: work, background, idle } = tally;
   /** @type {Level} */
-  const level = needs ? 'waiting' : unread ? 'unread' : work ? 'working' : background ? 'background' : idle ? 'idle' : 'none';
+  const level = LEVELS.find((l) => tally[l]) ?? 'none';
   const counts = [
     needs && `${needs} need${needs === 1 ? 's' : ''} you`, unread && `${unread} unread`, work && `${work} at work`,
     background && `${background} in the background`, idle && `${idle} idle`,
   ].filter(Boolean).join(', ') || 'none running';
   // As the list's first line has it: a reset after its percent, the parts apart.
   const usage = usageParts(snap.usage, now, plain).map(([s, , of], i) => (i ? (of ? ' ' : plain.sep) : '') + s).join('');
-  const needsFirst = (/** @type {Agent} */ a) => (shown(a) === 'unread' ? 1 : 0);
   return {
     level,
     needs,
     counts,
     usage,
     tooltip: `Claude agents: ${counts}${usage ? `\n${usage}` : ''}`.slice(0, MAX_TOOLTIP),
-    listed: listed
-      .sort((a, b) => needsFirst(a) - needsFirst(b) || b.lastActive - a.lastActive)
+    listed: live
+      .filter((s) => s.level === 'waiting' || s.level === 'unread')
       .slice(0, MAX_LISTED)
-      .map((a) => ({
+      .map(({ a }) => ({
         key: a.key,
         label: `${plain.glyphs[shown(a)]} ${truncate(clean(a.title) || 'untitled', 60)}${a.project ? `${plain.sep}${truncate(clean(a.project), 24)}` : ''}`,
       })),
+    tally,
+    sessions: live.map(({ a, level: l }) => ({
+      key: a.key,
+      level: l,
+      title: truncate(clean(a.title) || 'untitled', 60),
+      project: truncate(clean(a.project), 24),
+      activity: truncate(clean(a.activity), 200),
+    })),
   };
 }
 
