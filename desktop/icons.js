@@ -124,6 +124,11 @@ export function appIcon(size) {
   return png(size, size, draw(size, [...BASE, ...ROWS]));
 }
 
+/** The app's icon as ICO, at every size Windows asks for: for its program, window and shortcut. */
+export function appIco() {
+  return ico([16, 20, 24, 32, 40, 48, 64, 128, 256].map((size) => ({ size, png: appIcon(size) })));
+}
+
 /** The CRC-32 of each byte, for PNG's checksums. */
 const CRC_TABLE = Int32Array.from({ length: 256 }, (_, n) => {
   let c = n;

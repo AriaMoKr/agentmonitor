@@ -14,7 +14,7 @@ import { clock } from '../src/format.js';
 import { Monitor } from '../src/monitor.js';
 import { serve } from '../src/serve.js';
 import { sessionStates } from '../src/viewer.js';
-import { appIcon, ico, trayIcon } from './icons.js';
+import { appIco, appIcon, trayIcon } from './icons.js';
 import { desktopEntry } from './launch.js';
 import { menuLabel, notices, trayState } from './tray.js';
 
@@ -270,7 +270,7 @@ const trayImage = (/** @type {Level} */ level) => image(`tray-${level}`, (size) 
 /** The app's icon as files: ICO for the Start menu's shortcut and the window, PNG for Linux's entries. */
 function writeIcons() {
   mkdirSync(folder(), { recursive: true });
-  writeFileSync(icoPath(), ico([16, 20, 24, 32, 40, 48, 64, 128, 256].map((size) => ({ size, png: appIcon(size) }))));
+  writeFileSync(icoPath(), appIco());
   writeFileSync(pngPath(), appIcon(256));
 }
 

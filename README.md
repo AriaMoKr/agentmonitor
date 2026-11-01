@@ -269,13 +269,15 @@ On a phone, a tap is a click: on a row, twice to open it, below the rows to sele
 
 `desktop/` holds agentmonitor as an app, made with Electron: the web page in a window of its own, and an icon in the system tray that shows when a session needs you. Once set up it needs no terminal, and it goes on in the tray with its window closed.
 
+On Windows, take the zip from the latest [release](https://github.com/AriaMoKr/agentmonitor/releases), unzip it anywhere, and run `agentmonitor.exe` in it. It is not signed, so Windows may say it protected your PC: More info, then Run anyway. Elsewhere, or to run it from here:
+
 ```bash
 cd desktop
 npm install
 npm start
 ```
 
-Electron is its only dependency, kept in that folder: the monitor itself has none. The first start downloads Electron's own program, about 100 MB (360 MB unpacked), once; `npx install-electron` does that ahead. It also puts agentmonitor in the Start menu on Windows, or in the applications menu on Linux, to start it from there after that.
+Electron is its only dependency, kept in that folder: the monitor itself has none. The first start downloads Electron's own program, about 100 MB (360 MB unpacked), once; `npx install-electron` does that ahead. The first start also puts agentmonitor in the Start menu on Windows, or in the applications menu on Linux, to start it from there after that. The app from a release and the one run here are one app: one runs at a time, they keep the same settings, and the Start menu starts the one that started last.
 
 The window shows the page `--serve` serves, with the same keys and clicks, but q quits, as in a terminal (in the details it goes back). The monitor runs inside it and serves the page to its window alone: on 127.0.0.1, at a free port, with a new token each time. Ctrl+= and Ctrl+- make the page bigger and smaller, and Ctrl+0 sets it back; it keeps that, and where the window was.
 
@@ -299,7 +301,7 @@ Its tooltip counts the sessions and gives the plan's usage. Its menu lists the s
 - Start at login, in the tray: off at first.
 - In the Start menu, or In the applications menu: there after the first start. Taken out here, it stays out.
 
-How many sessions need you shows on the window's taskbar button on Windows, next to the icon on macOS, and as a badge where a Linux desktop shows one. `npm start -- --hidden` starts it in the tray with the window not shown, as it starts at login, and `npm start -- --quit` quits the one that runs.
+How many sessions need you shows on the window's taskbar button on Windows, next to the icon on macOS, and as a badge where a Linux desktop shows one. `npm start -- --hidden` (from a release, `agentmonitor.exe --hidden`) starts it in the tray with the window not shown, as it starts at login, and `npm start -- --quit` (`agentmonitor.exe --quit`) quits the one that runs.
 
 It writes only its own files:
 
@@ -365,6 +367,24 @@ npm test
 ```
 
 `bin/agentmonitor.js` reads the options and starts `src/tui.js` (the screen, the keys and the mouse) or `src/serve.js` (the web view, with its page in `src/web/`), or prints once with `src/view.js` (what is drawn, and where a click on it goes; the views below the list but the overview are `src/panels.js`, some drawn on `src/canvas.js`). `src/viewer.js` holds what one look at the monitor shows and what keys and clicks do to it: the terminal has one, and the web view one for each page. `src/monitor.js` puts a snapshot together from `src/registry.js`, `src/transcript.js`, `src/agents.js`, `src/jobs.js`, `src/desktop.js`, `src/usage.js` (the plan's usage, carried on with the replies `src/ledger.js` reads) and `src/procs.js`. `desktop/main.js` is the agentmonitor app, around `src/serve.js`: the window, the tray and the settings; `desktop/tray.js` says what the tray shows and what to notify, `desktop/icons.js` draws its icons as PNG and ICO, and `desktop/launch.js` writes Linux's menu entries. The tests write a config folder as Claude Code does, drive the monitor through a fake terminal, ask the web view on a free port of 127.0.0.1, and check the agentmonitor app's parts that need no Electron.
+
+`desktop/build.js` makes the app for Windows as a release has it, in `desktop/dist/`: Electron's program, named `agentmonitor.exe`, with the app beside it, then that folder as a zip, with the zip's SHA-256. `desktop/zip.js` writes the zip, so no zip program is needed. With `RCEDIT` set to the path of rcedit's `rcedit-x64.exe`, the program also gets the app's icon and name; without it, it keeps Electron's.
+
+```bash
+cd desktop
+npm install
+npx install-electron
+npm run build
+```
+
+`.github/workflows/release.yml` releases it. When a tag `v<version>` is pushed, it runs the tests on Windows, builds the app there with rcedit, and makes a GitHub release of the zip and its SHA-256. To release, give `package.json` and `desktop/package.json` the new version and commit that, then tag it and push the tag:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+A version with a `-` in it, such as `0.2.0-beta.1`, makes a pre-release. Run by hand from the repository's Actions tab on a branch, the workflow builds the zip as the run's artifact and releases nothing.
 
 ## License
 

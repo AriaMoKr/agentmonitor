@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { inflateSync } from 'node:zlib';
-import { appIcon, crc32, ico, png, trayIcon } from '../desktop/icons.js';
+import { appIco, appIcon, crc32, ico, png, trayIcon } from '../desktop/icons.js';
 import { desktopEntry } from '../desktop/launch.js';
 import { menuLabel, notices, trayState } from '../desktop/tray.js';
 import { timeOfDay } from '../src/format.js';
@@ -188,6 +188,9 @@ test('the icons: PNG with each chunk\'s checksum right, the glyph in the middle 
     assert.ok(file.subarray(offset, offset + length).equals(data), `the ${size} pixel image`);
   });
   assert.equal(file.length, 6 + 16 * 3 + images.reduce((n, i) => n + i.png.length, 0));
+  // The app's ICO, for its program and its shortcut: every size Windows asks for.
+  const sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256];
+  assert.ok(appIco().equals(ico(sizes.map((size) => ({ size, png: appIcon(size) })))));
   // Any pixels make a PNG.
   assert.deepEqual(readPng(png(2, 1, Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]))).at(1, 0), [5, 6, 7, 8]);
 });

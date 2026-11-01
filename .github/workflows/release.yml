@@ -1,0 +1,119 @@
+# The agentmonitor app for Windows, released: on a tag v<version> pushed, where <version> is that
+# of package.json and desktop/package.json, the tests on Windows, then the app built there
+# (desktop/build.js, its program given the app's icon and name by rcedit), then a GitHub release
+# of its zip and the zip's SHA-256, with GitHub's list of what changed. Run by hand on a branch
+# (Actions, Release, Run workflow), it builds the zip as the run's artifact and releases nothing;
+# on a tag, it releases it again, its files replaced.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  build:
+    name: Build for Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Version
+        id: version
+        run: |
+          version=$(node -p "require('./desktop/package.json').version")
+          monitor=$(node -p "require('./package.json').version")
+          if [ "$monitor" != "$version" ]; then
+            echo "::error::package.json has version $monitor, desktop/package.json $version: give them one"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::the tag is $GITHUB_REF_NAME, the version $version: tag it v$version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: npm test
+
+      # Its package, then its program, checked against the package's checksums.
+      - name: Install Electron
+        working-directory: desktop
+        run: |
+          npm ci --no-audit --no-fund
+          npx --no install-electron
+
+      # Only its program is used, and none of its scripts run.
+      - name: Install rcedit
+        run: npm install --prefix "$RUNNER_TEMP/rcedit" --no-save --ignore-scripts --no-audit --no-fund rcedit@5.0.2
+
+      - name: Build
+        working-directory: desktop
+        env:
+          RCEDIT: ${{ runner.temp }}/rcedit/node_modules/rcedit/bin/rcedit-x64.exe
+        run: npm run build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: agentmonitor-${{ steps.version.outputs.version }}-windows
+          path: desktop/dist/*.zip*
+          if-no-files-found: error
+          retention-days: 30
+          # A zip already.
+          compression-level: 0
+
+  release:
+    name: Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: agentmonitor-${{ needs.build.outputs.version }}-windows
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          files=(agentmonitor-*.zip agentmonitor-*.zip.sha256)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            {
+              echo 'agentmonitor for Windows: the Claude Code sessions on this computer, in a window of its own and an icon in the tray. Unzip it anywhere and run agentmonitor.exe; its first start puts it in the Start menu.'
+              echo
+              echo 'It is not signed, so Windows may say it protected your PC: More info, then Run anyway.'
+              echo
+              echo 'SHA-256:'
+              echo '```'
+              cat agentmonitor-*.zip.sha256
+              echo '```'
+            } > notes.md
+            prerelease=()
+            case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "agentmonitor $VERSION" --notes-file notes.md --generate-notes "${prerelease[@]}"
+          fi
