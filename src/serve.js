@@ -133,7 +133,7 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
     return Date.now() - readAt >= intervalMs ? read() : Promise.resolve();
   }
 
-  /** The agents in the pages' details: their transcripts are read, done or not. */
+  /** The agents selected in the pages: their transcripts are read, done or not. */
   function focusAll() {
     monitor.focus = new Set([...pages.values()].flatMap((p) => p.viewer.focus ?? []));
   }

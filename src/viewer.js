@@ -28,8 +28,9 @@ export class Viewer {
    * @param {boolean} [o.bell] whether the bell starts on
    * @param {boolean} [o.mouse] whether clicks reach it (the help says what they do)
    * @param {() => void} [o.refresh] has everything read again now (r, w)
-   * @param {(key: string | undefined) => void} [o.onFocus] told when the agent in the details
-   *   changes, whose transcript is then to be read though it is not at work
+   * @param {(key: string | undefined) => void} [o.onFocus] told when the selected agent changes
+   *   (in the list, where the panel below the rows shows it, or in its details), whose transcript
+   *   is then to be read though it is not at work
    */
   constructor({ monitor, t, agents, showEnded, bell = false, mouse = true, refresh = () => {}, onFocus = () => {} }) {
     this.monitor = monitor;
@@ -48,15 +49,15 @@ export class Viewer {
     this.detail = undefined;
     /** the row last clicked, and when: a second click on it soon after opens it */
     this.lastClick = { key: '', at: 0 };
-    /** @type {string | undefined} the agent in the details, as onFocus was last told */
+    /** @type {string | undefined} the selected agent, as onFocus was last told */
     this.told = undefined;
     /** the screen's height as last drawn, for the keys that move by pages */
     this.height = 24;
   }
 
-  /** The key of the agent in the details, if they are shown. */
+  /** The key of the selected agent, in the list or in its details. */
   get focus() {
-    return this.ui.view === 'detail' ? this.ui.selected : undefined;
+    return this.ui.selected;
   }
 
   /** Whether a row on screen is at work, so that it is worth drawing often. */
@@ -83,7 +84,9 @@ export class Viewer {
       ui.view = 'list';
       this.tell();
     }
+    // The rows that came or went can move the selection.
     settleSelection(ui, this.rows, screen.height - 3);
+    this.tell();
     return listLines(snap, this.rows, ui, screen, t, this.hits);
   }
 
@@ -109,7 +112,7 @@ export class Viewer {
     return done;
   }
 
-  /** Tells onFocus of the agent in the details, when that changed. */
+  /** Tells onFocus of the selected agent, when that changed. */
   tell() {
     const key = this.focus;
     if (key === this.told) return;
@@ -182,9 +185,9 @@ export class Viewer {
 
   /**
    * A click on a row selects it, and a second one soon after opens it; one below the rows selects
-   * none; one on a column's title sorts by it, one on a key presses it, one on an agent in the
-   * details opens that agent, and one on the help goes back. The wheel moves the selection, or
-   * scrolls the activity in the details, or the help.
+   * none, but on an agent the panel there names, which it opens, as one on an agent in the details
+   * does; one on a column's title sorts by it, one on a key presses it, and one on the help goes
+   * back. The wheel moves the selection, or scrolls the activity in the details, or the help.
    * @param {Mouse} m
    * @returns {'quit' | undefined}
    */
@@ -215,7 +218,7 @@ export class Viewer {
       return;
     }
     if ('open' in action) {
-      Object.assign(ui, { selected: action.open, logScroll: 0 });
+      Object.assign(ui, { view: 'detail', selected: action.open, logScroll: 0 });
       this.detail = undefined;
       return;
     }

@@ -5,7 +5,8 @@
 // its percent dropped before, and the session's five hours after its window began, on the
 // 10-minute mark at or before its first use, where its percent began to rise. The percents are
 // carried on from the latest sample to now with what this computer's replies used since
-// (src/ledger.js), at as many points for so much as the samples rose by with them lately.
+// (src/ledger.js), at as many points for so much as the samples rose by with them lately; and the
+// session's pace with the last hour's.
 import { join } from 'node:path';
 import { JsonFiles } from './files.js';
 
@@ -32,6 +33,8 @@ const WEEK_RISES = { points: 20, within: WEEK, least: 5 };
  * resets it on one: every reset its limit errors in the transcripts named was (quotaLimits).
  */
 const MARK = 10 * MINUTE;
+/** A session's pace is the last hour's, when the replies are known for so long of it at least. */
+const PACE_LEAST = 15 * MINUTE;
 
 /**
  * @typedef {object} Usage the app's latest sample, and when the limits it measures reset
@@ -49,6 +52,8 @@ const MARK = 10 * MINUTE;
  * @property {number} at the time they are for (ms)
  * @property {number} [session]
  * @property {Reset} [sessionReset] the end of the window the replies began
+ * @property {number} [sessionPace] the session's points an hour, at the pace of the last hour's
+ *   replies (of the part of it they are known for)
  * @property {number} [week]
  * @property {Reset} [weekReset]
  */
@@ -292,9 +297,10 @@ export function repliesSince(p, now) {
  * as many points for so much use as the latest rises of the samples came to (each between two
  * samples close together, after the time the replies are known from). The session's: what its
  * window used since the sample when the sample was in that window too, else all its window used,
- * and 0 with no window; the windows those the replies began. The week's: what it used since the
- * sample, or since its reset when one came between, and only with that reset known. Each one only
- * where its rises come to enough points; undefined when neither does.
+ * and 0 with no window; the windows those the replies began; and in a window its pace, the points
+ * the last hour's replies came to, in whatever window they were, as an hour's worth. The week's:
+ * what it used since the sample, or since its reset when one came between, and only with that
+ * reset known. Each one only where its rises come to enough points; undefined when neither does.
  * @param {Points} p
  * @param {import('./ledger.js').Replies} replies
  * @param {number} now
@@ -336,6 +342,8 @@ export function track(p, { from, replies }, now, weekAt) {
       out.session = Math.min(100, Math.round(v));
       const end = w + SESSION;
       out.sessionReset = { at: end, from: end, to: end };
+      const since = Math.max(now - HOUR, from);
+      if (now - since >= PACE_LEAST) out.sessionPace = (a * used(since, now) * HOUR) / (now - since);
     }
   }
   const last = p.week.at(-1);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { timeOfDay, weekday, width } from '../src/format.js';
+import { clock, fit, timeOfDay, weekday, width } from '../src/format.js';
 import { columns, detailLines, helpLines, initialUi, listLines, makeTheme, settleSelection, table, visibleRows, wrapStyled } from '../src/view.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE, NOW } from './helpers/fixture.js';
@@ -440,9 +440,14 @@ test('where a click goes in the list: a row selects it, the space below the rows
   const lines = listLines(snap, rows, ui, { width: 160, height: 20, now: NOW }, plain, hits);
   assert.deepEqual(clickAt(hits, 10, 3), { select: rows[1].agent.key });
   assert.deepEqual(clickAt(hits, 150, 2 + rows.length - 1), { select: rows[rows.length - 1].agent.key });
-  // Below the last row, as wide as the screen and down to the keys: none.
-  for (let y = 2 + rows.length; y < 19; y++) {
-    for (const x of [0, 10, 159]) assert.deepEqual(clickAt(hits, x, y), { unselect: true }, `${x}, ${y}`);
+  // Below the last row, as wide as the screen and down to the keys: none, but on the selected
+  // session shown there, which opens it.
+  const below = 2 + rows.length;
+  assert.match(lines[below + 1], /^ ─ ◆ alpha · Waiting session ─+ waiting · 10m00s ─ $/);
+  assert.match(lines[below + 2], /^ Waiting {4}permission: Bash {2}\(10m00s\) +$/);
+  for (let y = below; y < 19; y++) {
+    const action = y === below + 1 || y === below + 2 ? { open: 's:wait' } : { unselect: true };
+    for (const x of [0, 10, 159]) assert.deepEqual(clickAt(hits, x, y), action, `${x}, ${y}`);
   }
   for (const [title, sort] of [['NAME', 'name'], ['PROJECT', 'project'], ['ACTIVITY', 'status'], ['LAST', 'recent']]) {
     assert.deepEqual(clickAt(hits, lines[1].indexOf(title) + 1, 1), { sort }, title);
@@ -682,9 +687,9 @@ test('the activity log shows the newest events, and scrolls back', () => {
 });
 
 test('the help fills the screen, the keys that scroll it on its last line, one column short', () => {
-  const lines = helpLines(initialUi(), { width: 90, height: 45, now: NOW }, plain, '/home/me/.claude');
-  assert.equal(lines.length, 45);
-  assert.match(lines.join('\n'), /Keys[\s\S]*States[\s\S]*Columns[\s\S]*Reading \/home\/me\/\.claude/);
+  const lines = helpLines(initialUi(), { width: 90, height: 64, now: NOW }, plain, '/home/me/.claude');
+  assert.equal(lines.length, 64);
+  assert.match(lines.join('\n'), /Keys[\s\S]*States[\s\S]*Usage[\s\S]*Columns[\s\S]*Below the list[\s\S]*Reading \/home\/me\/\.claude/);
   // What a state means from the column a key's does.
   assert.match(lines.join('\n'), /◇ blocked {5}its turn ended on something only you can do/);
   assert.match(lines.join('\n'), /◐ tool {8}it waits on a tool call it made/);
@@ -694,14 +699,17 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   assert.match(lines.join('\n'), /ACTIVITY {6}what it is doing, with how many of its tasks are done \(4\/8\) and how *\n {17}long the current step has taken/);
   assert.match(lines.join('\n'), /click {9}select a row, or none below the rows; double-click for its details/);
   assert.match(lines.join('\n'), /~34% {10}that sample carried on to now with what this computer's sessions used *\n {17}since: an estimate, blind to use elsewhere/);
-  assert.match(lines.join('\n'), /resets {8}about when that limit resets: the week's at the same time each week, *\n {17}the session's five hours after its first use/);
+  assert.match(lines.join('\n'), /resets {8}about when that limit resets: the week's at the same time each week, *\n {17}the session's five hours after its window began, on the 10-minute mark *\n {17}at or before its first use/);
+  assert.match(lines.join('\n'), /Usage {9}each limit as a bar of what is used, │ where its time has gone to; when *\n/);
+  assert.match(lines.join('\n'), /\+12%\/h {8}the session's pace, the last hour's, as this computer's replies tell it/);
+  assert.match(lines.join('\n'), /click {9}on a session or an agent there opens its details; anywhere else selects/);
   assert.match(lines.join('\n'), /↑↓ pgup pgdn home end and the wheel scroll; any other key or a click goes back\./);
-  const off = helpLines(initialUi(), { width: 90, height: 45, now: NOW }, plain, '/x', false).join('\n');
+  const off = helpLines(initialUi(), { width: 90, height: 64, now: NOW }, plain, '/x', false).join('\n');
   assert.doesNotMatch(off, /click|wheel/, 'not with the mouse off');
   assert.match(off, /↑↓ pgup pgdn home end scroll; any other key goes back\./);
   lines.slice(0, -1).forEach((l) => assert.equal(visible(l), 90, l));
   // All of it fits: no telling how far down it is.
-  assert.equal(lines[44], ` esc back  ↑↓ scroll  home/end${' '.repeat(59)}`);
+  assert.equal(lines[63], ` esc back  ↑↓ scroll  home/end${' '.repeat(59)}`);
   assert.equal(helpLines(initialUi(), { width: 90, height: 10, now: NOW }, plain, '/x').length, 10);
 });
 
@@ -771,6 +779,186 @@ test('a styled line wrapped: at its spaces, under an indent, its styles closed a
   assert.deepEqual(wrapStyled('', 10), ['']);
 });
 
+/** Sessions with something to show below the list: one at work on a task list, one waiting, one unread, one idle. */
+function panelSessions() {
+  return [
+    agent({
+      key: 's:busy', title: 'Busy session', state: 'working', project: 'demo', lastActive: NOW - 20_000,
+      activity: 'Edit: src/view.js', activityKind: 'tool', activityAt: NOW - 20_000, plan: planOf(7, 3),
+      events: [
+        { ts: NOW - 30 * MINUTE, kind: 'prompt', text: 'add the panel' },
+        { ts: NOW - 29 * MINUTE, kind: 'reply', text: 'I will add all four.' },
+        { ts: NOW - 20_000, kind: 'tool', text: 'Edit: src/view.js' },
+      ],
+    }),
+    agent({
+      key: 's:wait', title: 'Waiting session', state: 'waiting', project: 'alpha', lastActive: NOW - 10 * MINUTE,
+      activity: 'waiting: a question: which database should the login use?', activityKind: 'waiting', activityAt: NOW - 10 * MINUTE,
+      events: [{ ts: NOW - 12 * MINUTE, kind: 'prompt', text: 'fix the login' }],
+    }),
+    agent({
+      key: 's:new', title: 'Unread session', state: 'idle', unread: true, project: 'beta', lastActive: NOW - 3 * MINUTE,
+      activity: 'The README is done.', activityKind: 'reply', events: [{ ts: NOW - 3 * MINUTE, kind: 'reply', text: 'The README is done.' }],
+    }),
+    agent({ key: 's:idle', title: 'Idle session', state: 'idle', project: 'zeta', lastActive: NOW - HOUR }),
+  ];
+}
+
+/** The usage carried on: the session at 50% with an hour left, at 60 points an hour; the week at 41%, five days in. */
+const PANEL_USAGE = {
+  at: NOW - 10 * MINUTE, session: 30, week: 40,
+  tracked: {
+    at: NOW, session: 50, sessionReset: { at: NOW + HOUR, from: NOW + HOUR, to: NOW + HOUR }, sessionPace: 60,
+    week: 41, weekReset: { at: NOW + 48 * HOUR, from: NOW + 48 * HOUR, to: NOW + 48 * HOUR },
+  },
+};
+
+/**
+ * The list of the panel's sessions, with the hits, at a size.
+ * @param {number} cols @param {number} height @param {Partial<import('../src/view.js').Ui>} [o]
+ * @param {ReturnType<typeof makeTheme>} [t] @param {import('../src/usage.js').Usage} [usage]
+ */
+function panelList(cols, height, o = {}, t = plain, usage = PANEL_USAGE) {
+  const snap = snapshot(panelSessions(), { usage });
+  const ui = { ...initialUi(), ...o };
+  const rows = visibleRows(snap, ui, t);
+  settleSelection(ui, rows, height - 3);
+  /** @type {import('../src/view.js').Hit[]} */
+  const hits = [];
+  return { rows, hits, lines: listLines(snap, rows, ui, { width: cols, height, now: NOW }, t, hits) };
+}
+
+test('below the rows, where there is room: the selected session, the others that need you, what was said, and the usage at the bottom', () => {
+  const { rows, hits, lines } = panelList(120, 40);
+  assert.deepEqual(rows.map((r) => r.agent.key), ['s:wait', 's:new', 's:busy', 's:idle']);
+  const text = lines.map((l) => l.trimEnd());
+  /** The time `m` minutes ago, as an event says it, in `w` columns. @param {number} m @param {number} w */
+  const at = (m, w) => fit(clock(NOW - m * MINUTE, NOW), w);
+  assert.equal(text[6], '', 'a line between');
+  assert.match(text[7], /^ ─ ◆ alpha · Waiting session ─+ waiting · 10m00s ─$/);
+  assert.match(text[8], /^ Waiting {4}a question: which database should the login use\? {2}\(10m00s\)$/);
+  assert.equal(text[9], ` ${at(12, 12)} you    fix the login`);
+  assert.match(text[10], /^ ─ Needs you ─+$/);
+  assert.equal(text[11], ' • beta · Unread session  3m  The README is done.');
+  assert.match(text[12], /^ ─ Activity ─+$/);
+  // As wide as the widest time: a day's, else another day's.
+  const tw = [30, 29, 12, 3].some((m) => clock(NOW - m * MINUTE, NOW).length > 8) ? 12 : 8;
+  assert.deepEqual(text.slice(13, 17), [
+    ` ${at(30, tw)} ${fit('demo', 16)} you    add the panel`,
+    ` ${at(29, tw)} ${fit('demo', 16)} claude I will add all four.`,
+    ` ${at(12, tw)} ${fit('alpha', 16)} you    fix the login`,
+    ` ${at(3, tw)} ${fit('beta', 16)} claude The README is done.`,
+  ], 'the newest last, without the tool calls');
+  assert.deepEqual(text.slice(17, 36), Array(19).fill(''));
+  assert.match(text[36], /^ ─ Usage ─+$/);
+  // A bar of 24: half of it used, the mark four-fifths along, as an hour of five is left.
+  assert.equal(text[37], ` session ${'█'.repeat(12)}${'░'.repeat(7)}│${'░'.repeat(4)}  ~50%  resets ${timeOfDay(NOW + HOUR)} in 1h00m · +60%/h: 100% at ${timeOfDay(NOW + 50 * MINUTE)}, 10m before`);
+  assert.equal(text[38], ` week    ${'█'.repeat(10)}${'░'.repeat(7)}│${'░'.repeat(6)}  ~41%  resets ${weekday(NOW + 48 * HOUR)} ${timeOfDay(NOW + 48 * HOUR)} in 2d00h · +8%/d: about 57% by then`);
+  assert.match(text[39], /^ ↑↓ move/);
+  // A click on a session opens it; anywhere else, none is selected.
+  for (const [y, action] of /** @type {[number, object][]} */ ([
+    [6, { unselect: true }], [7, { open: 's:wait' }], [9, { open: 's:wait' }], [10, { unselect: true }], [11, { open: 's:new' }],
+    [12, { unselect: true }], [13, { open: 's:busy' }], [15, { open: 's:wait' }], [16, { open: 's:new' }], [20, { unselect: true }], [37, { unselect: true }],
+  ])) assert.deepEqual(clickAt(hits, 30, y), action, `line ${y}`);
+  lines.slice(0, -1).forEach((l, i) => assert.equal(visible(l), 120, `line ${i}: ${l}`));
+  // In color: what reaches 100% before the reset in yellow, the bar's used part as its percent is.
+  const color = makeTheme({ color: true, ascii: false, animate: false });
+  const colored = panelList(120, 40, {}, color, { ...PANEL_USAGE, tracked: { ...PANEL_USAGE.tracked, session: 80 } }).lines;
+  const session = colored.find((l) => l.includes('session') && l.includes('█')) ?? '';
+  assert.ok(session.includes(`\x1b[33m${'█'.repeat(19)}\x1b[0m\x1b[1m│\x1b[0m`), JSON.stringify(session));
+  assert.ok(session.includes(`\x1b[33m+60%/h: 100% at ${timeOfDay(NOW + 20 * MINUTE)}, 40m before\x1b[0m`), JSON.stringify(session));
+});
+
+test('with less room below the rows, what was said goes first, then what needs you, then the selected session; the usage last', () => {
+  /** The panel's sections at a height. @param {number} height */
+  const sections = (height) => panelList(120, height).lines.flatMap((l) => /^ ─ (.+?) ─/.exec(l)?.[1] ?? []);
+  const preview = '◆ alpha · Waiting session';
+  assert.deepEqual(sections(21), [preview, 'Needs you', 'Activity', 'Usage']);
+  const tight = panelList(120, 20).lines.map((l) => l.trimEnd());
+  assert.ok(!tight.some((l) => l.endsWith('add the panel')) && tight.some((l) => l.endsWith('claude The README is done.')), 'what was said: the newest that fit');
+  assert.deepEqual(sections(16), [preview, 'Needs you', 'Usage']);
+  assert.deepEqual(sections(14), [preview, 'Usage']);
+  assert.deepEqual(sections(12), ['Usage']);
+  assert.deepEqual(sections(10), [preview], 'no room for the usage: the selected session has it');
+  assert.deepEqual(sections(8), []);
+  // More rows than room: none of it.
+  assert.deepEqual(sections(6), []);
+  // With none selected, the session that waits is with the others that need you.
+  const none = panelList(120, 40, { index: -1 }).lines.map((l) => l.trimEnd());
+  assert.deepEqual(none.flatMap((l) => /^ ─ (.+?) ─/.exec(l)?.[1] ?? []), ['Needs you', 'Activity', 'Usage']);
+  assert.deepEqual(none.slice(8, 10), [
+    ' ◆ alpha · Waiting session  10m  a question: which database should the login use?',
+    ' • beta · Unread session  3m  The README is done.',
+  ]);
+});
+
+test('below the rows on a phone: what needs you in two lines at most, the usage without its bar; what you are to do for a blocked session', () => {
+  const snap = snapshot([
+    ...panelSessions(),
+    blockedSession({ key: 's:blk', title: 'Blocked session', project: 'theta', lastActive: NOW - 30 * MINUTE }),
+    agent({
+      key: 's:long', title: 'Long question', state: 'waiting', project: 'kappa', lastActive: NOW - 5 * MINUTE,
+      activity: `waiting: a question: ${'which one of these should it be, '.repeat(4)}`, activityKind: 'waiting', activityAt: NOW - 5 * MINUTE,
+    }),
+  ], { usage: PANEL_USAGE });
+  const ui = { ...initialUi(), selected: 's:idle' };
+  const rows = visibleRows(snap, ui, plain);
+  settleSelection(ui, rows, 37);
+  const lines = listLines(snap, rows, ui, { width: 43, height: 40, now: NOW }, plain);
+  const text = lines.map((l) => l.trimEnd());
+  const needs = text.findIndex((l) => l.startsWith(' ─ Needs you'));
+  assert.deepEqual(text.slice(needs + 1, needs + 9), [
+    ' ◆ kappa · Long question  5m  a question:',
+    '   which one of these should it be, which …',
+    ' ◆ alpha · Waiting session  10m  a',
+    '   question: which database should the …',
+    ' ◇ theta · Blocked session  30m  say',
+    '   whether the stutter was picture or sound',
+    ' • beta · Unread session  3m  The README is',
+    '   done.',
+  ]);
+  // A time stays with what it goes with.
+  const usage = text.findIndex((l) => l.startsWith(' ─ Usage'));
+  assert.deepEqual(text.slice(usage + 1), [
+    ` session  ~50%  resets ${timeOfDay(NOW + HOUR)} in 1h00m ·`,
+    `                +60%/h: 100% at ${timeOfDay(NOW + 50 * MINUTE)},`,
+    '                10m before',
+    ` week     ~41%  resets ${weekday(NOW + 48 * HOUR)} ${timeOfDay(NOW + 48 * HOUR)} in 2d00h ·`,
+    '                +8%/d: about 57% by then',
+    text.at(-1),
+  ]);
+  lines.slice(0, -1).forEach((l, i) => assert.equal(visible(l), 43, `line ${i}: ${l}`));
+});
+
+test('the selected agent below the rows: its task list, the commands it left running, a workflow\'s agents', () => {
+  const tool = agent({
+    key: 's:t', title: 'Tool session', state: 'idle', project: 'demo', activity: 'Done for now.', activityKind: 'reply',
+    plan: planOf(5, 2), commands: [{ summary: 'Bash: Serve the site', ts: NOW - 10 * MINUTE }, { summary: 'Bash: Watch the tests', ts: NOW - 4 * MINUTE }],
+    events: [{ ts: NOW - 2 * MINUTE, kind: 'reply', text: 'Done for now.' }],
+  });
+  const flow = agent({ key: 'w:1', type: 'workflow', title: 'review-changes', state: 'running', phase: 'Review', counts: { total: 4, running: 1, done: 2, failed: 1 } });
+  tool.children = [flow];
+  const snap = snapshot([tool]);
+  /** The panel with the agent with this key selected. @param {string} selected */
+  const panel = (selected) => {
+    const ui = { ...initialUi(), selected };
+    const rows = visibleRows(snap, ui, plain);
+    settleSelection(ui, rows, 21);
+    return listLines(snap, rows, ui, { width: 100, height: 24, now: NOW }, plain).map((l) => l.trimEnd()).slice(2 + rows.length);
+  };
+  assert.deepEqual(panel('s:t').slice(1, 6).map((l) => l.replace(/─{3,}/, '──')), [
+    ' ─ ◎ demo · Tool session ── background ─',
+    ' Last       Done for now.',
+    ' Background Bash: Watch the tests  (4m00s)  and 1 more',
+    ' Tasks      2/5  ▸ step 3',
+    ` ${fit(clock(NOW - 2 * MINUTE, NOW), 12)} claude Done for now.`,
+  ]);
+  assert.deepEqual(panel('w:1').slice(1, 3).map((l) => l.replace(/─{3,}/, '──')), [
+    ' ─ ● Review · review-changes ── running ─',
+    ' Agents     4 in all · 1 running · 2 done · 1 failed',
+  ]);
+});
+
 test('with --ascii, nothing but ASCII is drawn', () => {
   const ascii = makeTheme({ color: false, ascii: true, animate: true });
   const busy = busySession();
@@ -799,6 +987,8 @@ test('with --ascii, nothing but ASCII is drawn', () => {
     detailLines(blocked, snap, ui, { width: 120, height: 20, now: NOW }, ascii),
     helpLines(initialUi(), { width: 120, height: 30, now: NOW }, ascii, '/home/me/.claude'),
     helpLines(initialUi(), { width: 43, height: 80, now: NOW }, ascii, '/home/me/.claude'),
+    panelList(120, 40, {}, ascii).lines,
+    panelList(43, 40, {}, ascii).lines,
     table(snap, { width: 120, now: NOW, agents: 'all', showEnded: true }, ascii).split('\n'),
   ];
   for (const line of screens.flat()) assert.match(line, /^[\x20-\x7e]*$/, line);

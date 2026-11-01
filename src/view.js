@@ -42,6 +42,8 @@ import { ago, bytes, clock, durationLabel, elapsed, fit, graphemes, shortModel, 
  *   the rows), open this agent's details, sort, or press a key
  * @typedef {{ y: number, x0: number, x1: number, action: Action }} Hit a place a click acts on:
  *   line y, from column x0 up to x1
+ * @typedef {{ text: string, action: Action }} PanelLine a line below the list's rows, and what a
+ *   click on it does
  */
 
 /** The sort a click on a column's title picks. */
@@ -98,6 +100,8 @@ export function makeTheme({ color, ascii, animate = true, web = false, quit = we
     /** a task list's steps */
     steps: ascii ? { completed: '+', in_progress: '>', pending: '-' } : { completed: '✓', in_progress: '▸', pending: '○' },
     tree: ascii ? { mid: '|- ', last: '`- ', pipe: '|  ', none: '   ' } : { mid: '├─ ', last: '└─ ', pipe: '│  ', none: '   ' },
+    /** a usage bar's cells: used, not used, and the mark of how much of its time has gone */
+    bar: ascii ? { full: '#', empty: '.', mark: '|' } : { full: '█', empty: '░', mark: '│' },
     arrows: ascii ? 'up/down' : '↑↓',
     enter: ascii ? 'enter' : '⏎',
     /** a styled line cut or padded to a width */
@@ -426,18 +430,64 @@ function counts(snap, t) {
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+/** The session's limit is for five hours. */
+const SESSION = 5 * HOUR;
 /** The desktop app samples the usage about every 15 minutes: one older than this is not fresh. */
 const USAGE_FRESH = 45 * MINUTE;
+
+/**
+ * @typedef {object} Limit the session's limit or the week's, as shown
+ * @property {number} v the percent used
+ * @property {boolean} near carried on to now with this computer's replies, not sampled
+ * @property {import('./usage.js').Reset} [reset] when it resets
+ * @property {number} [pace] the session's points an hour, at the pace of the last hour's replies
+ */
+
+/**
+ * The session's limit and the week's as shown: carried on to now with this computer's replies
+ * where they tell how, else as the desktop app last sampled it, till it surely reset since:
+ * without a reset known, the session's after five hours and the week's after seven days.
+ * @param {import('./usage.js').Usage} u
+ * @param {number} now
+ * @returns {{ session?: Limit, week?: Limit }}
+ */
+function limitsOf(u, now) {
+  const k = u.tracked;
+  const s = u.sessionReset;
+  const w = u.weekReset;
+  return {
+    session: k?.session !== undefined ? { v: k.session, near: true, reset: k.sessionReset, pace: k.sessionPace }
+      : u.session !== undefined && now < (s ? s.to : u.at + SESSION) ? { v: u.session, near: false, reset: s }
+        : undefined,
+    week: k?.week !== undefined ? { v: k.week, near: true, reset: k.weekReset }
+      : u.week !== undefined && now < (w ? w.to : u.at + WEEK) ? { v: u.week, near: false, reset: w }
+        : undefined,
+  };
+}
+
+/**
+ * Text about a limit used `n` percent: yellow from 75 and red from 90.
+ * @param {number} n
+ * @param {string} s
+ * @param {Theme} t
+ */
+const levelOf = (n, s, t) => (n >= 90 ? t.red(s) : n >= 75 ? t.yellow(s) : s);
+
+/**
+ * When the session's limit resets, to five minutes, where it is known within half an hour.
+ * @param {import('./usage.js').Reset | undefined} r
+ */
+const sessionEnd = (r) => (r && r.to - r.from <= 30 * MINUTE ? Math.round(r.at / (5 * MINUTE)) * 5 * MINUTE : undefined);
 
 /**
  * The plan's usage in the header: how much of the session's limit and of the week's is used,
  * yellow from 75% and red from 90%, each with when it resets where that is known closely enough.
  * As carried on to now with this computer's replies (`~34%`) where they tell how, else as the
- * desktop app last sampled it, with how long ago once that is no longer fresh. The session's reset
- * is shown when known within half an hour, to five minutes; the week's to the minute when known
- * within an hour and less than a day off, else by its day when known within half a day. A sampled
- * percent goes once it has surely reset since: without a reset known, the session's after five
- * hours and the week's after seven days.
+ * desktop app last sampled it, with how long ago once that is no longer fresh (limitsOf). The
+ * session's reset is shown when known within half an hour, to five minutes; the week's to the
+ * minute when known within an hour and less than a day off, else by its day when known within
+ * half a day.
  * @param {import('./usage.js').Usage | undefined} u
  * @param {number} now
  * @param {Theme} t
@@ -446,33 +496,25 @@ const USAGE_FRESH = 45 * MINUTE;
 export function usageParts(u, now, t) {
   if (!u) return [];
   const age = Math.max(0, now - u.at);
-  /** @param {number} n @param {boolean} near carried on, not sampled */
-  const level = (n, near) => {
-    const s = `${near ? '~' : ''}${n}%`;
-    return n >= 90 ? t.red(s) : n >= 75 ? t.yellow(s) : s;
-  };
   /** @type {Part[]} */
   const parts = [];
   let sampled = false;
-  /** @param {string} label @param {number} n @param {boolean} near @param {string | false | undefined} resets */
-  const add = (label, n, near, resets) => {
+  /** @param {string} label @param {Limit} l @param {string | false | undefined} resets */
+  const add = (label, { v, near }, resets) => {
     /** @type {Part} */
-    const part = [`${t.dim(label)} ${level(n, near)}`, 6];
+    const part = [`${t.dim(label)} ${levelOf(v, `${near ? '~' : ''}${v}%`, t)}`, 6];
     parts.push(part);
     if (resets) parts.push([`${t.dim('resets')} ${resets}`, 4, part]);
     if (!near) sampled = true;
   };
   /** @param {import('./usage.js').Reset | undefined} r */
-  const sessionAt = (r) => r && r.to - r.from <= 30 * MINUTE && timeOfDay(Math.round(r.at / (5 * MINUTE)) * 5 * MINUTE);
-  /** @param {import('./usage.js').Reset | undefined} r */
   const weekAt = (r) => r && (r.to - r.from <= HOUR && r.at - now < DAY ? timeOfDay(r.at) : r.to - r.from <= 12 * HOUR && weekday(r.at));
-  const k = u.tracked;
-  const s = u.sessionReset;
-  if (k?.session !== undefined) add('session', k.session, true, sessionAt(k.sessionReset));
-  else if (u.session !== undefined && now < (s ? s.to : u.at + 5 * HOUR)) add('session', u.session, false, sessionAt(s));
-  const w = u.weekReset;
-  if (k?.week !== undefined) add('week', k.week, true, weekAt(k.weekReset));
-  else if (u.week !== undefined && now < (w ? w.to : u.at + 7 * DAY)) add('week', u.week, false, weekAt(w));
+  const { session, week } = limitsOf(u, now);
+  if (session) {
+    const end = sessionEnd(session.reset);
+    add('session', session, end !== undefined && timeOfDay(end));
+  }
+  if (week) add('week', week, weekAt(week.reset));
   if (sampled && age >= USAGE_FRESH) parts.push([t.dim(`${ago(age)} ago`), 6]);
   return parts;
 }
@@ -634,7 +676,8 @@ export function wrapStyled(s, cols, indent = 0) {
 }
 
 /**
- * The list view: header, column titles, the rows, and the footer.
+ * The list view: header, column titles, the rows, below them what fits of panelLines, and the
+ * footer.
  * @param {Snapshot} snap
  * @param {Row[]} rows
  * @param {Ui} ui
@@ -654,30 +697,316 @@ export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits 
     x += c.width + 1;
   }
   const body = Math.max(0, height - 3);
+  // The rows, or why there are none; the room below them is the panel's.
+  const listed = rows.length ? Math.max(0, Math.min(body, rows.length - ui.top)) : Math.min(body, 2);
   if (rows.length === 0) {
     const why = !snap.found
       ? `No Claude Code sessions found in ${snap.dir}.`
       : ui.filter
         ? `Nothing matches "${ui.filter}".`
         : `No Claude agents running or active in the last ${durationLabel(snap.windowMs)}.`;
-    for (let i = 0; i < body; i++) lines.push(i === 1 ? t.pad(`   ${t.dim(why)}`, cols) : ' '.repeat(cols));
+    for (let i = 0; i < listed; i++) lines.push(i === 1 ? t.pad(`   ${t.dim(why)}`, cols) : ' '.repeat(cols));
   }
-  for (let i = 0; i < body && rows.length; i++) {
+  for (let i = 0; i < listed && rows.length; i++) {
     const row = rows[ui.top + i];
-    if (!row) {
-      lines.push(' '.repeat(cols));
-      hits.push({ y: lines.length - 1, x0: 0, x1: cols, action: { unselect: true } });
-      continue;
-    }
     const selected = ui.index === ui.top + i;
     const text = rowText(row, cs, t, now, selected && t.color);
     lines.push(selected && t.color ? t.inverse(t.pad(text, cols)) : t.pad(selected ? `>${text.slice(1)}` : text, cols));
     hits.push({ y: lines.length - 1, x0: 0, x1: cols, action: { select: row.agent.key } });
   }
+  for (const p of panelLines(snap, rows, ui, { width: cols, height: body - listed, now }, t)) {
+    lines.push(p.text);
+    hits.push({ y: lines.length - 1, x0: 0, x1: cols, action: p.action });
+  }
   // The last line leaves the last column alone: writing there can scroll some terminals.
   const y = lines.length;
   lines.push(footer(ui, rows, t, cols - 1, now, (hit) => hits.push({ ...hit, y })));
   return lines.slice(0, height);
+}
+
+/** The most lines the selected agent takes below the list. */
+const PREVIEW_LINES = 8;
+
+/**
+ * What goes in the room below the list's rows, in `height` lines: the selected agent, the other
+ * sessions that need you, the latest of what was said in the sessions listed, and at the bottom
+ * the plan's usage; each where room is left for it, given first to the usage, then to the
+ * selected agent, then to what needs you, and what was said taking the rest. A click on an agent
+ * there opens its details; one anywhere else selects none, as it does in the space below the
+ * rows, which keeps a line of its own.
+ * @param {Snapshot} snap
+ * @param {Row[]} rows
+ * @param {Ui} ui
+ * @param {Screen} screen
+ * @param {Theme} t
+ * @returns {PanelLine[]}
+ */
+function panelLines(snap, rows, ui, { width: cols, height, now }, t) {
+  if (height <= 0) return [];
+  /** @type {Action} */
+  const none = { unselect: true };
+  /** @param {string[]} lines @param {Action} action @returns {PanelLine[]} */
+  const as = (lines, action) => lines.map((text) => ({ text, action }));
+  const blank = ' '.repeat(cols);
+  let room = height - 1;
+  const pace = paceLines(snap.usage, cols, now, t);
+  const usage = pace.length && room >= pace.length + 1 ? [heading(t.bold('Usage'), '', cols, t), ...pace] : [];
+  room -= usage.length;
+  const a = ui.index >= 0 ? rows[ui.index]?.agent : undefined;
+  const preview = a && room >= 2 ? previewLines(a, Math.min(room, PREVIEW_LINES), cols, now, t) : [];
+  room -= preview.length;
+  const sessions = rows.filter((r) => r.depth === 0).map((r) => r.agent);
+  const items = needsItems(sessions, a?.key, cols, now, t);
+  /** @type {PanelLine[]} */
+  const needs = [];
+  let n = 0;
+  for (let used = 1; n < items.length && used + items[n].lines.length <= room; n++) used += items[n].lines.length;
+  if (n) {
+    needs.push({ text: heading(t.bold('Needs you'), n < items.length ? t.dim(`${n} of ${items.length}`) : '', cols, t), action: none });
+    for (const item of items.slice(0, n)) needs.push(...as(item.lines, { open: item.key }));
+    room -= needs.length;
+  }
+  const said = room >= 3 ? feedLines(sessions, room - 1, cols, now, t) : [];
+  /** @type {PanelLine[]} */
+  const feed = said.length ? [{ text: heading(t.bold('Activity'), '', cols, t), action: none }, ...said.map((s) => ({ text: s.text, action: { open: s.key } }))] : [];
+  room -= feed.length;
+  return [
+    { text: blank, action: none },
+    ...(a ? as(preview, { open: a.key }) : []),
+    ...needs,
+    ...feed,
+    ...as(Array.from({ length: room }, () => blank), none),
+    ...as(usage, none),
+  ];
+}
+
+/**
+ * A section's title on a rule across the line, with `right` at its end.
+ * @param {string} left styled
+ * @param {string} right styled
+ * @param {number} cols
+ * @param {Theme} t
+ */
+function heading(left, right, cols, t) {
+  const l = ` ${t.dim(t.rule)} ${left} `;
+  const r = right ? ` ${right} ${t.dim(t.rule)} ` : ' ';
+  const fill = cols - visibleWidth(l) - visibleWidth(r);
+  return fill > 0 ? l + t.dim(t.rule.repeat(fill)) + r : t.pad(l, cols);
+}
+
+/**
+ * A styled line wrapped to `cols` (wrapStyled), each line padded to them, in `most` lines at
+ * most: where it is cut, the last ends in an ellipsis.
+ * @param {string} s
+ * @param {number} cols
+ * @param {number} indent
+ * @param {number} most
+ * @param {Theme} t
+ */
+function wrapped(s, cols, indent, most, t) {
+  const lines = wrapStyled(s, cols, indent);
+  if (lines.length > most) {
+    lines.length = Math.max(0, most);
+    if (most > 0) lines[most - 1] = `${lines[most - 1].replace(/ +$/, '')} ${t.ellipsis}`;
+  }
+  return lines.map((l) => t.pad(l, cols));
+}
+
+/**
+ * How long till then, to the minute: '55m', '3h05m', '2d06h'.
+ * @param {number} ms
+ */
+const till = (ms) => (ms < HOUR ? `${Math.max(1, Math.round(ms / MINUTE))}m` : elapsed(ms));
+
+/**
+ * A bar `w` columns wide of a limit used `v` percent, colored as the percent is, and marked
+ * where its time has gone to, the fraction `gone` of it, where that is known.
+ * @param {number} v
+ * @param {number | undefined} gone
+ * @param {number} w
+ * @param {Theme} t
+ */
+function bar(v, gone, w, t) {
+  const used = Math.round((Math.max(0, Math.min(100, v)) / 100) * w);
+  const at = gone === undefined ? -1 : Math.max(0, Math.min(w - 1, Math.floor(gone * w)));
+  const kind = (/** @type {number} */ i) => (i === at ? 'mark' : i < used ? 'full' : 'empty');
+  let out = '';
+  for (let i = 0; i < w;) {
+    const k = kind(i);
+    let j = i + 1;
+    while (j < w && kind(j) === k) j++;
+    const run = t.bar[k].repeat(j - i);
+    out += k === 'full' ? levelOf(v, run, t) : k === 'empty' ? t.dim(run) : t.bold(run);
+    i = j;
+  }
+  return out;
+}
+
+/**
+ * The plan's usage below the list, a line for the session's limit and one for the week's, as the
+ * header shows them (limitsOf): a bar of how much is used, marked where its time has gone to;
+ * when it resets; and its pace, the session's the last hour's (as this computer's replies tell
+ * it), the week's since it reset: at that pace, when it reaches 100% where that comes before it
+ * resets, else about how much it comes to by then. On a narrow screen without the bar, and
+ * wrapped to three lines at most, a time kept with what it goes with.
+ * @param {import('./usage.js').Usage | undefined} u
+ * @param {number} cols
+ * @param {number} now
+ * @param {Theme} t
+ * @returns {string[]}
+ */
+function paceLines(u, cols, now, t) {
+  if (!u) return [];
+  const { session, week } = limitsOf(u, now);
+  const w = cols >= 100 ? 24 : cols >= 80 ? 16 : cols >= 64 ? 10 : 0;
+  // A no-break space (wrapStyled draws it as a space) keeps the words on either side together.
+  const nb = ' ';
+  const sep = t.dim(t.sep.replace(/^ /, nb));
+  /** @type {string[]} */
+  const lines = [];
+  /** @param {string} label @param {Limit} l @param {number | undefined} gone @param {string[]} said */
+  const line = (label, l, gone, said) => {
+    const head = ` ${t.dim(fit(label, 7))} ${w ? `${bar(l.v, gone, w, t)} ` : ''}${levelOf(l.v, fit(`${l.near ? '~' : ''}${l.v}%`, 5, 'right'), t)}  `;
+    lines.push(...wrapped(head + said.join(sep), cols, visibleWidth(head), 3, t));
+  };
+  /** When it resets, as said, and how soon. @param {string} at @param {number} end */
+  const resets = (at, end) => `${t.dim('resets')} ${at} ${t.dim(`in${nb}${till(Math.max(0, end - now))}`)}`;
+  /**
+   * At `pace` points a `unit`, when the limit reaches 100%, if before `end`, or how much it comes
+   * to by then. @param {Limit} l @param {number} pace @param {number} unit @param {string} per
+   * @param {number} end @param {(at: number) => string} when
+   */
+  const ahead = (l, pace, unit, per, end, when) => {
+    const rate = `+${Math.round(pace)}%/${per}`;
+    const full = pace > 0 ? now + ((100 - l.v) / pace) * unit : Infinity;
+    if (full < end) return t.yellow(`${rate}: 100% ${when(full)}, ${till(end - full)}${nb}before`);
+    return `${rate}${t.dim(':')} ${t.dim('about')}${nb}${Math.round(l.v + (pace * (end - now)) / unit)}%${nb}${t.dim(`by${nb}then`)}`;
+  };
+  if (session) {
+    const end = sessionEnd(session.reset);
+    /** @type {string[]} */
+    const said = [];
+    if (session.v >= 100) said.push(t.red('used up'));
+    if (end !== undefined) said.push(resets(timeOfDay(end), end));
+    if (session.pace !== undefined && session.v < 100) {
+      said.push(end === undefined ? `+${Math.round(session.pace)}%/h` : ahead(session, session.pace, HOUR, 'h', end, (at) => `at${nb}${timeOfDay(at)}`));
+    }
+    line('session', session, end === undefined ? undefined : 1 - (end - now) / SESSION, said);
+  }
+  if (week) {
+    const r = week.reset;
+    const end = r && r.to - r.from <= 12 * HOUR ? r.at : undefined;
+    /** @type {string[]} */
+    const said = [];
+    if (week.v >= 100) said.push(t.red('used up'));
+    if (end !== undefined) said.push(resets(r && r.to - r.from <= HOUR ? `${weekday(end)}${nb}${timeOfDay(end)}` : weekday(end), end));
+    // Its pace since it reset, once a day has gone.
+    const since = end === undefined ? 0 : now - (end - WEEK);
+    if (end !== undefined && since >= DAY && week.v < 100) {
+      said.push(ahead(week, (week.v / since) * DAY, DAY, 'd', end, (at) => `${weekday(at)}${nb}${timeOfDay(at)}`));
+    }
+    line('week', week, end === undefined ? undefined : since / WEEK, said);
+  }
+  return lines;
+}
+
+/**
+ * The selected agent below the list, in `room` lines at most: its state on the first, then what
+ * it is doing, waits for or did last, in full, the commands it left running, where its task list
+ * is, and its latest prompts and replies.
+ * @param {Agent} a
+ * @param {number} room
+ * @param {number} cols
+ * @param {number} now
+ * @param {Theme} t
+ * @returns {string[]}
+ */
+function previewLines(a, room, cols, now, t) {
+  const status = statusOf(a, now, t);
+  const place = placeOf(a);
+  const title = truncate(a.title, Math.max(10, cols - width(status) - width(place) - 16), t.ellipsis);
+  const head = heading(`${glyph(shown(a), t, now)} ${place ? t.dim(`${place}${t.sep}`) : ''}${t.bold(title)}`, t.dim(status), cols, t);
+  /** @type {string[]} */
+  const body = [];
+  doing(a, now).forEach(([label, value], i) => body.push(...wrapped(` ${t.dim(fit(label, 10))} ${value}`, cols, 12, i ? 2 : 3, t)));
+  const commands = a.commands ?? [];
+  const last = commands.at(-1);
+  if (last) {
+    const more = commands.length > 1 ? t.dim(`  and ${commands.length - 1} more`) : '';
+    body.push(t.pad(` ${t.dim(fit('Background', 10))} ${truncate(last.summary, Math.max(0, cols - 40), t.ellipsis)}  (${elapsed(now - last.ts)})${more}`, cols));
+  }
+  if (a.counts) {
+    const c = a.counts;
+    body.push(t.pad(` ${t.dim(fit('Agents', 10))} ${[`${c.total} in all`, `${c.running} running`, `${c.done} done`, c.failed && `${c.failed} failed`].filter(Boolean).join(t.sep)}`, cols));
+  }
+  if (a.plan) {
+    const steps = a.plan.steps;
+    const done = steps.filter((s) => s.status === 'completed').length;
+    const step = steps.find((s) => s.status === 'in_progress') ?? steps.find((s) => s.status === 'pending');
+    const what = !a.plan.current ? t.dim('in an earlier turn')
+      : step ? `${step.status === 'in_progress' ? t.green(t.steps.in_progress) : t.dim(t.steps.pending)} ${truncate(step.text, Math.max(0, cols - 22), t.ellipsis)}`
+        : t.dim('all done');
+    body.push(t.pad(` ${t.dim(fit('Tasks', 10))} ${done}/${steps.length}  ${what}`, cols));
+  }
+  const said = a.events.filter((e) => e.kind !== 'tool');
+  if (!body.length && !said.length) body.push(t.pad(t.dim(a.transcript ? '   none of its activity read yet' : '   no transcript'), cols));
+  const lines = body.slice(0, Math.max(0, room - 1));
+  const n = Math.min(3, said.length, room - 1 - lines.length);
+  return [head, ...lines, ...said.slice(said.length - Math.max(0, n)).map((e) => eventLine(e, cols, now, t))].slice(0, room);
+}
+
+/**
+ * The sessions listed that need you, but the selected one, those that wait or are blocked first:
+ * each with what it waits for, what you are to do, or the reply you have not read, in two lines
+ * at most.
+ * @param {Agent[]} sessions
+ * @param {string | undefined} selected its key
+ * @param {number} cols
+ * @param {number} now
+ * @param {Theme} t
+ * @returns {{ key: string, lines: string[] }[]}
+ */
+function needsItems(sessions, selected, cols, now, t) {
+  return sessions
+    .filter((a) => a.key !== selected && ['waiting', 'blocked', 'unread'].includes(shown(a)))
+    .sort(compare('status'))
+    .map((a) => {
+      const state = shown(a);
+      const since = state === 'waiting' && a.activityAt ? a.activityAt : a.lastActive;
+      const place = placeOf(a);
+      const title = truncate(a.title, Math.max(10, Math.floor(cols / 2)), t.ellipsis);
+      const what = a.activity.replace(/^(?:waiting|blocked): /, '');
+      const line = ` ${glyph(state, t, now)} ${place ? t.dim(`${place}${t.sep}`) : ''}${t.bold(title)}  ${t.dim(ago(now - since))}  ${what}`;
+      return { key: a.key, lines: wrapped(line, cols, 3, 2, t) };
+    });
+}
+
+/**
+ * The latest of what was said in the sessions listed, `n` at most, the newest last: their
+ * prompts, replies, errors and notes (not their tool calls), each with when, and the session's
+ * project.
+ * @param {Agent[]} sessions
+ * @param {number} n
+ * @param {number} cols
+ * @param {number} now
+ * @param {Theme} t
+ * @returns {{ key: string, text: string }[]}
+ */
+function feedLines(sessions, n, cols, now, t) {
+  if (n <= 0) return [];
+  const said = sessions
+    .flatMap((a) => a.events.filter((e) => e.kind !== 'tool').map((e) => ({ a, e })))
+    .sort((x, y) => x.e.ts - y.e.ts)
+    .slice(-n);
+  const tw = said.some(({ e }) => width(clock(e.ts, now)) > 8) ? 12 : 8;
+  const pw = cols >= 72 ? 16 : 10;
+  return said.map(({ a, e }) => {
+    const label = fit(EVENT_LABEL[e.kind] ?? e.kind, 6);
+    const text = truncate(e.text, Math.max(0, cols - tw - pw - 10), t.ellipsis);
+    const paint = e.kind === 'prompt' ? t.cyan : e.kind === 'error' ? t.red : (/** @type {string} */ s) => s;
+    const where = fit(placeOf(a) || a.title, pw, 'left', t.ellipsis);
+    return { key: a.key, text: t.pad(` ${t.dim(fit(clock(e.ts, now), tw))} ${where} ${paint(label)} ${e.kind === 'prompt' ? t.bold(text) : text}`, cols) };
+  });
 }
 
 /**
@@ -749,10 +1078,7 @@ function footer(ui, rows, t, cols, now, onHit) {
  */
 export function detailLines(a, snap, ui, { width: cols, height, now }, t, hits = []) {
   const lines = [];
-  // The category of the app's summary of the last turn, but for the usual one.
-  const turn = a.turn && a.turn.category !== 'completed' && a.turn.category.replace(/_/g, ' ');
-  const word = a.inTool ? 'in a tool' : waitsInBackground(a) ? 'background' : a.state;
-  const status = [word, turn, a.unread && 'unread', ongoing(a) && elapsed(now - a.activityAt)].filter(Boolean).join(t.sep);
+  const status = statusOf(a, now, t);
   lines.push(spread(` ${glyph(shown(a), t, now)} ${t.bold(truncate(a.title, Math.max(10, cols - width(status) - 6), t.ellipsis))}`, `${t.dim(status)} `, cols, t));
   lines.push(t.dim(t.rule.repeat(cols)));
 
@@ -805,6 +1131,42 @@ export function detailLines(a, snap, ui, { width: cols, height, now }, t, hits =
 }
 
 /**
+ * An agent's state, as its details and the panel below the list say it: in a tool or in the
+ * background where it is, the category of the app's summary of its last turn but for the usual
+ * one, unread, and how long the current step has taken.
+ * @param {Agent} a
+ * @param {number} now
+ * @param {Theme} t
+ */
+function statusOf(a, now, t) {
+  const turn = a.turn && a.turn.category !== 'completed' && a.turn.category.replace(/_/g, ' ');
+  const word = a.inTool ? 'in a tool' : waitsInBackground(a) ? 'background' : a.state;
+  return [word, turn, a.unread && 'unread', ongoing(a) && elapsed(now - a.activityAt)].filter(Boolean).join(t.sep);
+}
+
+/**
+ * What an agent is doing, waits for or did last, as [label, value]; and when its turn ended
+ * blocked on you, the desktop app's summary of it. An activity of the commands it left running is
+ * said where they are listed.
+ * @param {Agent} a
+ * @param {number} now
+ * @returns {[string, string][]}
+ */
+function doing(a, now) {
+  const waiting = a.state === 'waiting';
+  const blocked = a.activityKind === 'blocked';
+  /** @type {[string, string][]} */
+  const out = [];
+  if (a.activity && a.activityKind !== 'background') {
+    const label = waiting ? 'Waiting' : ongoing(a) ? 'Doing' : blocked ? 'Blocked' : a.unread ? 'Unread' : 'Last';
+    const text = waiting || blocked ? a.activity.replace(/^(?:waiting|blocked): /, '') : a.activity;
+    out.push([label, text + (ongoing(a) ? `  (${elapsed(now - a.activityAt)})` : '')]);
+  }
+  if (blocked && a.turn?.needs && a.turn.detail) out.push(['Summary', a.turn.detail]);
+  return out;
+}
+
+/**
  * A task list: how far it has come, and its steps in `room` lines below that: when they do not
  * all fit, from just before the first one not done, with a line for the steps above (all done)
  * and one for those below.
@@ -854,16 +1216,7 @@ function* fieldLines(a, now, t, cols) {
     value ? t.pad(` ${t.dim(fit(label, 10))} ${truncate(value, Math.max(0, cols - 13), t.ellipsis)}`, cols) : null;
   const when = (/** @type {number | undefined} */ ts) => (ts ? `${clock(ts, now)} (${ago(now - ts)} ago)` : undefined);
   const join = (/** @type {(string | false | undefined)[]} */ parts) => parts.filter(Boolean).join(t.sep) || undefined;
-  const waiting = a.state === 'waiting';
-  const blocked = a.activityKind === 'blocked';
-  // An activity of the background commands is said by the lines that list them.
-  const background = a.activityKind === 'background';
-  const lines = [
-    field(waiting ? 'Waiting' : ongoing(a) ? 'Doing' : blocked ? 'Blocked' : a.unread ? 'Unread' : 'Last', a.activity && !background
-      ? (waiting || blocked ? a.activity.replace(/^(?:waiting|blocked): /, '') : a.activity) + (ongoing(a) ? `  (${elapsed(now - a.activityAt)})` : '')
-      : undefined),
-    field('Summary', blocked && a.turn?.needs ? a.turn.detail : undefined),
-  ];
+  const lines = doing(a, now).map(([label, value]) => field(label, value));
   if (a.pending.length > 1) {
     for (const p of a.pending.slice(-5)) lines.push(field('', `${p.summary}  (${elapsed(now - p.ts)})`));
   }
@@ -982,13 +1335,22 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     ...key('session', "how much of the plan's limit for five hours is used"),
     ...key('week', `and of its limit for the week: the desktop app's latest sample, taken every 15 minutes or so while it runs; ${t.yellow('yellow')} from 75%, ${t.red('red')} from 90%`),
     ...key('~34%', "that sample carried on to now with what this computer's sessions used since: an estimate, blind to use elsewhere"),
-    ...key('resets', "about when that limit resets: the week's at the same time each week, the session's five hours after its first use"),
+    ...key('resets', "about when that limit resets: the week's at the same time each week, the session's five hours after its window began, on the 10-minute mark at or before its first use"),
     '',
     ` ${t.bold('Columns')}`,
     ...key('CTX', 'the context of the last reply, in tokens'),
     ...key('EFFORT', `the effort it works at, and a${nb}${t.magenta('+')} when ultracode is on`),
     ...key('LAST', 'how long ago it last did anything'),
     ...key('ACTIVITY', 'what it is doing, with how many of its tasks are done (4/8) and how long the current step has taken'),
+    '',
+    ` ${t.bold('Below the list')}${t.dim(', where there is room')}`,
+    ...key('selected', 'what the selected session or agent is doing, waits for or did last, its tasks, its latest messages'),
+    ...key('Needs you', 'the other sessions waiting on you, with what for, or the reply you have not read'),
+    ...key('Activity', 'the latest prompts, replies and errors of the sessions listed'),
+    ...key('Usage', `each limit as a bar of what is used, ${t.bar.mark}${nb}where its time has gone to; when it resets, and at its pace when it reaches 100%, if before then, or about how much it comes to`),
+    ...key('+12%/h', "the session's pace, the last hour's, as this computer's replies tell it"),
+    ...key('+7%/d', "the week's, since it reset"),
+    ...(mouse ? key('click', 'on a session or an agent there opens its details; anywhere else selects none') : []),
     '',
     ...say(` ${t.dim(`Reading ${dir}`)}`, 1),
     ...say(` ${t.dim(`${t.arrows} pgup pgdn home end${mouse ? ' and the wheel' : ''} scroll; any other key${mouse ? ' or a click' : ''} goes back.`)}`, 1),

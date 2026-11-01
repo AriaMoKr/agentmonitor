@@ -42,7 +42,7 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
     bell,
     mouse,
     refresh: () => refresh(),
-    // The agent in the details has its transcript read, done or not; now.
+    // The selected agent has its transcript read, done or not, for the panel and its details; now.
     onFocus: (key) => {
       monitor.focus = new Set(key ? [key] : []);
       if (key?.startsWith('a:')) refresh();

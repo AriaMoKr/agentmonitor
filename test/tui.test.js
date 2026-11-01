@@ -110,9 +110,9 @@ test('help, the filter, sorting and hiding the sessions that ended', async (t) =
   await tui.until((s) => s.includes('Keys') && s.includes('bell on or off'));
   // Taller than these 16 lines: End shows its end, k the line above, and any other key goes back.
   tui.type('\x1b[F');
-  await tui.until((s) => s.includes('Columns') && s.includes('any other key or a click goes back'));
+  await tui.until((s) => s.includes('+7%/d') && s.includes('any other key or a click goes back'));
   tui.type('k');
-  await tui.until((s) => s.includes('Columns') && !s.includes('any other key'));
+  await tui.until((s) => s.includes('Below the list') && !s.includes('any other key'));
   tui.type('x');
   await tui.until((s) => s.includes('NAME'));
   tui.type('/');
@@ -168,7 +168,7 @@ test('the bell rings when a session finishes its turn, and b turns it off; w ste
   assert.deepEqual(tui.term.rawModes, [true, false]);
 });
 
-test("an agent's details have the monitor read its transcript, done or not", async (t) => {
+test('the selected agent has the monitor read its transcript, done or not, for the panel below the rows and its details', async (t) => {
   const now = Date.now();
   const withAgent = () => {
     const snap = sessions(now);
@@ -178,18 +178,22 @@ test("an agent's details have the monitor read its transcript, done or not", asy
   const monitor = fakeMonitor([withAgent]);
   const tui = start(t, monitor);
   await tui.until((s) => s.includes('Fix the parser'));
+  assert.deepEqual([...monitor.focus], ['s:a'], 'the first row, selected at the start');
   tui.type('a');
   await tui.until((s) => s.includes('look around'));
+  const before = monitor.refreshes;
   tui.type('j');
   await tui.until(() => tui.line('look around').startsWith('>'));
-  const before = monitor.refreshes;
-  tui.type('\r');
-  await tui.until((s) => s.includes('esc back'));
   assert.deepEqual([...monitor.focus], ['a:x:1']);
   await until(() => monitor.refreshes > before);
+  tui.type('\r');
+  await tui.until((s) => s.includes('esc back'));
+  assert.deepEqual([...monitor.focus], ['a:x:1'], 'and in its details');
   tui.type('\x1b');
   await tui.until((s) => s.includes('NAME'));
-  assert.deepEqual([...monitor.focus], []);
+  tui.type('k');
+  await tui.until(() => tui.line('Fix the parser').startsWith('>'));
+  assert.deepEqual([...monitor.focus], ['s:a']);
   tui.type('q');
   await tui.done;
 });
@@ -242,7 +246,7 @@ test('a click below the rows selects none, as rows come and go, until a key or a
   const tui = start(t, monitor);
   await tui.until((s) => s.includes('Old work'));
   const marked = () => tui.term.screen.lines().filter((l) => l.startsWith('>'));
-  const below = () => tui.click(10, tui.find('Old work').y + 2);
+  const below = () => tui.click(10, tui.find('Old work').y + 1);
   tui.click(10, tui.find('Write the docs').y);
   await tui.until(() => tui.line('Write the docs').startsWith('>'));
   below();
@@ -268,6 +272,22 @@ test('a click below the rows selects none, as rows come and go, until a key or a
   tui.type('s');
   await tui.until((s) => s.includes('sorted by most recent'));
   assert.ok(tui.line('Write the docs').startsWith('>'), 'selected, not opened');
+  tui.type('q');
+  await tui.done;
+});
+
+test('below the rows, the selected session and what was said; a click on a session there opens its details', async (t) => {
+  const tui = start(t, fakeMonitor([() => sessions()]), { rows: 24 });
+  await tui.until((s) => s.includes('Activity'));
+  const text = tui.text();
+  assert.match(text, /^ ─ . demo · Fix the parser ─+ working · \d+s ─ *\n Doing {6}Bash: npm test {2}\(\d+s\) *\n .{12} you {4}fix the parser please *$/m);
+  assert.match(text, /^ .{8} docs {13}you {4}write the README *$/m);
+  tui.click(10, tui.find('write the README').y);
+  await tui.until((s) => s.includes('esc back'));
+  assert.match(tui.term.screen.lines()[0], /Write the docs +idle$/);
+  tui.type('\x1b');
+  await tui.until((s) => s.includes('NAME'));
+  assert.ok(tui.line('Write the docs').startsWith('>'), 'selected, back in the list');
   tui.type('q');
   await tui.done;
 });

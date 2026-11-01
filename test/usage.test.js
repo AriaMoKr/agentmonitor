@@ -128,12 +128,12 @@ test('the latest sample in any of the app\'s folders, read again after 5 seconds
 
 test('the session carried on from its last sample with what its window used since, at as many points for so much use as the samples rose by with it', () => {
   const p = { session: points([150, 0], [135, 10], [120, 20], [105, 30]), week: [] };
-  assert.deepEqual(track(p, known(...ROSE, [60, 20_000]), NOW), { at: NOW, session: 50, sessionReset: ends(140) }, 'the window the sample was in: begun 160 minutes ago');
+  assert.deepEqual(track(p, known(...ROSE, [60, 20_000]), NOW), { at: NOW, session: 50, sessionReset: ends(140), sessionPace: 0 }, 'the window the sample was in: begun 160 minutes ago');
   assert.equal(track(p, known(...ROSE, [60, 200_000]), NOW)?.session, 100, 'at most 100');
   // The same five hours earlier, its window over.
   const before = { session: points([450, 0], [435, 10], [420, 20], [405, 30]), week: [] };
   const earlier = ROSE.map(([m, x]) => /** @type {[number, number]} */ ([m + 300, x]));
-  assert.deepEqual(track(before, known(...earlier, [100, 5000], [50, 5000]), NOW), { at: NOW, session: 10, sessionReset: ends(200) }, 'a window begun since: all it used');
+  assert.deepEqual(track(before, known(...earlier, [100, 5000], [50, 5000]), NOW), { at: NOW, session: 10, sessionReset: ends(200), sessionPace: 5 }, 'a window begun since: all it used');
   assert.deepEqual(track(before, known(...earlier), NOW), { at: NOW, session: 0 }, 'no window now');
   assert.equal(track({ session: points([150, 0], [135, 3], [120, 6], [105, 9]), week: [] }, known(...ROSE), NOW), undefined, 'rose 9 points: too few to tell');
 });
@@ -142,13 +142,25 @@ test('a window begins on the 10-minute mark at or before its first reply, as the
   // Its first reply 7 minutes past the mark 300 minutes ago: it ends now, not in 7 minutes.
   const p = { session: points([290, 0], [275, 10], [260, 20], [245, 30]), week: [] };
   const replies = /** @type {[number, number][]} */ ([[293, 1000], [280, 10_000], [265, 10_000], [250, 10_000], [60, 20_000]]);
-  assert.deepEqual(track(p, known(...replies), NOW - MINUTE), { at: NOW - MINUTE, session: 50, sessionReset: ends(0) });
+  assert.deepEqual(track(p, known(...replies), NOW - MINUTE), { at: NOW - MINUTE, session: 50, sessionReset: ends(0), sessionPace: 20 });
   assert.deepEqual(track(p, known(...replies), NOW + 2 * MINUTE), { at: NOW + 2 * MINUTE, session: 0 }, 'over, with no reply since: no window');
   assert.deepEqual(
     track(p, known(...replies, [-1, 1000]), NOW + 2 * MINUTE),
-    { at: NOW + 2 * MINUTE, session: 1, sessionReset: ends(300) },
+    { at: NOW + 2 * MINUTE, session: 1, sessionReset: ends(300), sessionPace: 1 },
     'a reply a minute after the reset begins the next window, on the mark: all it used, not the last one\'s',
   );
+});
+
+test("the session's pace: the points the last hour's replies came to, as an hour's worth; of the part of it they are known for, a quarter of an hour at least", () => {
+  const p = { session: points([150, 0], [135, 10], [120, 20], [105, 30]), week: [] };
+  // 1 point for each thousand: 5 in the last hour, and 20 just before it.
+  assert.equal(track(p, known(...ROSE, [61, 20_000], [50, 2000], [10, 3000]), NOW)?.sessionPace, 5);
+  // Known for the last 20 minutes: 10 points in them, 30 an hour.
+  const recent = { session: points([13, 0], [3, 10]), week: [] };
+  const replies = [{ t: NOW - 12 * MINUTE, asked: NOW - 12 * MINUTE, x: 10_000 }];
+  assert.equal(track(recent, { from: NOW - 20 * MINUTE, replies }, NOW)?.sessionPace, 30);
+  const short = track(recent, { from: NOW - 14 * MINUTE, replies }, NOW);
+  assert.deepEqual([short?.session, short?.sessionPace], [10, undefined], 'known for 14 minutes: too few to tell');
 });
 
 test('the session scaled by the rises within a window this computer\'s replies began, after the time they are known from', () => {
@@ -204,7 +216,7 @@ test('the sample carried on once the replies are read, in the background unless 
   const second = await usage.read(NOW + 5000, { wait: true });
   assert.deepEqual(brief(second), brief(first), 'the sample as it was');
   // The week's reset is not known: the week as sampled.
-  assert.deepEqual(second?.tracked, { at: NOW + 5000, session: 50, sessionReset: ends(140) });
+  assert.deepEqual(second?.tracked, { at: NOW + 5000, session: 50, sessionReset: ends(140), sessionPace: 0 });
   const since = NOW - 150 * MINUTE - SESSION;
   assert.deepEqual(asked, [[NOW, since, { wait: false }], [NOW + 5000, since, { wait: true }]]);
 });

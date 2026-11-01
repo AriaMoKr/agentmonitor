@@ -1,6 +1,6 @@
 # agentmonitor
 
-The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, carried on to now with what this computer's sessions used since, and about when each resets.
+The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, carried on to now with what this computer's sessions used since, and about when each resets. Below the list, where it leaves room, are the selected session at more length, the other sessions that need you, what was said lately, and the usage at the pace it goes.
 
 ```
  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread       session ~64% resets 15:10  week ~29% resets Thu
@@ -98,6 +98,38 @@ The app keeps no reset times, so the monitor works them out from its earlier che
 
 To carry a check on, the monitor reads the replies in this computer's transcripts since a little before it, and weighs each one's tokens: output in full, input at its price against output's, cache writes and reads as the app's checks rose with them (writes at about their price, reads at about half of theirs), and each model at its price against Claude Opus 5.5's. The percents rose by so many points for so much of that between checks at most half an hour apart, and the latest of those rises give the rate they go on at: the session's last 60 points, within three days, and the week's last 20, within the week. The session's windows come from the replies too: once the last window is over, one begins on the 10-minute mark at or before the first reply asked for, and lasts five hours, so its reset is known to the minute while the use is all here. Only rises within such a window count, since a rise outside one was use elsewhere. A window begun since the check starts again from 0, and with no window now, the session is at `~0%`. The week is carried on only once its reset is known, and from 0 past it.
 
+## Below the list
+
+Where the rows leave room below them, the monitor fills it, each part where there is room for it:
+
+```
+ ─ ◆ shop · Release 2.0 ───────────────────────────────────────────────────────── waiting · 2m03s ─
+ Waiting    permission: Bash  (2m03s)
+ Tasks      3/5  ▸ Tag the release
+ 13:15:32     you    Tag 2.0 and push the tag once the tests pass.
+ 13:17:05     claude The tests pass; tagging 2.0 and pushing the tag.
+ ─ Needs you ──────────────────────────────────────────────────────────────────────────────────────
+ ◇ shop · Pick the payment provider  7m  choose Stripe or Adyen
+ • infra · Plan the migration  18m  plan in MIGRATION.md: three steps, the schema first
+ ─ Activity ───────────────────────────────────────────────────────────────────────────────────────
+ 13:02:47 infra            claude The plan is in MIGRATION.md: three steps, the schema first.
+ 13:12:30 shop             claude Both fit. Stripe or Adyen? Adyen costs less above 10k a month.
+ 13:15:32 shop             you    Tag 2.0 and push the tag once the tests pass.
+ 13:16:20 docs             you    Write the API docs from openapi.yaml.
+ 13:17:05 shop             claude The tests pass; tagging 2.0 and pushing the tag.
+
+ ─ Usage ──────────────────────────────────────────────────────────────────────────────────────────
+ session ███████████████│░░░░░░░░  ~64%  resets 15:10 in 1h50m · +24%/h: 100% at 14:50, 20m before
+ week    ███████░░░░░░░│░░░░░░░░░  ~29%  resets Thu 10:00 in 2d20h · +7%/d: about 49% by then
+```
+
+- The selected session or agent: what it is doing, waits for or did last, in full where the list cuts it short, the commands it left running in the background, how far through its task list it is, and its latest prompts and replies.
+- Needs you: the other sessions that wait for you or are blocked, with what for, and those unread, with the reply you have not read.
+- Activity: what was said lately in the sessions listed, their prompts, replies and errors, the newest at the bottom.
+- Usage, at the bottom: each limit as a bar of how much of it is used, marked `│` where its time has gone to (how far the session's five hours are through, and the week's seven days). Then when it resets, and its pace: the session's, the points the last hour's replies on this computer came to (`+24%/h`); the week's, its percent over the days since it reset, once a day has gone (`+7%/d`). At that pace, it says when the limit reaches 100%, in yellow, where that comes before it resets, and else about how much it comes to by then.
+
+The rows come first. The room they leave goes first to the usage, then to the selected one, then to what needs you, and the activity takes the rest, so on a short screen there is less of it, or none. On a screen narrower than 64 columns the usage has no bars, and its lines wrap. A click on a session or an agent there opens its details, and one anywhere else selects none.
+
 ## Details
 
 Enter shows everything known about the selected row, and its latest events: your prompts, its replies, its tool calls and what failed, newest at the bottom.
@@ -138,7 +170,7 @@ Enter shows everything known about the selected row, and its latest events: your
  esc back  ↑↓ scroll  home/end  tab next
 ```
 
-Tasks is its task list: the steps done, the one in progress and those to do, and `in an earlier turn` when none changed since your last prompt. A session that runs commands in the background lists them as Background, each with how long it has run. A session that ended shows the `claude --resume` command that takes it up again, run in its folder. A desktop app session shows when you last opened it there, and an unread one shows its last turn as Unread. A blocked one shows what you are to do as Blocked, with the app's summary of the turn under it, and its title line adds the summary's category when it is not the usual one (blocked, review ready). An agent's transcript is read while it works, and when its details are open, so a finished agent shows what it did too.
+Tasks is its task list: the steps done, the one in progress and those to do, and `in an earlier turn` when none changed since your last prompt. A session that runs commands in the background lists them as Background, each with how long it has run. A session that ended shows the `claude --resume` command that takes it up again, run in its folder. A desktop app session shows when you last opened it there, and an unread one shows its last turn as Unread. A blocked one shows what you are to do as Blocked, with the app's summary of the turn under it, and its title line adds the summary's category when it is not the usual one (blocked, review ready). An agent's transcript is read while it works, and while it is selected, below the list or in its details, so a finished agent shows what it did too.
 
 ## Keys
 
@@ -160,7 +192,7 @@ Tasks is its task list: the steps done, the one in progress and those to do, and
 
 In the details: ↑ ↓ and PgUp PgDn scroll the events, Home and End go to the oldest and newest, and Tab and Shift+Tab go to the next and previous row. In the help, when it is taller than the screen, ↑ ↓, PgUp PgDn and Home End scroll it, with how far down it is at the bottom (`12-33/33`); any other key goes back. On a screen narrower than 88 columns its lines wrap, each under the start of what it says, so nothing is cut at the right.
 
-The mouse: a click selects a row, and a double click opens its details. A click below the rows selects none, and the footer shows `-/12` until a key or a click selects one again: ↓ the first row, ↑ the last. The wheel moves the selection, or scrolls the events in the details, or the help. A click on a column title sorts by it (NAME, PROJECT, LAST; ACTIVITY and the state column sort by state), one on a key in the footer presses it, and one on an agent in the details opens that agent. While the monitor has the mouse, most terminals select text with Shift held (some on macOS with Option); `--no-mouse` leaves the mouse to the terminal.
+The mouse: a click selects a row, and a double click opens its details. A click below the rows selects none, and the footer shows `-/12` until a key or a click selects one again: ↓ the first row, ↑ the last; but one on a session or an agent shown there ([Below the list](#below-the-list)) opens its details. The wheel moves the selection, or scrolls the events in the details, or the help. A click on a column title sorts by it (NAME, PROJECT, LAST; ACTIVITY and the state column sort by state), one on a key in the footer presses it, and one on an agent in the details opens that agent. While the monitor has the mouse, most terminals select text with Shift held (some on macOS with Option); `--no-mouse` leaves the mouse to the terminal.
 
 ## In a browser
 
@@ -189,7 +221,7 @@ Each page has its own view: the row selected, the filter, the details open. A pa
 
 Its title counts the sessions that wait for you: `(2) Claude agents on <computer>`. Each page has its own bell too, a short beep, which `b` turns on or off and `--bell` starts with on; it rings only for what happens once it is on. A browser lets a page sound only after a tap, a click or a key on it, so until then the page says so at the bottom. A page out of sight (in another tab, or minimized) asks every 3 seconds, for its title and its bell only, so it still beeps.
 
-On a phone, a tap is a click: on a row, twice to open it, below the rows to select none, or on a key in the footer. A finger dragged up or down takes the list's selection with it, a row for each line it goes, and the events of the details and the help, as a phone scrolls a page: up for what is further down. A tap on `/ filter` opens the phone's keyboard, and what you type shows in the footer, above the keyboard; its Enter keeps the filter, and `esc clear` clears it.
+On a phone, a tap is a click: on a row, twice to open it, below the rows to select none (or on a session there, to open it), or on a key in the footer. A finger dragged up or down takes the list's selection with it, a row for each line it goes, and the events of the details and the help, as a phone scrolls a page: up for what is further down. A tap on `/ filter` opens the phone's keyboard, and what you type shows in the footer, above the keyboard; its Enter keeps the filter, and `esc clear` clears it.
 
 ## The agentmonitor app
 
@@ -276,7 +308,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
 - CTX is the context of the last reply (input, cache reads and cache writes). The output tokens are those of the part of the transcript read; the totals in the details are Claude Code's own, as it last saved them.
 - It sees one config folder: one user's sessions.
 - The turn summaries are the desktop app's: a session in a terminal or an IDE has none, and so is never blocked.
-- The usage starts from the desktop app's checks: without the app there is none. Carried on from the last one, it is an estimate, and the longer ago that check, the further off it can be. It counts only what the sessions here used, in this config folder: use since then on claude.ai, on another computer or in another config folder is missing, and so is a session window one of those began. Its rate is that of the latest rises, and it drifts when the way you work changes (the models, how much is cached). The resets are worked out from the checks and the replies, and can be off. A session window begun elsewhere and used so little that the app still read 0% looks as if it began later, so its reset comes earlier than shown. A week's reset shows only once its percent was seen to drop at that time twice. `/usage` in Claude Code says them exactly.
+- The usage starts from the desktop app's checks: without the app there is none. Carried on from the last one, it is an estimate, and the longer ago that check, the further off it can be. It counts only what the sessions here used, in this config folder: use since then on claude.ai, on another computer or in another config folder is missing, and so is a session window one of those began. Its rate is that of the latest rises, and it drifts when the way you work changes (the models, how much is cached). The paces below the list are guesses too: the session's is the last hour's here, and the week's its average since it reset, so the times they give for 100% hold only while you go on as you did. The resets are worked out from the checks and the replies, and can be off. A session window begun elsewhere and used so little that the app still read 0% looks as if it began later, so its reset comes earlier than shown. A week's reset shows only once its percent was seen to drop at that time twice. `/usage` in Claude Code says them exactly.
 - The desktop app's yellow dot is a session that waits on you: a permission to give, or a question to answer. Its questions, plans to approve and offers of a session are tool calls in the transcript, so they show as waiting. Its permission prompts are kept in the app's memory, in no file: a session waiting on one shows as in a tool, the call it asks about.
 - The app keeps its own list of unread sessions in its browser storage, which the monitor does not read. The monitor works the list out from the session records instead, so it can differ from the app in two ways:
   - A dot you set by hand with Mark as unread does not show.

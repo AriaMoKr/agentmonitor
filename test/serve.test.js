@@ -304,10 +304,11 @@ test('what a phone needs: where / is, for its tap to open the keyboard, and the 
   assert.deepEqual(a.keys.map((k) => k[3]), ['escape', 'tab']);
 });
 
-test('the agents in the pages\' details are read; pages that stop asking are forgotten, and the oldest of too many', async (t) => {
+test('the agents selected in the pages are read; pages that stop asking are forgotten, and the oldest of too many', async (t) => {
   const monitor = fakeMonitor(() => sessions());
   const s = await start(t, monitor, { pageTtlMs: 300, maxPages: 2 });
   await s.screen('page-one-1');
+  assert.deepEqual([...monitor.focus], ['s:b'], 'its first row, selected at the start');
   const reads = monitor.refreshes;
   const one = await s.screen('page-one-1', ['k:down', 'k:down', 'k:enter']);
   assert.match(one.text[0], /Explore the code/);
@@ -315,22 +316,23 @@ test('the agents in the pages\' details are read; pages that stop asking are for
   assert.equal(monitor.refreshes, reads + 1, 'read again at once, for its transcript');
   // What a page sends acts on what it was shown: a new page is shown the list first.
   await s.screen('page-two-2', ['k:down', 'k:enter']);
-  assert.deepEqual([...monitor.focus], ['a:aaaa:x1']);
+  const focus = () => [...monitor.focus].sort();
+  assert.deepEqual(focus(), ['a:aaaa:x1', 's:b']);
   await s.screen('page-two-2', ['k:down', 'k:enter']);
-  assert.deepEqual([...monitor.focus].sort(), ['a:aaaa:x1', 's:a']);
+  assert.deepEqual(focus(), ['a:aaaa:x1', 's:a']);
   // A third page, one too many: the first, which asked longest ago, is forgotten.
   await s.screen('page-three');
-  assert.deepEqual([...monitor.focus], ['s:a']);
+  assert.deepEqual(focus(), ['s:a', 's:b']);
   assert.equal(s.logs.filter((l) => /^\d\d:\d\d:\d\d {2}page opened from 127\.0\.0\.1$/.test(l)).length, 3);
   // It comes back to a new view, the list; and the second, now the oldest, is forgotten.
   assert.match((await s.screen('page-one-1')).text[1], /NAME/);
-  assert.deepEqual([...monitor.focus], []);
+  assert.deepEqual(focus(), ['s:b']);
   await s.screen('page-three', ['k:down', 'k:enter']);
-  assert.deepEqual([...monitor.focus], ['s:a']);
+  assert.deepEqual(focus(), ['s:a', 's:b']);
   // The pages that stopped asking for a while are forgotten.
   await sleep(400);
-  await s.screen('page-four');
-  assert.deepEqual([...monitor.focus], []);
+  await s.screen('page-four', [], { quiet: true });
+  assert.deepEqual(focus(), []);
 });
 
 test('a read serves every page, and is made again when older than the interval, or for r', async (t) => {
