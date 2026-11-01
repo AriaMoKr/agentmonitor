@@ -1,7 +1,8 @@
 // One look at the monitor, apart from where it is drawn: the view shown (the list, an agent's
-// details, the help), the rows, the selection, and what keys and clicks do to them. The
-// full-screen monitor has one; the web view has one for each page open.
+// details, the help), the rows, the selection, the view below the rows, and what keys and clicks
+// do to them. The full-screen monitor has one; the web view has one for each page open.
 import { durationLabel } from './format.js';
+import { MOVED, VIEWS, boardColumn, viewOf } from './panels.js';
 import { AGENTS_SHOWN, SORTS, detailLines, helpLines, initialUi, listLines, settleSelection, visibleRows } from './view.js';
 
 /** The windows the w key steps through. */
@@ -26,21 +27,26 @@ export class Viewer {
    * @param {import('./view.js').AgentsShown} o.agents
    * @param {boolean} o.showEnded
    * @param {boolean} [o.bell] whether the bell starts on
+   * @param {string} [o.view] the view below the rows it starts with, by its name (src/panels.js)
    * @param {boolean} [o.mouse] whether clicks reach it (the help says what they do)
    * @param {() => void} [o.refresh] has everything read again now (r, w)
    * @param {(key: string | undefined) => void} [o.onFocus] told when the selected agent changes
    *   (in the list, where the panel below the rows shows it, or in its details), whose transcript
    *   is then to be read though it is not at work
    */
-  constructor({ monitor, t, agents, showEnded, bell = false, mouse = true, refresh = () => {}, onFocus = () => {} }) {
+  constructor({ monitor, t, agents, showEnded, bell = false, view = 'overview', mouse = true, refresh = () => {}, onFocus = () => {} }) {
     this.monitor = monitor;
     this.t = t;
     this.mouseOn = mouse;
     this.refresh = refresh;
     this.onFocus = onFocus;
-    this.ui = { ...initialUi(), agents, showEnded, bell };
+    this.ui = { ...initialUi(), agents, showEnded, bell, panel: viewOf(view).name };
     /** @type {Map<string, string>} each session's state as rings was last told it */
     this.states = new Map();
+    /** @type {Map<string, string>} each session's column on the board, as last drawn */
+    this.columns = new Map();
+    /** whether the view below the rows, as last drawn, moves of itself */
+    this.animating = false;
     /** @type {import('./view.js').Row[]} */
     this.rows = [];
     /** @type {import('./view.js').Hit[]} where a click goes, on the screen as last drawn */
@@ -60,9 +66,12 @@ export class Viewer {
     return this.ui.selected;
   }
 
-  /** Whether a row on screen is at work, so that it is worth drawing often. */
+  /**
+   * Whether a row on screen is at work, or the view below the rows moves of itself, so that it is
+   * worth drawing often.
+   */
   get spinning() {
-    return this.ui.view !== 'help' && this.rows.some((r) => r.agent.state === 'working' || r.agent.state === 'running');
+    return this.ui.view !== 'help' && (this.animating || this.rows.some((r) => r.agent.state === 'working' || r.agent.state === 'running'));
   }
 
   /**
@@ -75,8 +84,10 @@ export class Viewer {
     const { t, ui } = this;
     this.hits = [];
     this.height = screen.height;
+    this.animating = false;
     if (!snap) return [` ${t.bold('Claude agents')}  ${t.dim(`reading ${this.monitor.dir}`)}`];
-    if (ui.view === 'help') return helpLines(ui, screen, t, this.monitor.dir, this.mouseOn);
+    this.moved(snap, screen.now);
+    if (ui.view === 'help') return helpLines(ui, screen, t, this.monitor.dir, this.mouseOn, VIEWS);
     this.rows = visibleRows(snap, ui, t);
     if (ui.view === 'detail') {
       this.detail = find(snap, ui.selected) ?? this.detail;
@@ -87,7 +98,33 @@ export class Viewer {
     // The rows that came or went can move the selection.
     settleSelection(ui, this.rows, screen.height - 3);
     this.tell();
-    return listLines(snap, this.rows, ui, screen, t, this.hits);
+    const view = viewOf(ui.panel);
+    /** @type {import('./view.js').Panel | undefined} the view below the rows, where there is room */
+    const panel = view.lines && ((...args) => {
+      this.animating = view.animated;
+      return /** @type {import('./view.js').Panel} */ (view.lines)(...args);
+    });
+    return listLines(snap, this.rows, ui, screen, t, this.hits, panel);
+  }
+
+  /**
+   * Keeps the board's record of the sessions that moved from one of its columns to another
+   * lately, whatever view is shown, so that the board shows them as soon as it is.
+   * @param {Snapshot} snap
+   * @param {number} now
+   */
+  moved(snap, now) {
+    const { moves } = this.ui;
+    for (const [key, m] of moves) if (now - m.at >= MOVED) moves.delete(key);
+    /** @type {Map<string, string>} */
+    const columns = new Map();
+    for (const a of snap.rows) {
+      const to = boardColumn(a);
+      const from = this.columns.get(a.key);
+      if (from !== undefined && from !== to) moves.set(a.key, { from, to, at: now });
+      columns.set(a.key, to);
+    }
+    this.columns = columns;
   }
 
   /**
@@ -317,6 +354,13 @@ export class Viewer {
         ui.bell = !ui.bell;
         this.say(ui.bell ? 'the bell rings when a session needs you or ends its turn' : 'no bell');
         return;
+      case 'v': case 'V': {
+        const at = VIEWS.indexOf(viewOf(ui.panel));
+        const next = VIEWS[(at + (key.name === 'v' ? 1 : VIEWS.length - 1)) % VIEWS.length];
+        ui.panel = next.name;
+        this.say(`${next.name}: ${next.what}`);
+        return;
+      }
       case '?':
         Object.assign(ui, { view: 'help', helpTop: 0 });
         return;

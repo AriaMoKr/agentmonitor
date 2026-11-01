@@ -1,6 +1,6 @@
 # agentmonitor
 
-The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, carried on to now with what this computer's sessions used since, and about when each resets. Below the list, where it leaves room, are the selected session at more length, the other sessions that need you, what was said lately, and the usage at the pace it goes.
+The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, carried on to now with what this computer's sessions used since, and about when each resets. Below the list, where it leaves room, are the selected session at more length, the other sessions that need you, what was said lately, and the usage at the pace it goes; `v` turns that room to twelve other views, from the sessions as figures at their keys to the usage as a tank the replies drip into.
 
 ```
  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread       session ~64% resets 15:10  week ~29% resets Thu
@@ -17,7 +17,7 @@ The Claude agents on this computer, live in a terminal, in a window of its own w
  ◎ docs             Preview the docs site     sonnet 5.5 medium    38k background: Bash: Serve the… 25m00s  24m cli
  ○ shop             Triage the issues         sonnet 5.5 high      41k Labelled 14 issues; 3 need a perso…   1h bg
  · tools            Upgrade the linter        opus 5.5   xhigh     96k Done: eslint 10 with the flat conf…   5h cli
- ↑↓ move  ⏎ details  / filter  s sort:status  e ended:on  a agents:running  w window  b bell:off  ? help  q quit  1/12
+ ↑↓ move  ⏎ details  / filter  v view  s sort:status  e ended:on  a agents:running  w window  ? help  q quit      1/12
 ```
 
 It only reads: Claude Code's own files, and which processes run. It changes nothing and needs no setup in Claude Code.
@@ -53,6 +53,10 @@ It draws every line again every 2 seconds, since a terminal can lose lines witho
       --bell             ring the bell when a session starts waiting for you,
                          or finishes its turn (b turns it on or off; with
                          --serve, the page beeps)
+      --view <name>      the view below the list to start with: overview (the
+                         default), floor, board, lanes, ticker, pipeline,
+                         files, chart, share, today, tank, radar or spark
+                         (v and V step through them)
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
@@ -130,6 +134,43 @@ Where the rows leave room below them, the monitor fills it, each part where ther
 
 The rows come first. The room they leave goes first to the usage, then to the selected one, then to what needs you, and the activity takes the rest, so on a short screen there is less of it, or none. On a screen narrower than 64 columns the usage has no bars, and its lines wrap. A click on a session or an agent there opens its details, and one anywhere else selects none.
 
+That is the overview. `v` shows the next of the other views of the room, and `V` the one before (`--view` starts with one); the footer then says which it is and what it shows, and the help lists them all, the one shown marked. The floor, as it shows the sessions of the list above:
+
+```
+ ─ Floor ───────────────────────────────────────────────────────── 2 at work · 3 for you · 2 idle ─
+  ? permission: Bash  ! choose Stripe o…  • plan in MIGRATI…  1 agent running
+   \o/                 \o/                  o []                o    Oo 3/5
+    |                   |                  /|/                 /|_[]
+   / \                 / \                 / \                 / \
+ >◆ Release 2.0       ◇ Pick the paymen…  • Plan the migrat…  ⠋ Write the API d…
+
+  >_ Run the upload…  ◎ Bash: Serve the…
+    o                   o                     Z
+   /|\          o      <|>                   z
+   / \          |      / \                ___o
+  ◐ Fix the flaky u…  ◎ Preview the doc…  ○ Triage the issu…
+
+   · ended: Upgrade the linter 5h ago
+```
+
+| View | |
+|---|---|
+| overview | the selected session, what needs you, what was said lately, and the usage at its pace, as above |
+| floor | each session that runs as a figure, posed by what it does: at its keys while it works, tapping its foot under what it runs while a tool call takes a while, waving when it waits for you, holding up a reply you have not read, asleep while idle. The agents it started walk beside it, and a workflow's agents at work stand in a crowd, with how far the workflow has come |
+| board | the sessions as cards in columns: needs you, working, background, idle, and on a wide screen ended. For 4 seconds a card that moved stands out, with the column it came from, and leaves a ghost there |
+| lanes | a lane for each session over the last half hour or more, a column for each 10 seconds to 10 minutes as the width takes: its turns `█`, its tool calls that ran 3 seconds or more `▒`, the time it waited on you `?`, your prompts `▲`, and `·` while it ran idle between them |
+| ticker | the tool calls of the sessions listed and of their agents: those still open first, with how long they have run, then the others, the latest first, with how long they took, `✗` where one failed |
+| pipeline | each workflow, with its phases in the order they began, each agent in them a mark: at work (a spinner), done or failed; under them, the sessions' own agents |
+| files | the files the sessions changed in the last hour, the latest first: how often, by whom and when, `✎` on one being changed now, and `!` on one that two sessions or more changed |
+| chart | the session's percent over its five hours and the week's over its seven days, as the desktop app checked them, carried on to now, and on to the reset at its pace (yellow where that reaches 100% first); on a tall screen, when in the day the session's limit was used over the last week |
+| share | the points of each limit each session on this computer used, the most first, those the replies read here leave out (use elsewhere), and the points by model |
+| today | what the sessions here did since midnight: the sessions, agents, prompts and replies, the time they waited on you, the tokens, the models' shares, the replies hour by hour, and the tools called, the most first |
+| tank | the session's limit as a tank as full as its percent, each reply a drop as big as its points, falling in about 15 seconds after it was written; its pace and its reset, and the week's tank beside it |
+| radar | each session a blip, nearer the middle the more lately it did something (rings at a minute, ten, an hour and the window), and a sweep going round that lights those that just did; the sessions beside it, the latest first |
+| spark | one spark for all the sessions: it turns the faster the more of them work, waves when one needs you, sleeps when none works, and goes yellow, then red, as a limit nears |
+
+The floor, the pipeline, the tank, the radar and the spark move of themselves: while one shows, the terminal draws it ten times a second, and a web page asks for it four times a second. A click on a session or an agent in a view opens its details, and one anywhere else selects none. The views show what the monitor reads anyway: the lanes, the ticker, the pipeline and the files what was read of each transcript (its last MiB on first sight, then what was appended; its latest 200 tool calls and 100 turns), and the chart, the share, today and the tank the desktop app's checks and this computer's replies, which the monitor reads back to midnight for today.
+
 ## Details
 
 Enter shows everything known about the selected row, and its latest events: your prompts, its replies, its tool calls and what failed, newest at the bottom.
@@ -185,6 +226,7 @@ Tasks is its task list: the steps done, the one in progress and those to do, and
 | a | agents under their session: those at work, all, none |
 | w | the window for "recently active": 1h, 6h, 24h, 3d, 7d |
 | b | the bell, on or off: it rings when a session starts waiting for you, or finishes its turn (`--bell` starts with it on) |
+| v, V | the next view below the list, or the one before ([Below the list](#below-the-list)) |
 | r | read everything again now |
 | ? | help |
 | Ctrl+L | draw the screen again |
@@ -219,7 +261,7 @@ What keeps it to you:
 
 Each page has its own view: the row selected, the filter, the details open. A page that stops asking for 10 minutes is forgotten. It draws on a grid of monospace cells in a terminal's colors, dark or light as the browser prefers, and while you select text it holds still, so the selection stays.
 
-Its title counts the sessions that wait for you: `(2) Claude agents on <computer>`. Each page has its own bell too, a short beep, which `b` turns on or off and `--bell` starts with on; it rings only for what happens once it is on. A browser lets a page sound only after a tap, a click or a key on it, so until then the page says so at the bottom. A page out of sight (in another tab, or minimized) asks every 3 seconds, for its title and its bell only, so it still beeps.
+Its title counts the sessions that wait for you: `(2) Claude agents on <computer>`. Each page has its own bell too, a short beep, which `b` turns on or off and `--bell` starts with on; it rings only for what happens once it is on. A browser lets a page sound only after a tap, a click or a key on it, so until then the page says so at the bottom. A page out of sight (in another tab, or minimized) asks every 3 seconds, for its title and its bell only, so it still beeps. One that shows a view below the list that moves of itself asks four times a second while it does.
 
 On a phone, a tap is a click: on a row, twice to open it, below the rows to select none (or on a session there, to open it), or on a key in the footer. A finger dragged up or down takes the list's selection with it, a row for each line it goes, and the events of the details and the help, as a phone scrolls a page: up for what is further down. A tap on `/ filter` opens the phone's keyboard, and what you type shows in the footer, above the keyboard; its Enter keeps the filter, and `esc clear` clears it.
 
@@ -277,7 +319,7 @@ All in Claude Code's config folder (`~/.claude`, or `$CLAUDE_CONFIG_DIR`, or `--
 - `jobs/<id>/state.json`: background sessions, with what they are doing or need.
 - The Claude desktop app's records of its Code tab sessions: `claude-code-sessions/<account>/<org>/local_<id>.json` in `%APPDATA%\Claude` and `%LOCALAPPDATA%\Claude-Data\<package>\` on Windows, `~/Library/Application Support/Claude` on macOS, and `~/.config/Claude` elsewhere. They give each session's title, whether it is archived, its model, effort and permission mode, whether ultracode is on, and the app's summary of its last turn. They also give when you last opened it and when its last turn started or ended, which tell which sessions are unread.
 - The desktop app's `plan-usage-history.json`, in the same folders: how much of your plan's usage limits was used, as the app checked about every 15 minutes while it ran, for the last month or so. The monitor reads its latest check, and works out the resets from the others.
-- For the usage, the transcripts again, each session's, subagent's and workflow agent's, for the tokens of every reply since a little before the app's last check: a long one from about that time, found by its records' times, then only what was appended, in the background and at most every 10 seconds (printed once, the monitor waits for it).
+- For the usage, the transcripts again, each session's, subagent's and workflow agent's, for the tokens, model and tools of every reply since a little before the app's last check, and since midnight for today (but printed once), with the prompts typed: a long one from about that time, found by its records' times, then only what was appended, in the background and at most every 10 seconds (printed once, the monitor waits for it).
 
 And the processes: whether each PID in `sessions/` exists (signal 0, which only asks), and the process table (`tasklist` on Windows, `ps` elsewhere), read when a new PID turns up and every 10 seconds, for the program's name and memory.
 
@@ -287,6 +329,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
 - With no record, a transcript written in the last minute is `active`: Claude Code at work without a record, an older version say. A session seen running since the monitor started and now gone has ended, however recently it wrote.
 - A session at work waits on you when the tool call it is in asks you something: a question (AskUserQuestion), a plan to approve (ExitPlanMode), or a session the desktop app offers to start. In a terminal, Claude Code's record also says when it waits for a permission.
 - A session or agent is in a tool when a call it made, other than one that starts an agent, has had no result for 3 seconds.
+- A turn goes from a prompt, the message about a background task's end, or a reply with no prompt read before it, to the reply that ends it, an interruption or an API error; a compaction's summary is no prompt. A session waits on you from a call that asks you something until its next reply.
 - The task list is the last one made, replayed from the calls that changed it and did not fail: the desktop app's `update_plan` (a new list, the next step, steps done, a step started) and `wrap_up` (which checks off the step in progress), or TodoWrite's list. Its count shows while the session is at work and no prompt came after the list last changed.
 - Claude Code writes the effort with each reply: the turn's, else the session's. A session at work shows that of its turn. One that is idle or ended shows the desktop app's setting when the app has one, since its next turn takes it (it can have been changed since the last reply), else that of its last reply. An agent shows its own, from its transcript while it works or its details are open; a workflow run has none of its own.
 - Ultracode can be wrong. A desktop app session shows the app's setting for it. Any other session shows it once a reminder of it turns up in the part of its transcript read. Claude Code sends that reminder after the first prompt, after about every tenth one since, and after a compaction, so the first read of a long transcript can miss it. And nothing in the transcript says when ultracode was turned off.
@@ -309,7 +352,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
 - It sees one config folder: one user's sessions.
 - The turn summaries are the desktop app's: a session in a terminal or an IDE has none, and so is never blocked.
 - The usage starts from the desktop app's checks: without the app there is none. Carried on from the last one, it is an estimate, and the longer ago that check, the further off it can be. It counts only what the sessions here used, in this config folder: use since then on claude.ai, on another computer or in another config folder is missing, and so is a session window one of those began. Its rate is that of the latest rises, and it drifts when the way you work changes (the models, how much is cached). The paces below the list are guesses too: the session's is the last hour's here, and the week's its average since it reset, so the times they give for 100% hold only while you go on as you did. The resets are worked out from the checks and the replies, and can be off. A session window begun elsewhere and used so little that the app still read 0% looks as if it began later, so its reset comes earlier than shown. A week's reset shows only once its percent was seen to drop at that time twice. `/usage` in Claude Code says them exactly.
-- The desktop app's yellow dot is a session that waits on you: a permission to give, or a question to answer. Its questions, plans to approve and offers of a session are tool calls in the transcript, so they show as waiting. Its permission prompts are kept in the app's memory, in no file: a session waiting on one shows as in a tool, the call it asks about.
+- The desktop app's yellow dot is a session that waits on you: a permission to give, or a question to answer. Its questions, plans to approve and offers of a session are tool calls in the transcript, so they show as waiting. Its permission prompts are kept in the app's memory, in no file: a session waiting on one shows as in a tool, the call it asks about, and the time waited on them is not in today's.
 - The app keeps its own list of unread sessions in its browser storage, which the monitor does not read. The monitor works the list out from the session records instead, so it can differ from the app in two ways:
   - A dot you set by hand with Mark as unread does not show.
   - A record keeps only the last time its session was opened. The monitor remembers every opening it sees while it runs, but for the time before it started it knows only each session's last one.
@@ -321,7 +364,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
 npm test
 ```
 
-`bin/agentmonitor.js` reads the options and starts `src/tui.js` (the screen, the keys and the mouse) or `src/serve.js` (the web view, with its page in `src/web/`), or prints once with `src/view.js` (what is drawn, and where a click on it goes). `src/viewer.js` holds what one look at the monitor shows and what keys and clicks do to it: the terminal has one, and the web view one for each page. `src/monitor.js` puts a snapshot together from `src/registry.js`, `src/transcript.js`, `src/agents.js`, `src/jobs.js`, `src/desktop.js`, `src/usage.js` (the plan's usage, carried on with the replies `src/ledger.js` reads) and `src/procs.js`. `desktop/main.js` is the agentmonitor app, around `src/serve.js`: the window, the tray and the settings; `desktop/tray.js` says what the tray shows and what to notify, `desktop/icons.js` draws its icons as PNG and ICO, and `desktop/launch.js` writes Linux's menu entries. The tests write a config folder as Claude Code does, drive the monitor through a fake terminal, ask the web view on a free port of 127.0.0.1, and check the agentmonitor app's parts that need no Electron.
+`bin/agentmonitor.js` reads the options and starts `src/tui.js` (the screen, the keys and the mouse) or `src/serve.js` (the web view, with its page in `src/web/`), or prints once with `src/view.js` (what is drawn, and where a click on it goes; the views below the list but the overview are `src/panels.js`, some drawn on `src/canvas.js`). `src/viewer.js` holds what one look at the monitor shows and what keys and clicks do to it: the terminal has one, and the web view one for each page. `src/monitor.js` puts a snapshot together from `src/registry.js`, `src/transcript.js`, `src/agents.js`, `src/jobs.js`, `src/desktop.js`, `src/usage.js` (the plan's usage, carried on with the replies `src/ledger.js` reads) and `src/procs.js`. `desktop/main.js` is the agentmonitor app, around `src/serve.js`: the window, the tray and the settings; `desktop/tray.js` says what the tray shows and what to notify, `desktop/icons.js` draws its icons as PNG and ICO, and `desktop/launch.js` writes Linux's menu entries. The tests write a config folder as Claude Code does, drive the monitor through a fake terminal, ask the web view on a free port of 127.0.0.1, and check the agentmonitor app's parts that need no Electron.
 
 ## License
 

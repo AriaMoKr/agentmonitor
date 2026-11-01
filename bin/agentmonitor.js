@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { parseDuration } from '../src/format.js';
 import { Monitor } from '../src/monitor.js';
+import { VIEWS } from '../src/panels.js';
 import { banner, serve, TOKEN, urls } from '../src/serve.js';
 import { runTui } from '../src/tui.js';
 import { AGENTS_SHOWN, makeTheme, table } from '../src/view.js';
@@ -31,6 +32,10 @@ Options:
       --bell             ring the bell when a session starts waiting for you,
                          or finishes its turn (b turns it on or off; with
                          --serve, the page beeps)
+      --view <name>      the view below the list to start with: overview (the
+                         default), floor, board, lanes, ticker, pipeline,
+                         files, chart, share, today, tank, radar or spark
+                         (v and V step through them)
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
@@ -48,10 +53,10 @@ Options:
 
 Times: 30s, 5m, 2h, 1d, 1w.
 Keys: arrows move, Enter shows details, / filters, s sorts, e hides ended,
-a cycles agents, w cycles the window, b turns the bell on or off, ? help,
-q quits. The mouse: a click selects, a double click shows details, the wheel
-moves. The web page takes the same keys and clicks; anyone with its address
-sees what it shows.
+a cycles agents, w cycles the window, b turns the bell on or off, v and V
+cycle the views below the list, ? help, q quits. The mouse: a click selects,
+a double click shows details, the wheel moves. The web page takes the same
+keys and clicks; anyone with its address sees what it shows.
 `;
 
 /**
@@ -75,6 +80,7 @@ try {
       json: { type: 'boolean' },
       dir: { type: 'string' },
       bell: { type: 'boolean' },
+      view: { type: 'string' },
       ascii: { type: 'boolean' },
       color: { type: 'boolean' },
       'no-color': { type: 'boolean' },
@@ -113,6 +119,9 @@ try {
 }
 const agents = /** @type {import('../src/view.js').AgentsShown} */ (values.agents ?? 'running');
 if (!AGENTS_SHOWN.includes(agents)) fail(`--agents takes ${AGENTS_SHOWN.join(', ')}, not '${values.agents}'`);
+const view = values.view ?? 'overview';
+if (!VIEWS.some((v) => v.name === view)) fail(`--view takes ${VIEWS.map((v) => v.name).join(', ')}, not '${values.view}'`);
+if (values.view !== undefined && (values.once || values.json)) fail('--view does not go with --once or --json');
 if (values.serve && (values.once || values.json)) fail('--serve does not go with --once or --json');
 for (const o of /** @type {const} */ (['host', 'port', 'token'])) if (values[o] !== undefined && !values.serve) fail(`--${o} goes with --serve`);
 let port = 7420;
@@ -136,7 +145,7 @@ if (values.serve) {
   let served;
   try {
     served = await serve(monitor, {
-      host, port, token: values.token, intervalMs, ascii, agents, showEnded: !values['hide-ended'], bell: Boolean(values.bell),
+      host, port, token: values.token, intervalMs, ascii, agents, showEnded: !values['hide-ended'], bell: Boolean(values.bell), view,
       log: (line) => process.stdout.write(`${line}\n`),
     });
   } catch (e) {
@@ -155,15 +164,17 @@ if (values.serve) {
 
 if (interactive) {
   await runTui(monitor, {
-    intervalMs, color, ascii, bell: Boolean(values.bell), agents, showEnded: !values['hide-ended'], mouse: !values['no-mouse'],
+    intervalMs, color, ascii, bell: Boolean(values.bell), agents, showEnded: !values['hide-ended'], view, mouse: !values['no-mouse'],
   });
   process.exit(0);
 }
 
 const snap = await monitor.refresh();
 if (values.json) {
-  // The events are many and long; the details view shows them.
-  process.stdout.write(JSON.stringify(snap, (k, v) => (k === 'events' ? undefined : v), 2) + '\n');
+  // The events, the tool calls and turns, and the usage's samples are many and long: the views
+  // draw them. So are the drops, gone in half a minute, and the folders of the sessions not listed.
+  const left = new Set(['events', 'calls', 'turns', 'history', 'drops', 'cwds']);
+  process.stdout.write(JSON.stringify(snap, (k, v) => (left.has(k) ? undefined : v), 2) + '\n');
 } else {
   const width = process.stdout.columns || Number(process.env.COLUMNS) || 160;
   process.stdout.write(table(snap, { width, now: snap.at, agents, showEnded: !values['hide-ended'] }, makeTheme({ color, ascii, animate: false })));

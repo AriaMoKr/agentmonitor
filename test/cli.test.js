@@ -76,6 +76,9 @@ test('a wrong option ends with status 2, saying why', async () => {
     [['--serve', '--port', '65536'], /--port takes a number from 0 to 65535, not '65536'/],
     [['--serve', '--token', 'too-short'], /--token takes 16 or more letters, digits, - and _/],
     [['--serve', '--token', 'sixteen chars ok'], /--token takes 16 or more letters, digits, - and _/],
+    [['--view', 'nope'], /--view takes overview, floor, board, lanes, ticker, pipeline, files, chart, share, today, tank, radar, spark, not 'nope'/],
+    [['--view', 'radar', '--once'], /--view does not go with --once or --json/],
+    [['--view', 'radar', '--json'], /--view does not go with --once or --json/],
   ])) {
     const r = await run(args);
     assert.equal(r.code, 2, args.join(' '));
@@ -143,22 +146,30 @@ test('--once and --json with the session\'s usage carried on to now with the rep
   // Its window began on the mark at or before the reply 160 minutes ago: it resets five hours on.
   const resets = timeOfDay(mark(now - 160 * MINUTE) + 5 * HOUR);
   assert.match(first, new RegExp(`^ Claude agents {2}· 1 ended +session ~50% resets ${resets} {2}week 26% {2}1h ago$`));
-  const json = JSON.parse((await run(['--json', '--dir', cfg.dir], app.env)).stdout);
+  const { stdout } = await run(['--json', '--dir', cfg.dir], app.env);
+  const json = JSON.parse(stdout);
   assert.deepEqual({ week: json.usage.week, tracked: json.usage.tracked.session }, { week: 26, tracked: 50 });
+  // The samples, the replies dropping in and the folders of the sessions not listed are for the views.
+  assert.doesNotMatch(stdout, /"(history|drops|cwds)"/);
 });
 
-test('--json prints what was found, without the events', async (t) => {
+test('--json prints what was found, without the events, the tool calls and the turns', async (t) => {
   const cfg = makeConfig(t);
   const now = Date.now();
   const id = sessionId();
-  cfg.transcript(id, [rec.prompt('Json session', now - HOUR), rec.reply('Hello.', now - HOUR + 1000)], { mtime: now - HOUR + 1000 });
+  cfg.transcript(id, [
+    rec.prompt('Json session', now - HOUR),
+    rec.tool('toolu_1', 'Read', { file_path: 'C:\\work\\demo\\a.js' }, now - HOUR + 500),
+    rec.result('toolu_1', now - HOUR + 600),
+    rec.reply('Hello.', now - HOUR + 1000),
+  ], { mtime: now - HOUR + 1000 });
   const { code, stdout } = await run(['--json', '--dir', cfg.dir]);
   assert.equal(code, 0);
   const snap = JSON.parse(stdout);
   assert.equal(snap.found, true);
   assert.equal(snap.windowMs, 24 * HOUR);
   assert.deepEqual(snap.rows.map((/** @type {any} */ r) => [r.title, r.state, r.activity]), [['Json session', 'ended', 'Hello.']]);
-  assert.doesNotMatch(stdout, /"events"/);
+  assert.doesNotMatch(stdout, /"(events|calls|turns)"/);
 });
 
 test('--since and --hide-ended; a folder with no sessions', async (t) => {

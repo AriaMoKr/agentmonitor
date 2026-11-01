@@ -52,14 +52,14 @@ function sessions(now = Date.now()) {
 
 /**
  * @typedef {{ title: string, bell: boolean, ring: boolean, lines: import('../src/serve.js').Run[][], keys: [number, number, number, string][],
- *   filter: string, typing: boolean, text: string[] }} Screen
+ *   filter: string, typing: boolean, fast?: boolean, text: string[] }} Screen
  */
 
 /**
  * Serves `monitor` on a free port of this computer, for the test to ask.
  * @param {import('node:test').TestContext} t
  * @param {ReturnType<typeof fakeMonitor>} monitor
- * @param {{ intervalMs?: number, ascii?: boolean, bell?: boolean, pageTtlMs?: number, maxPages?: number, onQuit?: () => void }} [o]
+ * @param {{ intervalMs?: number, ascii?: boolean, bell?: boolean, view?: string, pageTtlMs?: number, maxPages?: number, onQuit?: () => void }} [o]
  */
 async function start(t, monitor, o = {}) {
   /** @type {string[]} */
@@ -202,7 +202,7 @@ test('keys move the selection and open the details; each page keeps a view of it
   assert.doesNotMatch(help, /quit|shift\+drag/);
   // Taller than the window: it scrolls.
   const end = (await s.screen('page-bbbb', ['k:end'], { h: 30 })).text;
-  assert.match(end.join('\n'), /Columns[\s\S]*any other key or a click goes back/);
+  assert.match(end.join('\n'), /Views below the list[\s\S]*spark[\s\S]*any other key or a click goes back/);
   assert.match(end.at(-1) ?? '', /^ esc back .* \d+-(\d+)\/\1 $/);
   // Back to the list, and a filter typed.
   a = await s.screen('page-aaaa', ['k:escape', 'c:/', 'c:d', 'c:o', 'c:c', 'c:s', 'k:enter']);
@@ -231,6 +231,25 @@ test('in the agentmonitor app q quits, from the list or the footer; in the help 
   const [line, from] = a.keys.find((k) => k[3] === 'q') ?? [];
   await s.screen('page-aaaa', [`m:${from},${line}`]);
   assert.equal(quits, 2);
+});
+
+test('v steps through the views below the list; one that moves of itself has its page ask more often, where there is room for it', async (t) => {
+  const s = await start(t, fakeMonitor(() => sessions()));
+  assert.equal((await s.screen('page-aaaa', [], { h: 30 })).fast, undefined, 'the overview');
+  let a = await s.screen('page-aaaa', ['c:v'], { h: 30 });
+  assert.match(a.text.join('\n'), / ─ Floor ─/);
+  assert.match(a.text.at(-1) ?? '', /^ floor: each session as a figure/);
+  assert.equal(a.fast, true);
+  assert.equal((await s.screen('page-aaaa', [], { h: 5 })).fast, undefined, 'no room for it');
+  assert.equal((await s.screen('page-aaaa', [], { h: 30, quiet: true })).fast, undefined, 'out of sight');
+  a = await s.screen('page-aaaa', ['c:v'], { h: 30 });
+  assert.match(a.text.join('\n'), / ─ Board ─/);
+  assert.equal(a.fast, undefined);
+  assert.equal((await s.screen('page-bbbb', [], { h: 30 })).fast, undefined, 'each page has its own');
+  const radar = await start(t, fakeMonitor(() => sessions()), { view: 'radar' });
+  a = await radar.screen('page-aaaa', [], { h: 30 });
+  assert.match(a.text.join('\n'), / ─ Radar ─/);
+  assert.equal(a.fast, true, 'with --view');
 });
 
 test('a click selects a row, a double click opens it, a click on a title sorts; the wheel moves', async (t) => {

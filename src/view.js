@@ -31,6 +31,9 @@ import { ago, bytes, clock, durationLabel, elapsed, fit, graphemes, shortModel, 
  * @property {AgentsShown} agents which agents of a session are listed under it
  * @property {boolean} bell whether the bell rings when a session starts waiting for you, or
  *   finishes its turn
+ * @property {string} panel the view below the list's rows, by its name (src/panels.js)
+ * @property {Map<string, { from: string, to: string, at: number }>} moves the sessions whose
+ *   column on the board changed lately: from which, to which, and when
  * @property {string} message shown in the footer until messageUntil
  * @property {number} messageUntil
  *
@@ -42,8 +45,11 @@ import { ago, bytes, clock, durationLabel, elapsed, fit, graphemes, shortModel, 
  *   the rows), open this agent's details, sort, or press a key
  * @typedef {{ y: number, x0: number, x1: number, action: Action }} Hit a place a click acts on:
  *   line y, from column x0 up to x1
- * @typedef {{ text: string, action: Action }} PanelLine a line below the list's rows, and what a
- *   click on it does
+ * @typedef {{ x0: number, x1: number, action: Action }} Spot a part of a line a click acts on
+ * @typedef {{ text: string, action: Action, cells?: Spot[] }} PanelLine a line below the list's
+ *   rows, and what a click on it does: on its cells, theirs, anywhere else its own
+ * @typedef {(snap: Snapshot, rows: Row[], ui: Ui, screen: Screen, t: Theme) => PanelLine[]} Panel
+ *   a view of the room below the rows, in `screen.height` lines
  */
 
 /** The sort a click on a column's title picks. */
@@ -57,7 +63,7 @@ export function initialUi() {
   return {
     view: 'list', selected: undefined, index: 0, top: 0, logScroll: 0, helpTop: 0,
     filter: '', editingFilter: false, sort: 'status', showEnded: true, agents: 'running', bell: false,
-    message: '', messageUntil: 0,
+    panel: 'overview', moves: new Map(), message: '', messageUntil: 0,
   };
 }
 
@@ -134,10 +140,33 @@ export const shown = (a) => (a.blocked ? 'blocked' : a.unread ? 'unread' : a.inT
  * @param {Theme} t
  * @param {number} now
  */
-function glyphChar(state, t, now) {
+export function glyphChar(state, t, now) {
   if ((state === 'working' || state === 'running') && t.animate) return t.spinner[Math.floor(now / 100) % t.spinner.length];
   if (state === 'tool' && t.animate) return t.toolSpinner[Math.floor(now / 250) % t.toolSpinner.length];
   return t.glyphs[state] ?? '?';
+}
+
+/**
+ * A state's color: green at work, yellow when it needs you, blue unread, cyan idle...
+ * @param {Shown} state
+ * @param {Theme} t
+ * @returns {(s: string) => string}
+ */
+export function paintOf(state, t) {
+  switch (state) {
+    case 'working':
+    case 'running':
+    case 'tool': return t.green;
+    case 'waiting':
+    case 'blocked': return t.yellowBold;
+    case 'unread': return t.blueBold;
+    case 'background':
+    case 'idle': return t.cyan;
+    case 'active': return t.blue;
+    case 'failed': return t.red;
+    case 'stopped': return t.magenta;
+    default: return t.dim;
+  }
 }
 
 /**
@@ -146,22 +175,8 @@ function glyphChar(state, t, now) {
  * @param {Theme} t
  * @param {number} now
  */
-function glyph(state, t, now) {
-  const g = glyphChar(state, t, now);
-  switch (state) {
-    case 'working':
-    case 'running':
-    case 'tool': return t.green(g);
-    case 'waiting':
-    case 'blocked': return t.yellowBold(g);
-    case 'unread': return t.blueBold(g);
-    case 'background':
-    case 'idle': return t.cyan(g);
-    case 'active': return t.blue(g);
-    case 'failed': return t.red(g);
-    case 'stopped': return t.magenta(g);
-    default: return t.dim(g);
-  }
+export function glyph(state, t, now) {
+  return paintOf(state, t)(glyphChar(state, t, now));
 }
 
 /** @param {State} state */
@@ -333,7 +348,7 @@ function rowText(row, cols, t, now, plain) {
  * What the PROJECT column says: a session's folder, a subagent's type, a workflow agent's phase.
  * @param {Agent} a
  */
-function placeOf(a) {
+export function placeOf(a) {
   if (a.type === 'session') return a.project ?? '';
   if (a.type === 'workflow') return a.phase ?? '';
   if (a.type === 'agent') return a.phase ?? '';
@@ -452,7 +467,7 @@ const USAGE_FRESH = 45 * MINUTE;
  * @param {number} now
  * @returns {{ session?: Limit, week?: Limit }}
  */
-function limitsOf(u, now) {
+export function limitsOf(u, now) {
   const k = u.tracked;
   const s = u.sessionReset;
   const w = u.weekReset;
@@ -472,13 +487,13 @@ function limitsOf(u, now) {
  * @param {string} s
  * @param {Theme} t
  */
-const levelOf = (n, s, t) => (n >= 90 ? t.red(s) : n >= 75 ? t.yellow(s) : s);
+export const levelOf = (n, s, t) => (n >= 90 ? t.red(s) : n >= 75 ? t.yellow(s) : s);
 
 /**
  * When the session's limit resets, to five minutes, where it is known within half an hour.
  * @param {import('./usage.js').Reset | undefined} r
  */
-const sessionEnd = (r) => (r && r.to - r.from <= 30 * MINUTE ? Math.round(r.at / (5 * MINUTE)) * 5 * MINUTE : undefined);
+export const sessionEnd = (r) => (r && r.to - r.from <= 30 * MINUTE ? Math.round(r.at / (5 * MINUTE)) * 5 * MINUTE : undefined);
 
 /**
  * The plan's usage in the header: how much of the session's limit and of the week's is used,
@@ -576,7 +591,7 @@ function spread(left, right, cols, t) {
 
 const SGR = /\x1b\[[0-9;]*m/g;
 /** @param {string} s */
-function visibleWidth(s) {
+export function visibleWidth(s) {
   return width(s.replace(SGR, ''));
 }
 
@@ -676,17 +691,18 @@ export function wrapStyled(s, cols, indent = 0) {
 }
 
 /**
- * The list view: header, column titles, the rows, below them what fits of panelLines, and the
- * footer.
+ * The list view: header, column titles, the rows, below them the view of the room they leave
+ * (panelLines, the overview, unless another is given), and the footer.
  * @param {Snapshot} snap
  * @param {Row[]} rows
  * @param {Ui} ui
  * @param {Screen} screen
  * @param {Theme} t
  * @param {Hit[]} [hits] gets where a click goes: the rows, below them, the column titles, the keys
+ * @param {Panel} [panel] the view below the rows
  * @returns {string[]}
  */
-export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits = []) {
+export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits = [], panel = panelLines) {
   const lines = [header(snap, cols, now, t)];
   const cs = columns(cols);
   lines.push(t.dim(t.pad(' ' + cs.map((c) => fit(c.title, c.width, c.align, t.ellipsis)).join(' '), cols)));
@@ -714,9 +730,14 @@ export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits 
     lines.push(selected && t.color ? t.inverse(t.pad(text, cols)) : t.pad(selected ? `>${text.slice(1)}` : text, cols));
     hits.push({ y: lines.length - 1, x0: 0, x1: cols, action: { select: row.agent.key } });
   }
-  for (const p of panelLines(snap, rows, ui, { width: cols, height: body - listed, now }, t)) {
+  const room = body - listed;
+  const below = room > 0 ? panel(snap, rows, ui, { width: cols, height: room, now }, t).slice(0, room) : [];
+  while (below.length < room) below.push({ text: ' '.repeat(cols), action: { unselect: true } });
+  for (const p of below) {
     lines.push(p.text);
-    hits.push({ y: lines.length - 1, x0: 0, x1: cols, action: p.action });
+    const y = lines.length - 1;
+    for (const c of p.cells ?? []) hits.push({ y, x0: c.x0, x1: c.x1, action: c.action });
+    hits.push({ y, x0: 0, x1: cols, action: p.action });
   }
   // The last line leaves the last column alone: writing there can scroll some terminals.
   const y = lines.length;
@@ -787,7 +808,7 @@ function panelLines(snap, rows, ui, { width: cols, height, now }, t) {
  * @param {number} cols
  * @param {Theme} t
  */
-function heading(left, right, cols, t) {
+export function heading(left, right, cols, t) {
   const l = ` ${t.dim(t.rule)} ${left} `;
   const r = right ? ` ${right} ${t.dim(t.rule)} ` : ' ';
   const fill = cols - visibleWidth(l) - visibleWidth(r);
@@ -816,7 +837,7 @@ function wrapped(s, cols, indent, most, t) {
  * How long till then, to the minute: '55m', '3h05m', '2d06h'.
  * @param {number} ms
  */
-const till = (ms) => (ms < HOUR ? `${Math.max(1, Math.round(ms / MINUTE))}m` : elapsed(ms));
+export const till = (ms) => (ms < HOUR ? `${Math.max(1, Math.round(ms / MINUTE))}m` : elapsed(ms));
 
 /**
  * A bar `w` columns wide of a limit used `v` percent, colored as the percent is, and marked
@@ -826,7 +847,7 @@ const till = (ms) => (ms < HOUR ? `${Math.max(1, Math.round(ms / MINUTE))}m` : e
  * @param {number} w
  * @param {Theme} t
  */
-function bar(v, gone, w, t) {
+export function bar(v, gone, w, t) {
   const used = Math.round((Math.max(0, Math.min(100, v)) / 100) * w);
   const at = gone === undefined ? -1 : Math.max(0, Math.min(w - 1, Math.floor(gone * w)));
   const kind = (/** @type {number} */ i) => (i === at ? 'mark' : i < used ? 'full' : 'empty');
@@ -1042,11 +1063,12 @@ function footer(ui, rows, t, cols, now, onHit) {
   if (ui.message && now < ui.messageUntil) return t.pad(` ${t.yellow(ui.message)}`, cols);
   const pos = rows.length ? `${ui.index < 0 ? '-' : ui.index + 1}/${rows.length}` : '';
   const filter = ui.filter ? `${t.yellow(`filter "${ui.filter}"`)} ${t.dim('esc clears')}  ` : '';
-  // Each key with what it is worth its room (on a narrow screen the least worth go first), and
-  // the key a click on it presses. A phone has no keys but these, the filter among them.
+  // Each key with what it is worth its room (on a narrow screen the least worth go first, and of
+  // the last of them to go, as many come back as fit), and the key a click on it presses. A
+  // phone has no keys but these, the filter and the views among them.
   /** @type {[string, number, string | undefined][]} */
   const all = [
-    [`${t.arrows} move`, 3, undefined], [`${t.enter} details`, 4, 'enter'], ['/ filter', 4, '/'], [`s sort:${ui.sort}`, 2, 's'],
+    [`${t.arrows} move`, 3, undefined], [`${t.enter} details`, 4, 'enter'], ['/ filter', 4, '/'], ['v view', 4, 'v'], [`s sort:${ui.sort}`, 2, 's'],
     [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'],
     [`b bell:${ui.bell ? 'on' : 'off'}`, 1, 'b'], ['? help', 5, '?'],
   ];
@@ -1054,10 +1076,16 @@ function footer(ui, rows, t, cols, now, onHit) {
   if (t.quit) all.push(['q quit', 5, 'q']);
   // A space before, two between the keys and the position, and one after it.
   const room = cols - visibleWidth(filter) - width(pos) - 4;
+  const fits = (/** @type {typeof all} */ keys) => width(keys.map(([k]) => k).join('  ')) <= room;
   let shown = all;
   for (let worth = 0; worth <= 5; worth++) {
     shown = all.filter(([, w]) => w > worth);
-    if (width(shown.map(([k]) => k).join('  ')) <= room) break;
+    if (!fits(shown)) continue;
+    for (const k of all.filter(([, w]) => w === worth)) {
+      const more = all.filter((x) => x === k || shown.includes(x));
+      if (fits(more)) shown = more;
+    }
+    break;
   }
   if (filter) onHit({ x0: 1, x1: 1 + visibleWidth(filter) - 2, action: { key: 'escape' } });
   keyHits(shown.map(([k, , key]) => [k, key]), 1 + visibleWidth(filter), onHit);
@@ -1138,7 +1166,7 @@ export function detailLines(a, snap, ui, { width: cols, height, now }, t, hits =
  * @param {number} now
  * @param {Theme} t
  */
-function statusOf(a, now, t) {
+export function statusOf(a, now, t) {
   const turn = a.turn && a.turn.category !== 'completed' && a.turn.category.replace(/_/g, ' ');
   const word = a.inTool ? 'in a tool' : waitsInBackground(a) ? 'background' : a.state;
   return [word, turn, a.unread && 'unread', ongoing(a) && elapsed(now - a.activityAt)].filter(Boolean).join(t.sep);
@@ -1281,8 +1309,9 @@ function eventLine(e, cols, now, t) {
  * @param {Theme} t
  * @param {string} dir
  * @param {boolean} [mouse] whether the mouse is on
+ * @param {{ name: string, what: string }[]} [views] the views below the list, as v steps through them
  */
-export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
+export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, views = []) {
   const g = t.glyphs;
   // No wider than 88 columns on a wide screen: two keys and what they do take 87.
   const measure = Math.min(cols, 88);
@@ -1313,6 +1342,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     ...key('a', 'agents under their session: running, all, none'),
     ...key('w', 'window for "recently active": 1h, 6h, 24h, 3d, 7d'),
     ...key('b', 'bell on or off: it rings when a session needs you or ends its turn'),
+    ...(views.length ? key('v V', 'the next view below the list, or the one before') : []),
     ...(t.quit ? pair('r', 'read again', t.quit, 'quit (q in the details goes back)') : key('r', 'read again')),
     ...(mouse ? [
       ...key('click', 'select a row, or none below the rows; double-click for its details'),
@@ -1343,7 +1373,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     ...key('LAST', 'how long ago it last did anything'),
     ...key('ACTIVITY', 'what it is doing, with how many of its tasks are done (4/8) and how long the current step has taken'),
     '',
-    ` ${t.bold('Below the list')}${t.dim(', where there is room')}`,
+    ` ${t.bold('Below the list')}${t.dim(views.length > 1 ? ': the overview, where there is room' : ', where there is room')}`,
     ...key('selected', 'what the selected session or agent is doing, waits for or did last, its tasks, its latest messages'),
     ...key('Needs you', 'the other sessions waiting on you, with what for, or the reply you have not read'),
     ...key('Activity', 'the latest prompts, replies and errors of the sessions listed'),
@@ -1351,6 +1381,11 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true) {
     ...key('+12%/h', "the session's pace, the last hour's, as this computer's replies tell it"),
     ...key('+7%/d', "the week's, since it reset"),
     ...(mouse ? key('click', 'on a session or an agent there opens its details; anywhere else selects none') : []),
+    ...(views.length > 1 ? [
+      '',
+      ` ${t.bold('Views below the list')}${t.dim(', which v and V step through')}`,
+      ...views.flatMap((v) => key(v.name, v.name === ui.panel ? `${v.what} ${t.yellow('(shown)')}` : v.what)),
+    ] : []),
     '',
     ...say(` ${t.dim(`Reading ${dir}`)}`, 1),
     ...say(` ${t.dim(`${t.arrows} pgup pgdn home end${mouse ? ' and the wheel' : ''} scroll; any other key${mouse ? ' or a click' : ''} goes back.`)}`, 1),

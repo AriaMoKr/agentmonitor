@@ -26,13 +26,14 @@ const MOUSE_OFF = '\x1b[?1006l\x1b[?1000l';
  *   or finishes its turn (b turns it on or off)
  * @param {import('./view.js').AgentsShown} o.agents
  * @param {boolean} o.showEnded
+ * @param {string} [o.view] the view below the list it starts with (v steps through them)
  * @param {boolean} [o.mouse] have the terminal report clicks and the wheel
  * @param {number} [o.repaintMs] how often every line is drawn again, changed or not
  * @param {NodeJS.ReadStream} [o.stdin]
  * @param {NodeJS.WriteStream} [o.stdout]
  * @returns {Promise<void>}
  */
-export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEnded, mouse = true, repaintMs = 2000, stdin = process.stdin, stdout = process.stdout }) {
+export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEnded, view, mouse = true, repaintMs = 2000, stdin = process.stdin, stdout = process.stdout }) {
   const t = makeTheme({ color, ascii });
   const viewer = new Viewer({
     monitor,
@@ -40,6 +41,7 @@ export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEn
     agents,
     showEnded,
     bell,
+    view,
     mouse,
     refresh: () => refresh(),
     // The selected agent has its transcript read, done or not, for the panel and its details; now.

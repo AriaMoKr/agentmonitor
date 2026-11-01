@@ -75,6 +75,70 @@ test('tool calls stay pending until their result, and failures become events', a
   assert.equal(tx.info.pending.size, 0);
 });
 
+test('the latest tool calls, each from its call to its result: the file an edit changes, whether it failed, whether it waits on you', async (t) => {
+  const path = tempFile(t);
+  writeFileSync(path, jsonl([
+    rec.prompt('fix it', NOW - 10_000),
+    rec.tool('toolu_1', 'Edit', { file_path: 'C:\\work\\demo\\a.js', old_string: 'a', new_string: 'b' }, NOW - 9000),
+    rec.result('toolu_1', NOW - 8500),
+    rec.tool('toolu_2', 'Bash', { command: 'npm test', description: 'Run the tests' }, NOW - 8000),
+    rec.result('toolu_2', NOW - 6000, true),
+    rec.tool('toolu_3', 'AskUserQuestion', { questions: [{ question: 'Which one?', header: 'Pick' }] }, NOW - 5000),
+    rec.tool('toolu_4', 'mcp__ccd_session__start_session', { initiation: 'offer', title: 'Docs' }, NOW - 4000),
+    rec.tool('toolu_5', 'mcp__ccd_session__start_session', { initiation: 'own_initiative', title: 'Tests' }, NOW - 3000),
+  ]));
+  const tx = new Transcript(path);
+  await update(tx);
+  assert.deepEqual(tx.info.calls.map(({ id, name, ts, end, error, file, asks }) => ({ id, name, ts, end, error, file, asks })), [
+    { id: 'toolu_1', name: 'Edit', ts: NOW - 9000, end: NOW - 8500, error: false, file: 'C:\\work\\demo\\a.js', asks: undefined },
+    { id: 'toolu_2', name: 'Bash', ts: NOW - 8000, end: NOW - 6000, error: true, file: undefined, asks: undefined },
+    { id: 'toolu_3', name: 'AskUserQuestion', ts: NOW - 5000, end: 0, error: false, file: undefined, asks: true },
+    { id: 'toolu_4', name: 'mcp__ccd_session__start_session', ts: NOW - 4000, end: 0, error: false, file: undefined, asks: true },
+    { id: 'toolu_5', name: 'mcp__ccd_session__start_session', ts: NOW - 3000, end: 0, error: false, file: undefined, asks: undefined },
+  ]);
+  assert.equal(tx.info.calls[1].summary, 'Bash: Run the tests');
+  appendFileSync(path, jsonl([rec.result('toolu_3', NOW - 1000)]));
+  await update(tx);
+  assert.equal(tx.info.calls[2].end, NOW - 1000);
+});
+
+test("the turns: from a prompt to the reply that ends it; a background task's end begins one, an interruption or an API error ends one", async (t) => {
+  const path = tempFile(t);
+  writeFileSync(path, jsonl([
+    // The part read begins in a turn: its first reply begins it.
+    rec.tool('toolu_0', 'Read', { file_path: 'C:\\work\\demo\\a.js' }, NOW - 90_000),
+    rec.result('toolu_0', NOW - 89_000),
+    rec.reply('Read it.', NOW - 88_000),
+    rec.prompt('go on', NOW - 60_000),
+    rec.tool('toolu_1', 'Bash', { command: 'ls' }, NOW - 55_000),
+    rec.result('toolu_1', NOW - 54_000),
+    rec.reply('Done.', NOW - 50_000, { id: 'msg_end' }),
+    // A later block of the reply that ended the turn: it ends later.
+    rec.reply('And more.', NOW - 49_000, { id: 'msg_end' }),
+    // A compaction's summary is no prompt.
+    { ...rec.prompt('This session is being continued from a previous conversation.', NOW - 45_000), isCompactSummary: true },
+    rec.taskEnd('toolu_x', 'bx1', 'completed', NOW - 40_000),
+    rec.reply('The build passed.', NOW - 38_000),
+    rec.prompt('next', NOW - 30_000),
+    rec.prompt('[Request interrupted by user]', NOW - 28_000),
+    rec.prompt('again', NOW - 20_000),
+    rec.apiError('Overloaded', NOW - 19_000),
+    rec.prompt('once more', NOW - 10_000),
+    rec.tool('toolu_2', 'Bash', { command: 'npm test' }, NOW - 9000),
+  ]));
+  const tx = new Transcript(path);
+  await update(tx);
+  assert.deepEqual(tx.info.turns, [
+    { start: NOW - 90_000, end: NOW - 88_000 },
+    { start: NOW - 60_000, end: NOW - 49_000 },
+    { start: NOW - 40_000, end: NOW - 38_000 },
+    { start: NOW - 30_000, end: NOW - 28_000 },
+    { start: NOW - 20_000, end: NOW - 19_000 },
+    { start: NOW - 10_000, end: 0 },
+  ]);
+  assert.equal(tx.info.prompts, 4, 'not the summary, the task\'s end or the interruption');
+});
+
 test('a failed tool call says why, without the tags around it', async (t) => {
   const path = tempFile(t);
   const failed = rec.result('toolu_1', NOW - 1000, true);

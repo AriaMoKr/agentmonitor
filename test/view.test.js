@@ -414,12 +414,13 @@ test('the footer: the filter in use first, as many keys as fit, and where the se
     settleSelection(ui, rows, 17);
     return listLines(snap, rows, ui, { width: cols, height: 20, now: NOW }, plain)[19];
   };
-  assert.match(footer(160), /^ ↑↓ move {2}⏎ details {2}\/ filter {2}s sort:status {2}e ended:on {2}a agents:running {2}w window {2}b bell:off {2}\? help {2}q quit +1\/8 $/);
-  assert.match(footer(100), /^ ↑↓ move .*e ended:on {2}a agents:running {2}\? help {2}q quit +1\/8 $/);
-  assert.match(footer(60), /^ ↑↓ move {2}⏎ details {2}\/ filter {2}\? help {2}q quit +1\/8 $/);
+  assert.match(footer(160), /^ ↑↓ move {2}⏎ details {2}\/ filter {2}v view {2}s sort:status {2}e ended:on {2}a agents:running {2}w window {2}b bell:off {2}\? help {2}q quit +1\/8 $/);
+  // The least worth go first, and of the last to go, those that fit come back.
+  assert.match(footer(100), /^ ↑↓ move {2}⏎ details {2}\/ filter {2}v view {2}s sort:status {2}e ended:on {2}\? help {2}q quit +1\/8 $/);
+  assert.match(footer(60), /^ ↑↓ move {2}⏎ details {2}\/ filter {2}v view {2}\? help {2}q quit +1\/8 $/);
   // As wide as a phone: the keys a tap can press.
   assert.match(footer(43), /^ ⏎ details {2}\/ filter {2}\? help {2}q quit +1\/8 $/);
-  assert.match(footer(100, 'parser'), /^ filter "parser" esc clears {2}↑↓ move {2}⏎ details {2}\/ filter {2}\? help {2}q quit +1\/4 $/);
+  assert.match(footer(100, 'parser'), /^ filter "parser" esc clears {2}↑↓ move {2}⏎ details {2}\/ filter {2}v view {2}e ended:on {2}\? help {2}q quit +1\/4 $/);
 });
 
 /**

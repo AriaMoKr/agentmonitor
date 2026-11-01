@@ -110,9 +110,9 @@ test('help, the filter, sorting and hiding the sessions that ended', async (t) =
   await tui.until((s) => s.includes('Keys') && s.includes('bell on or off'));
   // Taller than these 16 lines: End shows its end, k the line above, and any other key goes back.
   tui.type('\x1b[F');
-  await tui.until((s) => s.includes('+7%/d') && s.includes('any other key or a click goes back'));
+  await tui.until((s) => s.includes('spark') && s.includes('any other key or a click goes back'));
   tui.type('k');
-  await tui.until((s) => s.includes('Below the list') && !s.includes('any other key'));
+  await tui.until((s) => s.includes('Reading') && !s.includes('any other key'));
   tui.type('x');
   await tui.until((s) => s.includes('NAME'));
   tui.type('/');

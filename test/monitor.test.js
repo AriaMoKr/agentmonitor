@@ -7,13 +7,14 @@ import { HOUR, iso, makeConfig, MINUTE, NOW, rec, sessionId } from './helpers/fi
 /**
  * A monitor of a test config folder; `running` gives the processes that run, as { pid: program }.
  * @param {ReturnType<typeof makeConfig>} cfg
- * @param {{ running?: Record<number, string>, windowMs?: number }} [o]
+ * @param {{ running?: Record<number, string>, windowMs?: number, wait?: boolean }} [o]
  */
-function monitorOf(cfg, { running = {}, windowMs = 24 * HOUR } = {}) {
+function monitorOf(cfg, { running = {}, windowMs = 24 * HOUR, wait = false } = {}) {
   const calls = { table: 0 };
   const monitor = new Monitor({
     dir: cfg.dir,
     windowMs,
+    wait,
     desktopDirs: async () => [cfg.desktop],
     isRunning: (pid) => Object.hasOwn(running, pid),
     processTable: async () => {
@@ -29,12 +30,46 @@ test('the plan\'s usage, as the desktop app last sampled it', async (t) => {
   const { monitor } = monitorOf(cfg);
   assert.equal((await monitor.refresh(NOW)).usage, undefined, 'none until the app samples it');
   cfg.planUsage([[NOW - 35 * MINUTE, 0, 10], [NOW - 20 * MINUTE, 40, 10], [NOW - 5 * MINUTE, 64, 29]]);
-  assert.deepEqual((await monitor.refresh(NOW + 5000)).usage, {
+  const { history, ...usage } = /** @type {import('../src/usage.js').Usage} */ ((await monitor.refresh(NOW + 5000)).usage);
+  assert.deepEqual(usage, {
     at: NOW - 5 * MINUTE,
     session: 64,
     week: 29,
     sessionReset: { at: NOW - 40 * MINUTE + 5 * HOUR, from: NOW - 40 * MINUTE + 5 * HOUR, to: NOW - 20 * MINUTE + 5 * HOUR },
   }, 'the session began about its last 0%, on the 10-minute mark before; the week has not dropped');
+  assert.deepEqual(history, {
+    session: [{ t: NOW - 35 * MINUTE, v: 0 }, { t: NOW - 20 * MINUTE, v: 40 }, { t: NOW - 5 * MINUTE, v: 64 }],
+    week: [{ t: NOW - 35 * MINUTE, v: 10 }, { t: NOW - 20 * MINUTE, v: 10 }, { t: NOW - 5 * MINUTE, v: 29 }],
+  }, 'and its samples, for the chart');
+});
+
+test('what today came to, once the replies are read back to midnight, and the folders of the sessions they are in', async (t) => {
+  const cfg = makeConfig(t);
+  // 1 p.m. on the day of NOW, wherever the tests run.
+  const now = new Date(NOW).setHours(13, 0, 0, 0);
+  const midnight = new Date(now).setHours(0, 0, 0, 0);
+  const id = sessionId();
+  cfg.transcript(id, [
+    rec.prompt('Late last night', midnight - HOUR),
+    rec.reply('Done.', midnight - HOUR + MINUTE),
+    rec.prompt('Fix the parser', now - 2 * HOUR),
+    rec.tool('toolu_1', 'Bash', { command: 'npm test' }, now - 2 * HOUR + MINUTE),
+    rec.result('toolu_1', now - 2 * HOUR + 2 * MINUTE),
+    rec.reply('Fixed.', now - 2 * HOUR + 3 * MINUTE),
+  ]);
+  const { monitor } = monitorOf(cfg);
+  assert.equal((await monitor.refresh(now)).today, undefined, 'read in the background: not yet');
+  await monitor.planUsage.ledger?.reading;
+  const snap = await monitor.refresh(now + 5000);
+  const hours = Array.from({ length: 14 }, (_, h) => (h === 11 ? 2 : 0));
+  assert.deepEqual(snap.today && { ...snap.today, models: snap.today.models.map(([m]) => m) }, {
+    from: midnight, sessions: 1, agents: 0, prompts: 1, replies: 2, out: 150, in: 60_005 + 50_000, waitedMs: 0,
+    tools: [['Bash', 1]], models: ['claude-opus-5-5'], hours,
+  });
+  assert.equal(snap.cwds?.get(id), 'C:\\work\\demo');
+  // Printed once, the replies are not read back to midnight.
+  const once = monitorOf(cfg, { wait: true }).monitor;
+  assert.equal((await once.refresh(now)).today, undefined);
 });
 
 test('a running session: its state, title, folder, model, context and the tool it is in', async (t) => {

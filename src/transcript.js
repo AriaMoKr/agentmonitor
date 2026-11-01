@@ -3,8 +3,8 @@
 // reads the tail on first sight and after that only what was appended, and keeps what the
 // monitor shows: when the agent last did something, its model, effort and context, whether it
 // was reminded that ultracode is on, the tool calls still waiting for a result, the commands it
-// runs in the background, its task list, the last prompt and reply, the titles and the latest
-// events.
+// runs in the background, its task list, the last prompt and reply, the titles, the latest
+// events, and its latest tool calls and turns, each from its start to its end.
 import { open } from 'node:fs/promises';
 import { readRange } from './files.js';
 import { clean, toolSummary } from './format.js';
@@ -18,6 +18,15 @@ const HEAD_BYTES = 64 << 10;
 const MAX_EVENTS = 200;
 const MAX_TEXT = 400;
 const MAX_STEPS = 30;
+const MAX_CALLS = 200;
+const MAX_TURNS = 100;
+/** The tools that change a file: the file is the one they name. */
+const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+/** The tools that ask you something; the start of a session asks only when it is offered. */
+const ASKS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+const OFFER = 'mcp__ccd_session__start_session';
+/** The reasons a reply stops for that end its turn. */
+const TURN_ENDS = new Set(['end_turn', 'stop_sequence', 'max_tokens', 'refusal']);
 // How a tool call's result begins when its command went on in the background, with its task ID
 // (a command's own output that says so further on is not taken for it).
 const TO_BACKGROUND = /^\s*Command (?:running in background with ID|did not complete [^\n]{0,80}?moved to the background \(ID): ?([\w-]+)/;
@@ -35,6 +44,18 @@ const SKIP = /^\{"type":"(?:api-request|file-history|atis-latch|frame-link|artif
  *   Claude Code's own (TodoWrite), as of its last change
  * @typedef {{ usd: number, input: number, output: number, cacheRead: number, cacheWrite: number,
  *   linesAdded: number, linesRemoved: number, apiMs: number, durationMs: number }} Cost
+ * @typedef {object} Call a tool call: when it was made, and when its result came
+ * @property {string} id its tool use ID
+ * @property {string} name the tool
+ * @property {string} summary the call in one line (toolSummary)
+ * @property {number} ts
+ * @property {number} end when its result came; 0 till then
+ * @property {boolean} error its result was an error
+ * @property {string} [file] the file an edit changes, as the call names it
+ * @property {boolean} [asks] it asks you something, and so waits on you: a question, a plan to
+ *   approve, a session offered
+ * @typedef {{ start: number, end: number }} Span a turn: from the prompt (or the message) that
+ *   began it to the reply that ended it; end 0 while it goes on
  * @typedef {ReturnType<typeof emptyInfo>} Info
  */
 
@@ -92,6 +113,12 @@ export function emptyInfo() {
     prompts: 0,
     /** @type {Event[]} the latest events, oldest first */
     events: [],
+    /** @type {Call[]} the latest tool calls, oldest first */
+    calls: [],
+    /** @type {Span[]} the latest turns, oldest first */
+    turns: [],
+    /** @type {string | undefined} the message ID of the reply that ended the last turn */
+    endedBy: undefined,
   };
 }
 
@@ -288,9 +315,13 @@ export function readRecord(info, rec) {
 function readUser(info, rec, ts) {
   info.lastRole = 'user';
   const content = rec.message?.content;
+  // A compaction's summary is no prompt: the conversation goes on.
+  const typed = !rec.isMeta && !rec.isCompactSummary;
   if (typeof content === 'string') {
     taskEnded(info, content, ts);
-    if (!rec.isMeta) addPrompt(info, content, ts);
+    // A background task's end, sent to a session not at work, begins a turn.
+    if (content.startsWith('<task-notification>')) startTurn(info, ts);
+    if (typed) addPrompt(info, content, ts);
     return;
   }
   if (!Array.isArray(content)) return;
@@ -298,6 +329,8 @@ function readUser(info, rec, ts) {
     if (part?.type === 'tool_result') {
       const call = info.pending.get(part.tool_use_id);
       info.pending.delete(part.tool_use_id);
+      const made = findCall(info, part.tool_use_id);
+      if (made) Object.assign(made, { end: Math.max(ts, made.ts), error: Boolean(part.is_error) });
       if (part.is_error) {
         // Its lines kept apart: 'Exit code 1 / 2 tests failed'.
         const text = textOf(part.content).replace(/<\/?tool_use_error>/g, '').trim();
@@ -306,10 +339,42 @@ function readUser(info, rec, ts) {
       } else if (call) {
         readResult(info, part.tool_use_id, call, textOf(part.content), ts);
       }
-    } else if (part?.type === 'text' && !rec.isMeta && !rec.toolUseResult) {
+    } else if (part?.type === 'text' && typed && !rec.toolUseResult) {
       addPrompt(info, part.text, ts);
     }
   }
+}
+
+/**
+ * A tool call read, by its tool use ID: the latest first, as a result mostly comes soon after.
+ * @param {Info} info
+ * @param {unknown} id
+ */
+function findCall(info, id) {
+  for (let i = info.calls.length - 1; i >= 0; i--) if (info.calls[i].id === id) return info.calls[i];
+  return undefined;
+}
+
+/**
+ * A turn begins, unless one goes on.
+ * @param {Info} info
+ * @param {number} ts
+ */
+function startTurn(info, ts) {
+  const last = info.turns.at(-1);
+  if (!ts || (last && !last.end)) return;
+  info.turns.push({ start: ts, end: 0 });
+  if (info.turns.length > MAX_TURNS) info.turns.shift();
+}
+
+/**
+ * The turn that goes on ends.
+ * @param {Info} info
+ * @param {number} ts
+ */
+function endTurn(info, ts) {
+  const last = info.turns.at(-1);
+  if (last && !last.end) last.end = Math.max(ts, last.start);
 }
 
 /**
@@ -424,7 +489,19 @@ function readAssistant(info, rec, ts) {
   const m = rec.message ?? {};
   const real = typeof m.model === 'string' && m.model !== '<synthetic>';
   if (real) info.model = m.model;
+  if (real && m.id && m.id === info.endedBy) {
+    // A later block of the reply that ended its turn (each says why the reply stopped).
+    const last = info.turns.at(-1);
+    if (last && ts > last.end) last.end = ts;
+  } else if (real) {
+    // A reply with no prompt read before it (the part read begins in its turn) begins one.
+    startTurn(info, ts);
+  }
   if (typeof m.stop_reason === 'string') info.lastStop = m.stop_reason;
+  if (TURN_ENDS.has(m.stop_reason) || rec.isApiErrorMessage) {
+    endTurn(info, ts);
+    info.endedBy = typeof m.id === 'string' ? m.id : undefined;
+  }
   const u = m.usage;
   if (real && u) {
     const ctx = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
@@ -455,6 +532,11 @@ function readAssistant(info, rec, ts) {
       if (info.pending.size > 64) info.pending.delete(/** @type {string} */ (info.pending.keys().next().value));
       info.seenTools.add(part.id);
       if (info.seenTools.size > 4096) info.seenTools.delete(/** @type {string} */ (info.seenTools.values().next().value));
+      const path = EDITS.has(name) ? part.input?.file_path ?? part.input?.notebook_path : undefined;
+      const file = typeof path === 'string' ? clean(path) : '';
+      const asks = ASKS.has(name) || (name === OFFER && part.input?.initiation === 'offer');
+      info.calls.push({ id: part.id, name, summary, ts, end: 0, error: false, ...(file ? { file } : {}), ...(asks ? { asks } : {}) });
+      if (info.calls.length > MAX_CALLS) info.calls.shift();
       addEvent(info, ts, 'tool', summary);
     } else if (part?.type === 'text') {
       const text = clean(part.text);
@@ -475,9 +557,11 @@ function addPrompt(info, raw, ts) {
   const text = promptText(raw);
   if (!text) return;
   if (text.startsWith('[Request interrupted')) {
+    endTurn(info, ts);
     addEvent(info, ts, 'info', 'interrupted');
     return;
   }
+  startTurn(info, ts);
   info.prompts++;
   info.lastPrompt = { text: text.slice(0, MAX_TEXT), ts };
   addEvent(info, ts, 'prompt', text);

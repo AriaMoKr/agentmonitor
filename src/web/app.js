@@ -1,8 +1,9 @@
-// The web view's page: asks the server for the screen every second, at the size the window
-// holds, and draws its lines; sends it the keys typed, the clicks and the wheel, which the
-// server's view of this page answers, and on a phone a finger's drags, and a filter typed with
-// its keyboard in a text field of the page's own; and beeps when the server says its bell rings.
-// What the server sends goes in as text, never as markup.
+// The web view's page: asks the server for the screen every second (four times a second while it
+// moves of itself), at the size the window holds, and draws its lines; sends it the keys typed,
+// the clicks and the wheel, which the server's view of this page answers, and on a phone a
+// finger's drags, and a filter typed with its keyboard in a text field of the page's own; and
+// beeps when the server says its bell rings. What the server sends goes in as text, never as
+// markup.
 
 /** Keys by their names in a KeyboardEvent, as the monitor names them. */
 const KEYS = new Map([
@@ -13,10 +14,11 @@ const KEYS = new Map([
 /** How far the wheel turns for a step, in pixels: a notch of it is about 100 in most browsers. */
 const WHEEL_STEP = 50;
 /**
- * How often the page asks while it is in sight (ms); and while it is out of sight, for its title
- * and its bell only.
+ * How often the page asks while it is in sight (ms); while what it shows moves of itself (a view
+ * below the list that is animated); and while it is out of sight, for its title and its bell only.
  */
 const EVERY = 1000;
+const FAST_EVERY = 250;
 const HIDDEN_EVERY = 3000;
 /** How soon it asks again when the server could not be reached, or answered with an error. */
 const RETRY = 3000;
@@ -172,6 +174,8 @@ function start() {
   let audio;
   /** whether the server says this page's bell is on */
   let bellOn = false;
+  /** whether what the server last sent moves of itself, so that it is asked for more often */
+  let fast = false;
   /** why the server can't be asked, said at the bottom */
   let error = '';
   let wheel = 0;
@@ -240,13 +244,14 @@ function start() {
   /**
    * Takes the server's answer: the title, the bell and what the keys are at once, the lines
    * unless text is selected, when the screen holds still so that the selection stays.
-   * @param {unknown} data { title, bell, ring, lines, keys, filter, typing }
+   * @param {unknown} data { title, bell, ring, lines, keys, filter, typing, fast }
    * @param {number} n the request it answers
    */
   function take(data, n) {
-    const { title, bell, ring, lines, keys: at, filter: text, typing: now } = /** @type {Record<string, unknown>} */ (data ?? {});
+    const { title, bell, ring, lines, keys: at, filter: text, typing: now, fast: moving } = /** @type {Record<string, unknown>} */ (data ?? {});
     if (typeof title === 'string') document.title = title;
     bellOn = bell === true;
+    fast = moving === true;
     if (ring === true && audio?.state === 'running') beep(audio);
     if (Array.isArray(at)) keys = at;
     if (typeof text === 'string') filter = text;
@@ -290,7 +295,7 @@ function start() {
     // Out of sight, only the title and the bell.
     if (document.hidden) query.set('quiet', '1');
     for (const input of queue.splice(0, MAX_INPUTS)) query.append('i', input);
-    let wait = document.hidden ? HIDDEN_EVERY : EVERY;
+    let wait = 0;
     try {
       const res = await fetch(`screen?${query}`, { cache: 'no-store' });
       if (res.status === 404) {
@@ -311,7 +316,7 @@ function start() {
     busy = false;
     if (gone) return;
     if (again || queue.length) ask();
-    else timer = setTimeout(ask, wait);
+    else timer = setTimeout(ask, wait || (document.hidden ? HIDDEN_EVERY : fast ? FAST_EVERY : EVERY));
   }
 
   /** @param {string} input */

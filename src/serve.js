@@ -78,6 +78,7 @@ export function newToken() {
  * @param {import('./view.js').AgentsShown} o.agents
  * @param {boolean} o.showEnded
  * @param {boolean} [o.bell] whether a page's bell starts on
+ * @param {string} [o.view] the view below the list a page starts with, by its name (src/panels.js)
  * @param {number} [o.pageTtlMs] how long a page that stopped asking keeps its view
  * @param {number} [o.maxPages] how many pages' views are kept at most
  * @param {(line: string) => void} [o.log] told of each page opened, and of errors
@@ -85,7 +86,7 @@ export function newToken() {
  *   quits as in a terminal, called once the page that sent it is answered
  * @returns {Promise<Served>}
  */
-export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = newToken(), intervalMs, ascii, agents, showEnded, bell = false, pageTtlMs = 10 * 60_000, maxPages = 50, log = () => {}, onQuit }) {
+export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = newToken(), intervalMs, ascii, agents, showEnded, bell = false, view, pageTtlMs = 10 * 60_000, maxPages = 50, log = () => {}, onQuit }) {
   if (!TOKEN.test(token)) throw new Error('a token is 16 or more letters, digits, - or _');
   const t = makeTheme({ color: true, ascii, animate: false, web: true, quit: onQuit ? 'q' : '' });
   const files = new Map(Object.entries(FILES).map(([name, [file, type]]) => [name, { body: readFileSync(new URL(`./web/${file}`, import.meta.url)), type }]));
@@ -163,6 +164,7 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
         agents,
         showEnded,
         bell,
+        view,
         refresh: () => {
           made.read = true;
         },
@@ -224,7 +226,7 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
     }
     /**
      * @type {{ title: string, bell: boolean, ring: boolean, lines?: Run[][], keys?: [number, number, number, string][],
-     *   filter?: string, typing?: boolean }}
+     *   filter?: string, typing?: boolean, fast?: boolean }}
      */
     const answer = { title: title(), bell: view.ui.bell, ring: snap ? view.rings(snap) : false };
     if (query.get('quiet') !== '1') {
@@ -236,6 +238,8 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
       answer.keys = view.hits.flatMap((h) => ('key' in h.action ? [/** @type {[number, number, number, string]} */ ([h.y, h.x0, h.x1, h.action.key])] : []));
       answer.filter = view.ui.filter;
       answer.typing = view.ui.editingFilter;
+      // A view below the list that moves of itself: the page asks more often while it shows one.
+      if (view.animating) answer.fast = true;
     }
     send(req, res, 200, JSON.stringify(answer), 'application/json; charset=utf-8');
   }

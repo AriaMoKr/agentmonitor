@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { Ledger, weightOf } from '../src/ledger.js';
+import { dayOf, Ledger, weightOf } from '../src/ledger.js';
 import { HOUR, iso, makeConfig, MINUTE, NOW, rec, sessionId } from './helpers/fixture.js';
 
 /**
@@ -57,6 +57,62 @@ test('each reply once, in every transcript, at its first record\'s time, asked f
     { t: 15, asked: 15, x: 200 },
     { t: 12, asked: 12, x: 750 },
   ]);
+});
+
+test("each reply's session, agent, model, tokens and tools; the prompts typed, the waits on you, the sessions' folders; what they came to", async (t) => {
+  const cfg = makeConfig(t);
+  const a = sessionId();
+  const b = sessionId();
+  /**
+   * A reply's record written in a folder, calling tools.
+   * @param {ReturnType<typeof block>} r @param {string} cwd @param {[string, string][]} [tools] each [tool use ID, name]
+   */
+  const reply = (r, cwd, tools = []) => ({
+    ...r, cwd, message: { ...r.message, content: tools.length ? tools.map(([id, name]) => ({ type: 'tool_use', id, name, input: {} })) : r.message.content },
+  });
+  const usage = { input_tokens: 100, cache_read_input_tokens: 1000, cache_creation_input_tokens: 200 };
+  cfg.transcript(a, [
+    rec.prompt('Fix the parser', NOW - 180 * MINUTE),
+    reply(block('m1', NOW - 170 * MINUTE, { ...usage, output_tokens: 40 }), '/work/a', [['toolu_1', 'Read']]),
+    reply(block('m1', NOW - 169 * MINUTE, { ...usage, output_tokens: 50 }), '/work/a', [['toolu_2', 'Read']]),
+    rec.result('toolu_1', NOW - 168 * MINUTE),
+    rec.result('toolu_2', NOW - 168 * MINUTE),
+    reply(block('m2', NOW - 160 * MINUTE, { output_tokens: 10 }), '/work/a', [['toolu_3', 'AskUserQuestion']]),
+    rec.result('toolu_3', NOW - 146 * MINUTE),
+    // About when it was answered: when the next reply was asked for, before it thought.
+    reply(block('m3', NOW - 144 * MINUTE, { output_tokens: 5 }, { thinking: MINUTE }), '/work/a'),
+    { ...rec.prompt('This session is being continued from a previous conversation.', NOW - 100 * MINUTE), isCompactSummary: true },
+    rec.prompt('[Request interrupted by user]', NOW - 90 * MINUTE),
+    rec.prompt('Now the tests', NOW - 60 * MINUTE),
+    reply(block('m4', NOW - 59 * MINUTE, { output_tokens: 100 }, { model: 'claude-haiku-5-5' }), '/work/a', [['toolu_4', 'Bash']]),
+  ]);
+  cfg.subagent(a, 'a1', { agentType: 'Explore' }, [rec.prompt('Look around', NOW - 101 * MINUTE), reply(block('m5', NOW - 100 * MINUTE, { output_tokens: 30 }), '/work/a/sub')]);
+  cfg.transcript(b, [rec.prompt('Write the docs', NOW - 30 * MINUTE), reply(block('m6', NOW - 29 * MINUTE, { output_tokens: 60 }), '/work/b')], { project: 'C--work-b' });
+  const ledger = new Ledger(join(cfg.dir, 'projects'));
+  const read = await ledger.read(NOW, NOW - 5 * HOUR, { wait: true });
+  assert.ok(read);
+  const opus = { session: a, model: 'claude-opus-5-5', in: 0, seen: NOW };
+  assert.deepEqual(read.replies.map(({ t, session, agent, model, out, in: input, tools, seen }) => ({ t: (NOW - t) / MINUTE, session, ...(agent ? { agent } : {}), model, out, in: input, tools, seen })), [
+    { ...opus, t: 170, out: 50, in: 1300, tools: ['Read', 'Read'] },
+    { ...opus, t: 160, out: 10, tools: ['AskUserQuestion'] },
+    { ...opus, t: 144, out: 5, tools: [] },
+    { ...opus, t: 100, agent: 'a1', out: 30, tools: [] },
+    { ...opus, t: 59, model: 'claude-haiku-5-5', out: 100, tools: ['Bash'] },
+    { ...opus, t: 29, session: b, out: 60, tools: [] },
+  ]);
+  assert.deepEqual(read.prompts?.map((p) => [(NOW - p.t) / MINUTE, p.session]), [[180, a], [60, a], [30, b]], "not a compaction's summary, an interruption, nor an agent's");
+  assert.deepEqual(read.waits?.map((w) => [(NOW - w.start) / MINUTE, (NOW - w.end) / MINUTE, w.session]), [[160, 145, a]]);
+  assert.deepEqual(read.cwds, new Map([[a, '/work/a'], [b, '/work/b']]), "a session's own folder, not its agent's");
+  const day = dayOf(read, NOW - 5 * HOUR, NOW);
+  assert.deepEqual({ ...day, models: day.models.map(([m, x]) => [m, Math.round(x * 1000) / 1000]) }, {
+    from: NOW - 5 * HOUR, sessions: 2, agents: 1, prompts: 3, replies: 6, out: 255, in: 1300, waitedMs: 15 * MINUTE,
+    tools: [['Read', 2], ['AskUserQuestion', 1], ['Bash', 1]],
+    // Output 50, input 100 at 0.2, cache reads 1000 at 0.0055 and writes 200 at 0.29; and 105 more.
+    models: [['claude-opus-5-5', 133.5 + 105], ['claude-haiku-5-5', 2.5]],
+    hours: [0, 0, 3, 1, 2],
+  });
+  // From later: the wait before it left out, and the hours from then.
+  assert.deepEqual(['replies', 'prompts', 'waitedMs', 'hours'].map((k) => dayOf(read, NOW - 2 * HOUR, NOW)[/** @type {keyof typeof day} */ (k)]), [3, 2, 0, [1, 2]]);
 });
 
 test('read in the background unless waited for, at most every 10 seconds, then only what the transcripts grow by', async (t) => {

@@ -195,6 +195,35 @@ test('the replies are needed back to the earliest rise the scales may use, or th
   assert.equal(repliesSince({ session: points([20 * 24 * 60, 0], [20 * 24 * 60 - 15, 10]), week: [] }, NOW), NOW - 8 * DAY);
 });
 
+test("what this computer's sessions and models used of each limit, as the samples are carried on; the replies of the last half minute, as they add to the session's", async (t) => {
+  const cfg = makeConfig(t);
+  // The week resets 10 hours from now, as two drops a week apart tell; the session and the week
+  // rose 30 and 6 points with the replies 150 to 105 minutes ago.
+  const R = NOW + 10 * HOUR;
+  const resets = [R - 2 * WEEK, R - WEEK].flatMap((r) => [[r - 10 * MINUTE, 0, 80], [r + 5 * MINUTE, 0, 1]]);
+  cfg.planUsage([...resets, [NOW - 150 * MINUTE, 0, 20], [NOW - 135 * MINUTE, 10, 22], [NOW - 120 * MINUTE, 20, 24], [NOW - 105 * MINUTE, 30, 26]]);
+  const opus = 'claude-opus-5-5';
+  const replies = /** @type {[number, number, string, string][]} */ ([
+    [160 * MINUTE, 1000, 'aaa', opus], [140 * MINUTE, 10_000, 'aaa', opus], [125 * MINUTE, 10_000, 'bbb', opus],
+    [110 * MINUTE, 10_000, 'aaa', 'claude-sonnet-5-5'], [60 * MINUTE, 20_000, 'bbb', opus], [20_000, 500, 'aaa', opus],
+  ]).map(([ago, x, session, model]) => ({ t: NOW - ago, asked: NOW - ago, x, session, model, seen: ago < MINUTE ? NOW - 5000 : NOW - ago }));
+  const ledger = /** @type {import('../src/ledger.js').Ledger} */ (/** @type {unknown} */ ({ read: async () => ({ from: NOW - 8 * HOUR, replies }) }));
+  const u = await new PlanUsage(async () => [cfg.desktop], ledger).read(NOW, { wait: true });
+  /** Its numbers to a thousandth. @param {unknown} v */
+  const round = (v) => JSON.parse(JSON.stringify(v, (_, n) => (typeof n === 'number' ? Math.round(n * 1000) / 1000 : n)));
+  assert.deepEqual(round(u?.tracked), {
+    at: NOW, session: 51, sessionReset: ends(140), sessionPace: 0.5,
+    week: 30, weekReset: { at: R, from: R - 9 * MINUTE, to: R + 5 * MINUTE },
+  });
+  // A point of the session for each thousand, of the week for each 5,000: the session's in its
+  // window, begun with the first reply; the week's since its reset, as far back as the replies are known.
+  assert.deepEqual(round(u?.split), {
+    session: { from: NOW - 160 * MINUTE, to: NOW, sessions: [['bbb', 30], ['aaa', 21.5]], models: [[opus, 41.5], ['claude-sonnet-5-5', 10]] },
+    week: { from: NOW - 8 * HOUR, to: NOW, sessions: [['bbb', 6], ['aaa', 4.3]], models: [[opus, 8.3], ['claude-sonnet-5-5', 2]] },
+  });
+  assert.deepEqual(round(u?.drops), [{ t: NOW - 20_000, seen: NOW - 5000, v: 0.5, session: 'aaa' }]);
+});
+
 test('the sample carried on once the replies are read, in the background unless waited for; till then, the sample alone', async (t) => {
   const cfg = makeConfig(t);
   cfg.planUsage([[NOW - 150 * MINUTE, 0, 20], [NOW - 135 * MINUTE, 10, 22], [NOW - 120 * MINUTE, 20, 24], [NOW - 105 * MINUTE, 30, 26]]);

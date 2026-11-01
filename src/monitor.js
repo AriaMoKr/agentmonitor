@@ -5,14 +5,15 @@
 // transcripts) and the agents' files beside them, and jobs/*/state.json (background sessions);
 // with the desktop app's own records of its sessions for titles, settings, which are unread, and
 // the app's summary of each one's last turn; and its samples of the plan's usage, carried on to
-// now with what the replies in the transcripts used since.
+// now with what the replies in the transcripts used since; and what the replies, the prompts and
+// the waits on you came to today.
 import { join } from 'node:path';
 import { SessionAgents } from './agents.js';
 import { DesktopSessions, desktopDataDirs } from './desktop.js';
 import { entries, JsonFiles, statOf } from './files.js';
 import { clean, kindLabel, lastPart } from './format.js';
 import { Jobs } from './jobs.js';
-import { Ledger } from './ledger.js';
+import { dayOf, Ledger } from './ledger.js';
 import { isRunning, looksLikeClaude, processTable, sameDomain } from './procs.js';
 import { Registry } from './registry.js';
 import { Transcript } from './transcript.js';
@@ -114,6 +115,9 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  *   the background, while it runs: not known to have ended
  * @property {Plan} [plan] its task list
  * @property {Event[]} events the latest, oldest first
+ * @property {import('./transcript.js').Call[]} [calls] its latest tool calls, oldest first, in
+ *   the part of its transcript read
+ * @property {import('./transcript.js').Span[]} [turns] its latest turns, likewise
  * @property {Agent[]} children
  *
  * @typedef {object} Snapshot
@@ -124,6 +128,10 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  * @property {Agent[]} rows the sessions, each with its agents as children
  * @property {import('./usage.js').Usage} [usage] how much of the plan's usage limits is used, as
  *   the desktop app last sampled it, and as carried on to now
+ * @property {import('./ledger.js').Day} [today] what the sessions did since midnight, once the
+ *   replies are read back to it
+ * @property {Map<string, string>} [cwds] the sessions' folders, as the replies read last said
+ *   them, for those that are not listed
  */
 
 /** The states of something still at work, or waiting to be. */
@@ -148,6 +156,10 @@ export class Monitor {
     this.jobs = new Jobs(join(dir, 'jobs'));
     this.desktop = new DesktopSessions(desktopDirs);
     this.planUsage = new PlanUsage(desktopDirs, new Ledger(join(dir, 'projects')));
+    /** Whether the replies are read back to midnight for what today came to (not when waited for). */
+    this.today = !wait;
+    /** @type {{ list: unknown, midnight: number, hour: number, value: import('./ledger.js').Day } | undefined} */
+    this.day = undefined;
     this.sessionAgents = new SessionAgents();
     this.json = new JsonFiles();
     this.isRunning = running;
@@ -181,12 +193,13 @@ export class Monitor {
    */
   async refresh(now = Date.now()) {
     this.usedTranscripts.clear();
+    const midnight = new Date(now).setHours(0, 0, 0, 0);
     const [records, jobs, desktop, files, usage] = await Promise.all([
       this.registry.read(),
       this.jobs.read(),
       this.desktop.read(now),
       this.scanProjects(),
-      this.planUsage.read(now, { wait: this.wait }),
+      this.planUsage.read(now, { wait: this.wait, since: this.today ? midnight : undefined }),
     ]);
     const live = await this.liveness(records, now);
     const cutoff = now - this.windowMs;
@@ -219,7 +232,29 @@ export class Monitor {
     }
     this.sessionAgents.sweep();
     this.json.sweep();
-    return { at: now, dir: this.dir, windowMs: this.windowMs, found: files.size > 0 || records.length > 0, rows, usage };
+    const replies = this.planUsage.replies;
+    const today = replies && replies.from <= midnight ? this.dayOf(replies, midnight, now) : undefined;
+    return {
+      at: now, dir: this.dir, windowMs: this.windowMs, found: files.size > 0 || records.length > 0, rows, usage,
+      ...(today ? { today } : {}),
+      ...(replies?.cwds ? { cwds: replies.cwds } : {}),
+    };
+  }
+
+  /**
+   * What the replies came to since midnight, worked out again only when they changed, or an
+   * hour began.
+   * @param {import('./ledger.js').Replies} replies
+   * @param {number} midnight
+   * @param {number} now
+   */
+  dayOf(replies, midnight, now) {
+    const hour = Math.floor((now - midnight) / 3_600_000);
+    const d = this.day;
+    if (d && d.list === replies.replies && d.midnight === midnight && d.hour === hour) return d.value;
+    const value = dayOf(replies, midnight, now);
+    this.day = { list: replies.replies, midnight, hour, value };
+    return value;
   }
 
   /**
@@ -392,6 +427,8 @@ export class Monitor {
         commands: record ? commandsOf(info) : undefined,
         plan: planOf(info),
         events: info?.events ?? [],
+        calls: info?.calls,
+        turns: info?.turns,
         children: i === 0 ? children : [],
       };
     });
@@ -590,6 +627,8 @@ function agentRow({ key, type, title, state, f, tx, agentType, phase, background
     commands: state === 'running' ? commandsOf(info) : undefined,
     plan: planOf(info),
     events: info?.events ?? [],
+    calls: info?.calls,
+    turns: info?.turns,
     children: [],
   };
 }

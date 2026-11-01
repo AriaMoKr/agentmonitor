@@ -6,7 +6,8 @@
 // 10-minute mark at or before its first use, where its percent began to rise. The percents are
 // carried on from the latest sample to now with what this computer's replies used since
 // (src/ledger.js), at as many points for so much as the samples rose by with them lately; and the
-// session's pace with the last hour's.
+// session's pace with the last hour's. At that rate too, what each session and model used of each
+// limit, and the points the replies just written add.
 import { join } from 'node:path';
 import { JsonFiles } from './files.js';
 
@@ -43,7 +44,26 @@ const PACE_LEAST = 15 * MINUTE;
  * @property {number} [week] percent of the week's (u.sd: seven days)
  * @property {Reset} [sessionReset] when the session's limit resets
  * @property {Reset} [weekReset] when the week's resets
+ * @property {Points} [history] the percents of the samples of its org, in time order
  * @property {Tracked} [tracked] the percents carried on to a later time
+ * @property {{ session?: Share, week?: Share }} [split] what this computer's replies used of
+ *   each, as carried on: the session's in its window, the week's since its reset
+ * @property {Drop[]} [drops] the replies of the last half minute, as they add to the session's
+ */
+
+/**
+ * @typedef {object} Share what this computer's replies used of a limit, in its points, by
+ *   session and by model, the most first
+ * @property {number} from the time they are counted from
+ * @property {number} to the time they are counted to
+ * @property {[string, number][]} sessions by session ID
+ * @property {[string, number][]} models
+ *
+ * @typedef {object} Drop a reply just written, as it adds to the session's limit
+ * @property {number} t when it was written
+ * @property {number} seen when the read that found it began
+ * @property {number} v its points
+ * @property {string} [session]
  */
 
 /**
@@ -83,17 +103,20 @@ export class PlanUsage {
     this.readAt = -Infinity;
     /** @type {Usage | undefined} */
     this.usage = undefined;
+    /** @type {import('./ledger.js').Replies | undefined} the replies, as last read */
+    this.replies = undefined;
   }
 
   /**
    * The latest sample in the app's folders, carried on to `now` where the replies tell how; read
    * again at most every `maxAgeMs`. The replies are read in the background unless `wait`: until
-   * the first read of them has finished, the sample alone.
+   * the first read of them has finished, the sample alone. With `since`, they are read back to
+   * then at least, samples or none, and kept in `replies`.
    * @param {number} now
-   * @param {{ maxAgeMs?: number, wait?: boolean }} [o]
+   * @param {{ maxAgeMs?: number, wait?: boolean, since?: number }} [o]
    * @returns {Promise<Usage | undefined>}
    */
-  async read(now, { maxAgeMs = 5000, wait = false } = {}) {
+  async read(now, { maxAgeMs = 5000, wait = false, since } = {}) {
     if (now - this.readAt < maxAgeMs) return this.usage;
     this.readAt = now;
     /** @type {Told | undefined} */
@@ -107,10 +130,13 @@ export class PlanUsage {
     }
     this.files.sweep();
     let usage = latest?.usage;
-    if (latest && this.ledger) {
-      const replies = await this.ledger.read(now, repliesSince(latest.points, now), { wait });
-      const tracked = replies && track(latest.points, replies, now, latest.usage.weekReset);
-      if (tracked) usage = { ...latest.usage, tracked };
+    const needed = latest && repliesSince(latest.points, now);
+    const back = needed === undefined ? since : Math.min(needed, since ?? needed);
+    if (back !== undefined && this.ledger) {
+      const replies = await this.ledger.read(now, back, { wait });
+      this.replies = replies;
+      const f = latest && replies ? follow(latest.points, replies, now, latest.usage.weekReset) : undefined;
+      if (latest && replies && f?.tracked) usage = { ...latest.usage, tracked: f.tracked, ...splitOf(f, replies, now) };
     }
     this.usage = usage;
     return usage;
@@ -168,6 +194,7 @@ function tell(o) {
     ...(latest.week !== undefined ? { week: latest.week } : {}),
     ...(sessionAt ? { sessionReset: sessionAt } : {}),
     ...(weekAt ? { weekReset: weekAt } : {}),
+    history: p,
   };
   return { usage, points: p };
 }
@@ -307,7 +334,31 @@ export function repliesSince(p, now) {
  * @param {Reset} [weekAt] the week's next reset after its last sample
  * @returns {Tracked | undefined}
  */
-export function track(p, { from, replies }, now, weekAt) {
+export function track(p, replies, now, weekAt) {
+  return follow(p, replies, now, weekAt).tracked;
+}
+
+/**
+ * @typedef {object} Followed what track works out: the percents carried on, and what they were
+ *   carried on with, for the shares (splitOf)
+ * @property {Tracked} [tracked]
+ * @property {number} [a] the session's points for each of use (a reply's x)
+ * @property {number} [window] the start of the session's window now
+ * @property {number} [b] the week's points for each of use
+ * @property {number} [weekFrom] when the week's limit last reset
+ */
+
+/**
+ * track's work.
+ * @param {Points} p
+ * @param {import('./ledger.js').Replies} replies
+ * @param {number} now
+ * @param {Reset} [weekAt]
+ * @returns {Followed}
+ */
+function follow(p, { from, replies }, now, weekAt) {
+  /** @type {Followed} */
+  const f = {};
   const sum = [0];
   for (const r of replies) sum.push(/** @type {number} */ (sum.at(-1)) + r.x);
   /** What the replies written in (a, b] used. @param {number} a @param {number} b */
@@ -335,9 +386,11 @@ export function track(p, { from, replies }, now, weekAt) {
     return w !== undefined && windowAt(starts, x.t) === w;
   });
   if (s && a !== undefined) {
+    f.a = a;
     const w = windowAt(starts, now);
     if (w === undefined) out.session = 0;
     else {
+      f.window = w;
       const v = s.v > 0 && windowAt(starts, s.t) === w ? s.v + a * used(s.t, now) : a * used(w - 1, now);
       out.session = Math.min(100, Math.round(v));
       const end = w + SESSION;
@@ -349,18 +402,65 @@ export function track(p, { from, replies }, now, weekAt) {
   const last = p.week.at(-1);
   const b = last && weekAt && scale(p.week, WEEK_RISES, () => true);
   if (last && weekAt && b !== undefined) {
+    f.b = b;
     if (now < weekAt.at) {
       out.week = Math.min(100, Math.round(last.v + b * used(last.t, now)));
       out.weekReset = weekAt;
+      f.weekFrom = weekAt.at - WEEK;
     } else {
       // Reset since: what was used since the latest reset, and the next a week on.
       const k = Math.floor((now - weekAt.at) / WEEK);
       out.week = Math.min(100, Math.round(b * used(weekAt.at + k * WEEK, now)));
       const on = (k + 1) * WEEK;
       out.weekReset = { at: weekAt.at + on, from: weekAt.from + on, to: weekAt.to + on };
+      f.weekFrom = weekAt.at + k * WEEK;
     }
   }
-  return out.session !== undefined || out.week !== undefined ? out : undefined;
+  if (out.session !== undefined || out.week !== undefined) f.tracked = out;
+  return f;
+}
+
+/** How long a reply just written counts as one, for the drops (ms). */
+const DROPS = 30_000;
+
+/**
+ * What this computer's replies used of each limit, as track carried it on: the session's in the
+ * window now, the week's since its reset (from the time the replies are known, if later); and the
+ * replies of the last half minute, as they add to the session's.
+ * @param {Followed} f
+ * @param {import('./ledger.js').Replies} r
+ * @param {number} now
+ * @returns {{ split: { session?: Share, week?: Share }, drops: Drop[] }}
+ */
+function splitOf(f, r, now) {
+  /** @param {number} scale @param {number} from @returns {Share} */
+  const share = (scale, from) => {
+    /** @type {Map<string, number>} */
+    const sessions = new Map();
+    /** @type {Map<string, number>} */
+    const models = new Map();
+    for (let i = writtenBy(r.replies, from - 1); i < r.replies.length && r.replies[i].t <= now; i++) {
+      const x = r.replies[i];
+      const v = scale * x.x;
+      sessions.set(x.session ?? '', (sessions.get(x.session ?? '') ?? 0) + v);
+      models.set(x.model ?? '', (models.get(x.model ?? '') ?? 0) + v);
+    }
+    const most = (/** @type {Map<string, number>} */ m) => [...m].sort((a, b) => b[1] - a[1]);
+    return { from, to: now, sessions: most(sessions), models: most(models) };
+  };
+  /** @type {{ session?: Share, week?: Share }} */
+  const split = {};
+  if (f.a !== undefined && f.window !== undefined) split.session = share(f.a, Math.max(f.window, r.from));
+  if (f.b !== undefined && f.weekFrom !== undefined) split.week = share(f.b, Math.max(f.weekFrom, r.from));
+  /** @type {Drop[]} */
+  const drops = [];
+  if (f.a !== undefined) {
+    for (let i = writtenBy(r.replies, now - DROPS); i < r.replies.length; i++) {
+      const x = r.replies[i];
+      if (x.t <= now) drops.push({ t: x.t, seen: x.seen ?? x.t, v: f.a * x.x, ...(x.session ? { session: x.session } : {}) });
+    }
+  }
+  return { split, drops };
 }
 
 /**
