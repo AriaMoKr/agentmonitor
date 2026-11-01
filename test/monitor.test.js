@@ -33,8 +33,8 @@ test('the plan\'s usage, as the desktop app last sampled it', async (t) => {
     at: NOW - 5 * MINUTE,
     session: 64,
     week: 29,
-    sessionReset: { at: NOW - 35 * MINUTE + 5 * HOUR, from: NOW - 35 * MINUTE + 5 * HOUR, to: NOW - 20 * MINUTE + 5 * HOUR },
-  }, 'the session began after its last 0%; the week has not dropped');
+    sessionReset: { at: NOW - 40 * MINUTE + 5 * HOUR, from: NOW - 40 * MINUTE + 5 * HOUR, to: NOW - 20 * MINUTE + 5 * HOUR },
+  }, 'the session began about its last 0%, on the 10-minute mark before; the week has not dropped');
 });
 
 test('a running session: its state, title, folder, model, context and the tool it is in', async (t) => {

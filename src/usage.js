@@ -2,9 +2,10 @@
 // 15 minutes while it runs: plan-usage-history.json in its data folder, its samples in percent of
 // the session's limit (a window of five hours) and of the week's. It keeps no reset times there, so
 // they are worked out from the samples: the week's limit resets at the same time each week, where
-// its percent dropped before, and the session's five hours after its percent began to rise. The
-// percents are carried on from the latest sample to now with what this computer's replies used
-// since (src/ledger.js), at as many points for so much as the samples rose by with them lately.
+// its percent dropped before, and the session's five hours after its window began, on the
+// 10-minute mark at or before its first use, where its percent began to rise. The percents are
+// carried on from the latest sample to now with what this computer's replies used since
+// (src/ledger.js), at as many points for so much as the samples rose by with them lately.
 import { join } from 'node:path';
 import { JsonFiles } from './files.js';
 
@@ -26,8 +27,11 @@ const RISE = 30 * MINUTE;
 const SESSION_RISES = { points: 60, within: 3 * DAY, least: 10 };
 /** @type {Rises} */
 const WEEK_RISES = { points: 20, within: WEEK, least: 5 };
-/** How far before the end of a window the replies began its reset can be: some use is in no transcript. */
-const EARLY = 10 * MINUTE;
+/**
+ * The server begins a session's window on the 10-minute mark at or before its first use, and so
+ * resets it on one: every reset its limit errors in the transcripts named was (quotaLimits).
+ */
+const MARK = 10 * MINUTE;
 
 /**
  * @typedef {object} Usage the app's latest sample, and when the limits it measures reset
@@ -114,6 +118,8 @@ const percent = (/** @type {unknown} */ v) => {
   return n === undefined || n < 0 ? undefined : Math.round(n);
 };
 const mod = (/** @type {number} */ n, /** @type {number} */ m) => ((n % m) + m) % m;
+/** The 10-minute mark at or before `t`. @param {number} t */
+const mark = (t) => t - mod(t, MARK);
 
 /**
  * What plan-usage-history.json tells: { version, samples: [{ t, org, u: { fh, sd } }] }, with t in
@@ -162,35 +168,43 @@ function tell(o) {
 }
 
 /**
- * When the session's limit resets: five hours after its window began, with the first use after
- * the last reset. That was about the last sample before its percent rose from 0 (the first use
- * reads 0% for a while), or between the two samples its percent dropped between (a reset, and a
- * new window), and by the first sample after either. Where the samples don't show it (the app was
- * not running then, or two samples are too far apart to be sure no reset came between), all that
- * is known is that it began within the five hours before the last sample. A window begun with
- * next to nothing used while the app was not running reads 0% when it starts again, and so seems
- * to begin later than it did. Undefined while the percent is 0: no window, or next to nothing
- * used in it.
+ * When the session's limit resets: five hours after its window began, on the 10-minute mark at or
+ * before the first use after the last reset. That use came about the last sample before its
+ * percent rose from 0 (the first use reads 0% for a while), or soon after a reset between the two
+ * samples its percent dropped between (a new window, begun on the reset's mark mostly), and by the
+ * first sample after either. Where the samples don't show it (the app was not running then, or two
+ * samples are too far apart to be sure no reset came between), all that is known is that it began
+ * within the five hours before the last sample. A window begun with next to nothing used while the
+ * app was not running reads 0% when it starts again, and so seems to begin later than it did.
+ * Undefined while the percent is 0: no window, or next to nothing used in it.
  * @param {Point[]} p the session's percents, in time order
  * @returns {Reset | undefined}
  */
 export function sessionReset(p) {
   const last = p.at(-1);
   if (!last || last.v <= 0) return undefined;
-  let from = last.t - SESSION;
+  // The window began after this time, or about at it where the percent rose from 0.
+  let after = last.t - SESSION;
   let rose = false;
+  let dropped = false;
   let i = p.length - 1;
   for (; i > 0; i--) {
     const prev = p[i - 1];
     if (prev.t <= last.t - SESSION || p[i].t - prev.t > GAP) break;
     if (prev.v === 0 || prev.v > p[i].v) {
-      from = prev.t;
+      after = prev.t;
       rose = prev.v === 0;
+      dropped = !rose;
       break;
     }
   }
-  const to = p[i].t;
-  return { at: (rose ? from : (from + to) / 2) + SESSION, from: from + SESSION, to: to + SESSION };
+  // The marks it can have begun on: that time's where it rose from 0, else from the next one on,
+  // to the mark of the first sample after. Likeliest the first where it rose or dropped (the use
+  // went on from the last 0, or from the reset), else the middle.
+  const to = mark(p[i].t);
+  const from = Math.min(to, mark(after) + (rose ? 0 : MARK));
+  const at = rose || dropped ? from : from + Math.round((to - from) / 2 / MARK) * MARK;
+  return { at: at + SESSION, from: from + SESSION, to: to + SESSION };
 }
 
 /**
@@ -320,7 +334,8 @@ export function track(p, { from, replies }, now, weekAt) {
     else {
       const v = s.v > 0 && windowAt(starts, s.t) === w ? s.v + a * used(s.t, now) : a * used(w - 1, now);
       out.session = Math.min(100, Math.round(v));
-      out.sessionReset = { at: w + SESSION, from: w + SESSION - EARLY, to: w + SESSION };
+      const end = w + SESSION;
+      out.sessionReset = { at: end, from: end, to: end };
     }
   }
   const last = p.week.at(-1);
@@ -364,8 +379,9 @@ function rises(q, o, keep = () => true) {
 }
 
 /**
- * The starts of the session windows the replies began: one begins with the first reply asked for
- * once the last one has ended, and lasts five hours.
+ * The starts of the session windows the replies began: once the last one has ended, one begins on
+ * the 10-minute mark at or before the first reply asked for, as the server begins them, and lasts
+ * five hours.
  * @param {import('./ledger.js').Reply[]} replies in the order written
  */
 function windowsOf(replies) {
@@ -374,8 +390,9 @@ function windowsOf(replies) {
   let end = -Infinity;
   for (const r of replies) {
     if (r.asked >= end) {
-      starts.push(r.asked);
-      end = r.asked + SESSION;
+      const start = mark(r.asked);
+      starts.push(start);
+      end = start + SESSION;
     }
   }
   return starts;

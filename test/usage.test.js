@@ -28,8 +28,8 @@ const points = (...a) => a.map(([m, v]) => ({ t: NOW - m * MINUTE, v }));
  */
 const known = (...a) => ({ from: NOW - 8 * HOUR, replies: a.map(([m, x]) => ({ t: NOW - m * MINUTE, asked: NOW - m * MINUTE, x })) });
 
-/** A reset `m` minutes from NOW, as the session's are carried on: by then, from 10 minutes before. @param {number} m */
-const ends = (m) => ({ at: NOW + m * MINUTE, from: NOW + (m - 10) * MINUTE, to: NOW + m * MINUTE });
+/** A reset `m` minutes from NOW, as the session's are carried on: then, to the minute. @param {number} m */
+const ends = (m) => ({ at: NOW + m * MINUTE, from: NOW + m * MINUTE, to: NOW + m * MINUTE });
 
 /** Replies while the samples below rose 30 points: 1 point for each thousand. @type {[number, number][]} */
 const ROSE = [[160, 1000], [140, 10_000], [125, 10_000], [110, 10_000]];
@@ -51,25 +51,23 @@ test('the latest of the desktop app\'s samples of the usage, in whole percent; w
   for (const junk of [undefined, null, 42, 'text', [], {}, { samples: {} }, { samples: [] }]) assert.equal(usageOf(junk), undefined, JSON.stringify(junk));
 });
 
-test('the session resets five hours after its window began: about the last sample before its percent rose from 0, or between the two it dropped between', () => {
+test('the session resets five hours after its window began, on the 10-minute mark at or before its first use: about the last sample before its percent rose from 0, or after a reset between the two it dropped between', () => {
+  /** A window begun `m` minutes before NOW (NOW is on a mark) ends five hours on. @param {number} m */
+  const on = (m) => NOW - m * MINUTE + SESSION;
   assert.deepEqual(
     sessionReset(points([135, 0], [120, 0], [105, 5], [90, 12], [75, 30])),
-    { at: NOW - 120 * MINUTE + SESSION, from: NOW - 120 * MINUTE + SESSION, to: NOW - 105 * MINUTE + SESSION },
-    'rose from 0: likeliest with the last 0, by the first sample after',
+    { at: on(120), from: on(120), to: on(110) },
+    'rose from 0: likeliest on the mark of the last 0, by the mark of the first sample after',
   );
-  assert.deepEqual(
-    sessionReset(points([60, 80], [45, 3], [30, 9])),
-    { at: NOW - 52.5 * MINUTE + SESSION, from: NOW - 60 * MINUTE + SESSION, to: NOW - 45 * MINUTE + SESSION },
-    'dropped, a reset and a new window: likeliest halfway',
-  );
-  // Where the samples don't show its start: within the five hours before the last sample, and by
-  // the first sample of those it is sure of.
-  /** @param {number} first minutes before NOW @param {number} last */
-  const unknown = (first, last) => ({ at: (NOW - last * MINUTE - SESSION + NOW - first * MINUTE) / 2 + SESSION, from: NOW - last * MINUTE, to: NOW - first * MINUTE + SESSION });
-  assert.deepEqual(sessionReset(points([30, 10], [15, 20])), unknown(30, 15), 'the samples begin');
-  assert.deepEqual(sessionReset(points([200, 0], [120, 4], [105, 6])), unknown(120, 105), 'more than 45 minutes between two samples');
+  assert.deepEqual(sessionReset(points([137, 0], [122, 5], [107, 12])), { at: on(140), from: on(140), to: on(130) }, 'the mark before the last 0');
+  assert.deepEqual(sessionReset(points([60, 80], [45, 3], [30, 9])), { at: on(50), from: on(50), to: on(50) }, 'dropped: a reset on the one mark between, and a new window on it');
+  assert.deepEqual(sessionReset(points([62, 80], [47, 3], [32, 9])), { at: on(60), from: on(60), to: on(50) }, 'two marks between: likeliest the first, as the use goes on from the reset');
+  // Where the samples don't show its start: within the five hours before the last sample, so on a
+  // mark after the one five hours before it, and by the first sample of those it is sure of.
+  assert.deepEqual(sessionReset(points([30, 10], [15, 20])), { at: on(170), from: on(310), to: on(30) }, 'the samples begin');
+  assert.deepEqual(sessionReset(points([200, 0], [120, 4], [105, 6])), { at: on(260), from: on(400), to: on(120) }, 'more than 45 minutes between two samples');
   const long = Array.from({ length: 25 }, (_, i) => /** @type {[number, number]} */ ([360 - 15 * i, i + 1]));
-  assert.deepEqual(sessionReset(points(...long)), unknown(285, 0), 'above 0 for five hours: a reset it grew back from came between');
+  assert.deepEqual(sessionReset(points(...long)), { at: on(290), from: on(290), to: on(290) }, 'above 0 for five hours: a reset it grew back from came between, on the one mark left');
   assert.equal(sessionReset(points([30, 5], [15, 0])), undefined, 'at 0%, no window');
   assert.equal(sessionReset([]), undefined);
 });
@@ -106,8 +104,9 @@ test('the resets come from the samples of the latest one\'s org', () => {
       { t: NOW - 10 * MINUTE, org: 'b', u: { fh: 55, sd: 21 } },
     ],
   };
-  // Taken with a's, b's 55% after a's 90% would be a drop: a window begun 20 minutes ago.
-  assert.equal(usageOf(file)?.sessionReset?.from, NOW - 10 * MINUTE);
+  // b's alone: begun within the five hours before its last sample. Taken with a's, b's 55% after
+  // a's 90% would be a drop, and a window begun 10 minutes ago, ending 5 hours less 10 minutes on.
+  assert.equal(usageOf(file)?.sessionReset?.from, NOW);
 });
 
 test('the latest sample in any of the app\'s folders, read again after 5 seconds, and worked out again only when a file changed', async (t) => {
@@ -137,6 +136,19 @@ test('the session carried on from its last sample with what its window used sinc
   assert.deepEqual(track(before, known(...earlier, [100, 5000], [50, 5000]), NOW), { at: NOW, session: 10, sessionReset: ends(200) }, 'a window begun since: all it used');
   assert.deepEqual(track(before, known(...earlier), NOW), { at: NOW, session: 0 }, 'no window now');
   assert.equal(track({ session: points([150, 0], [135, 3], [120, 6], [105, 9]), week: [] }, known(...ROSE), NOW), undefined, 'rose 9 points: too few to tell');
+});
+
+test('a window begins on the 10-minute mark at or before its first reply, as the server begins them: it resets five hours after the mark, and a reply after that begins the next', () => {
+  // Its first reply 7 minutes past the mark 300 minutes ago: it ends now, not in 7 minutes.
+  const p = { session: points([290, 0], [275, 10], [260, 20], [245, 30]), week: [] };
+  const replies = /** @type {[number, number][]} */ ([[293, 1000], [280, 10_000], [265, 10_000], [250, 10_000], [60, 20_000]]);
+  assert.deepEqual(track(p, known(...replies), NOW - MINUTE), { at: NOW - MINUTE, session: 50, sessionReset: ends(0) });
+  assert.deepEqual(track(p, known(...replies), NOW + 2 * MINUTE), { at: NOW + 2 * MINUTE, session: 0 }, 'over, with no reply since: no window');
+  assert.deepEqual(
+    track(p, known(...replies, [-1, 1000]), NOW + 2 * MINUTE),
+    { at: NOW + 2 * MINUTE, session: 1, sessionReset: ends(300) },
+    'a reply a minute after the reset begins the next window, on the mark: all it used, not the last one\'s',
+  );
 });
 
 test('the session scaled by the rises within a window this computer\'s replies began, after the time they are known from', () => {

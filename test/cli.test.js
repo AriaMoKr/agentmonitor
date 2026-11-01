@@ -9,6 +9,9 @@ import { HOUR, makeConfig, MINUTE, rec, sessionId } from './helpers/fixture.js';
 
 const BIN = fileURLToPath(new URL('../bin/agentmonitor.js', import.meta.url));
 
+/** The 10-minute mark at or before `t`, which a session's window begins on. @param {number} t */
+const mark = (t) => t - (t % (10 * MINUTE));
+
 /**
  * Where the desktop app's data folder is on this platform for a home of folders under `root`,
  * and the variables that put it there.
@@ -112,16 +115,16 @@ test('--once and --json with the plan\'s usage, as the desktop app sampled it', 
   cfg.planUsage([[now - 35 * MINUTE, 0, 28], [now - 20 * MINUTE, 60, 28], [now - 5 * MINUTE, 64, 29]], app.dir);
   const once = await run(['--once', '--dir', cfg.dir], { COLUMNS: '100', ...app.env });
   const [first] = once.stdout.split('\n');
-  // The session began after the sample at 0%: it resets five hours on, shown to five minutes.
-  const resets = timeOfDay(Math.round((now - 35 * MINUTE + 5 * HOUR) / (5 * MINUTE)) * 5 * MINUTE);
-  assert.match(first, new RegExp(`^ Claude agents {2}· 1 ended +session 64% resets ${resets} {2}week 29%$`));
+  // The session began about the sample at 0%, on the mark before it: it resets five hours on.
+  const resets = mark(now - 35 * MINUTE) + 5 * HOUR;
+  assert.match(first, new RegExp(`^ Claude agents {2}· 1 ended +session 64% resets ${timeOfDay(resets)} {2}week 29%$`));
   assert.equal(width(first), 99, 'at the right, a column short as with the time');
   const json = JSON.parse((await run(['--json', '--dir', cfg.dir], app.env)).stdout);
   assert.deepEqual(json.usage, {
     at: now - 5 * MINUTE,
     session: 64,
     week: 29,
-    sessionReset: { at: now - 35 * MINUTE + 5 * HOUR, from: now - 35 * MINUTE + 5 * HOUR, to: now - 20 * MINUTE + 5 * HOUR },
+    sessionReset: { at: resets, from: resets, to: mark(now - 20 * MINUTE) + 5 * HOUR },
   });
 });
 
@@ -137,8 +140,8 @@ test('--once and --json with the session\'s usage carried on to now with the rep
   cfg.planUsage([[now - 150 * MINUTE, 0, 20], [now - 135 * MINUTE, 10, 22], [now - 120 * MINUTE, 20, 24], [now - 105 * MINUTE, 30, 26]], app.dir);
   const once = await run(['--once', '--dir', cfg.dir], { COLUMNS: '120', ...app.env });
   const [first] = once.stdout.split('\n');
-  // Its window began with the reply 160 minutes ago: it resets five hours on, shown to five minutes.
-  const resets = timeOfDay(Math.round((now - 160 * MINUTE + 5 * HOUR) / (5 * MINUTE)) * 5 * MINUTE);
+  // Its window began on the mark at or before the reply 160 minutes ago: it resets five hours on.
+  const resets = timeOfDay(mark(now - 160 * MINUTE) + 5 * HOUR);
   assert.match(first, new RegExp(`^ Claude agents {2}· 1 ended +session ~50% resets ${resets} {2}week 26% {2}1h ago$`));
   const json = JSON.parse((await run(['--json', '--dir', cfg.dir], app.env)).stdout);
   assert.deepEqual({ week: json.usage.week, tracked: json.usage.tracked.session }, { week: 26, tracked: 50 });
