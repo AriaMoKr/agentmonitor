@@ -33,9 +33,9 @@ Options:
                          or finishes its turn (b turns it on or off; with
                          --serve, the page beeps)
       --view <name>      the view below the list to start with: board (the
-                         default), overview, floor, lanes, ticker, pipeline,
-                         files, chart, share, today, tank, radar or spark
-                         (v and V step through them)
+                         default), overview, floor, bands, lanes, ticker,
+                         pipeline, files, chart, share, today, tank, radar or
+                         spark (v and V step through them)
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
@@ -173,8 +173,9 @@ if (interactive) {
 const snap = await monitor.refresh();
 if (values.json) {
   // The events, the tool calls and turns, and the usage's samples are many and long: the views
-  // draw them. So are the drops, gone in half a minute, and the folders of the sessions not listed.
-  const left = new Set(['events', 'calls', 'turns', 'history', 'drops', 'cwds']);
+  // draw them (and what a point came to at each, which a snapshot printed once has not read). So
+  // are the drops, gone in half a minute, and the folders of the sessions not listed.
+  const left = new Set(['events', 'calls', 'turns', 'history', 'perPoint', 'drops', 'cwds']);
   process.stdout.write(JSON.stringify(snap, (k, v) => (left.has(k) ? undefined : v), 2) + '\n');
 } else {
   const width = process.stdout.columns || Number(process.env.COLUMNS) || 160;

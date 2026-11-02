@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { changeOf, PlanUsage, repliesSince, sessionReset, track, usageOf, weekReset } from '../src/usage.js';
+import { changeOf, changesOf, perPointOf, PlanUsage, repliesSince, sessionReset, track, usageOf, weekReset } from '../src/usage.js';
 import { HOUR, makeConfig, MINUTE, NOW } from './helpers/fixture.js';
 
 const SESSION = 5 * HOUR;
@@ -122,6 +122,61 @@ test("the plan changed where the week's percent dropped at none of its weekly re
   const u = usageOf(file);
   assert.deepEqual(brief(u), { at: NOW - 15 * MINUTE, week: 0 });
   assert.deepEqual([u?.changed, u?.sessionReset, u?.weekReset?.at], [{ t: NOW - 15 * MINUTE, v: 0 }, undefined, R + WEEK]);
+  assert.deepEqual(u?.changes, [{ t: NOW - 15 * MINUTE, v: 0 }]);
+  // Each change, oldest first; the last of them the latest.
+  const twice = [...reset, ...points([400, 40], [385, 0], [60, 30], [45, 29], [30, 0])];
+  assert.deepEqual(changesOf(twice, at), [{ t: NOW - 385 * MINUTE, v: 0 }, { t: NOW - 30 * MINUTE, v: 0 }]);
+  assert.deepEqual(changeOf(twice, at), { t: NOW - 30 * MINUTE, v: 0 });
+  assert.deepEqual(changesOf(twice, undefined), []);
+});
+
+test('what a point of the week came to at each sample: as the week would be scaled by then, over the rises back from it, under the plan it is in', () => {
+  const week = points([150, 20], [135, 22], [120, 24], [105, 26], [90, 28], [75, 0], [60, 3], [45, 6]);
+  const replies = known(...ROSE, [95, 20_000], [70, 6000], [50, 6000]);
+  // 2 points for each 10,000, then 2 for 20,000: 5 points at least for one. The plan changed 75
+  // minutes ago: 3 points for each 6,000 since, those before not counted.
+  assert.deepEqual(perPointOf(week, replies, [{ t: NOW - 75 * MINUTE, v: 0 }]), [
+    { t: NOW - 105 * MINUTE, v: 5000 },
+    { t: NOW - 90 * MINUTE, v: 6250 },
+    { t: NOW - 45 * MINUTE, v: 2000 },
+  ]);
+  // With no change, the rises before the drop count too.
+  assert.deepEqual(round(perPointOf(week, replies, [])), [
+    { t: NOW - 105 * MINUTE, v: 5000 },
+    { t: NOW - 90 * MINUTE, v: 6250 },
+    { t: NOW - 75 * MINUTE, v: 6250 },
+    { t: NOW - 60 * MINUTE, v: 5090.909 },
+    { t: NOW - 45 * MINUTE, v: 4428.571 },
+  ]);
+  // Only rises the replies are known for.
+  assert.deepEqual(perPointOf(week, { ...replies, from: NOW - 100 * MINUTE }, []), [{ t: NOW - 45 * MINUTE, v: 2000 }]);
+  assert.deepEqual(perPointOf([], replies, []), []);
+});
+
+test("with history, the replies are read back to the week's first sample, for what a point came to at each; worked out again only when the samples or the replies changed", async (t) => {
+  const cfg = makeConfig(t);
+  cfg.planUsage([[NOW - 20 * DAY, 0, 5], [NOW - 150 * MINUTE, 0, 20], [NOW - 135 * MINUTE, 10, 22], [NOW - 120 * MINUTE, 20, 24], [NOW - 105 * MINUTE, 30, 26]]);
+  /** @type {unknown[][]} */
+  const asked = [];
+  let replies = known(...ROSE);
+  const ledger = /** @type {import('../src/ledger.js').Ledger} */ (/** @type {unknown} */ ({
+    read: async (/** @type {unknown[]} */ ...a) => {
+      asked.push(a);
+      return replies;
+    },
+  }));
+  const usage = new PlanUsage(async () => [cfg.desktop], ledger);
+  assert.equal((await usage.read(NOW, { wait: true }))?.perPoint, undefined, 'not without history');
+  const first = await usage.read(NOW + 5000, { wait: true, history: true });
+  assert.deepEqual(first?.perPoint, [{ t: NOW - 105 * MINUTE, v: 5000 }]);
+  assert.deepEqual(asked.map((a) => a[1]), [NOW - 150 * MINUTE - SESSION, NOW - 20 * DAY], 'back to the rises it scales by, then to the first sample');
+  assert.equal((await usage.read(NOW + 10_000, { history: true }))?.perPoint, first?.perPoint, 'the same, not worked out again');
+  replies = known(...ROSE, [100, 500]);
+  const more = await usage.read(NOW + 15_000, { history: true });
+  assert.notEqual(more?.perPoint, first?.perPoint, 'worked out again');
+  assert.deepEqual(more?.perPoint, first?.perPoint, 'a reply after the last sample changes none');
+  cfg.planUsage([[NOW - 150 * MINUTE, 0, 20], [NOW - 135 * MINUTE, 10, 22]]);
+  assert.equal((await usage.read(NOW + 20_000, { history: true }))?.perPoint, undefined, 'none for too few points');
 });
 
 test('the resets come from the samples of the latest one\'s org', () => {

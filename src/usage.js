@@ -9,7 +9,8 @@
 // one's pace with the last hour's. At that rate too, what each session and model used of each
 // limit, and the points the replies just written add: to the session's, or where it is not carried
 // on to the week's. A plan changed shows where the week's percent dropped at no reset of it: the
-// rises before then measured other limits, and are not used.
+// rises before then measured other limits, and are not used. For the chart, what a point of the
+// week came to at each sample, as the plans changed.
 import { join } from 'node:path';
 import { JsonFiles } from './files.js';
 
@@ -49,7 +50,11 @@ const PACE_LEAST = 15 * MINUTE;
  * @property {Points} [history] the percents of the samples of its org, in time order
  * @property {Point} [changed] the week's first sample after the plan last seems to have changed
  *   (changeOf): the week's pace counts from it, where that is after its reset
+ * @property {Point[]} [changes] the week's first sample after each time the plan seems to have
+ *   changed, oldest first (changesOf), the last of them `changed`
  * @property {Tracked} [tracked] the percents carried on to a later time
+ * @property {Point[]} [perPoint] what this computer's replies used (their x) for a point of the
+ *   week, at each of its samples they tell it for (perPointOf): read with `history`
  * @property {{ session?: Share, week?: Share }} [split] what this computer's replies used of
  *   each, as carried on: the session's in its window, the week's since its reset
  * @property {Drop[]} [drops] the replies of the last half minute, as they add to the session's, or
@@ -113,18 +118,25 @@ export class PlanUsage {
     this.usage = undefined;
     /** @type {import('./ledger.js').Replies | undefined} the replies, as last read */
     this.replies = undefined;
+    /**
+     * What a point of the week came to, while the samples and the replies it is worked out from
+     * are the same objects.
+     * @type {{ told: Told, list: import('./ledger.js').Reply[], from: number, value: Point[] } | undefined}
+     */
+    this.worth = undefined;
   }
 
   /**
    * The latest sample in the app's folders, carried on to `now` where the replies tell how; read
    * again at most every `maxAgeMs`. The replies are read in the background unless `wait`: until
    * the first read of them has finished, the sample alone. With `since`, they are read back to
-   * then at least, samples or none, and kept in `replies`.
+   * then at least, samples or none, and kept in `replies`. With `history`, back to the week's
+   * first sample too, for what a point of the week came to at each sample (perPoint).
    * @param {number} now
-   * @param {{ maxAgeMs?: number, wait?: boolean, since?: number }} [o]
+   * @param {{ maxAgeMs?: number, wait?: boolean, since?: number, history?: boolean }} [o]
    * @returns {Promise<Usage | undefined>}
    */
-  async read(now, { maxAgeMs = 5000, wait = false, since } = {}) {
+  async read(now, { maxAgeMs = 5000, wait = false, since, history = false } = {}) {
     if (now - this.readAt < maxAgeMs) return this.usage;
     this.readAt = now;
     /** @type {Told | undefined} */
@@ -138,16 +150,32 @@ export class PlanUsage {
     }
     this.files.sweep();
     let usage = latest?.usage;
-    const needed = latest && repliesSince(latest.points, now, latest.usage.changed);
-    const back = needed === undefined ? since : Math.min(needed, since ?? needed);
-    if (back !== undefined && this.ledger) {
+    const backs = [latest && repliesSince(latest.points, now, latest.usage.changed), since, history ? latest?.points.week[0]?.t : undefined];
+    const back = Math.min(...backs.filter((t) => t !== undefined));
+    if (back !== Infinity && this.ledger) {
       const replies = await this.ledger.read(now, back, { wait });
       this.replies = replies;
       const f = latest && replies ? follow(latest.points, replies, now, latest.usage.weekReset, latest.usage.changed) : undefined;
       if (latest && replies && f?.tracked) usage = { ...latest.usage, tracked: f.tracked, ...splitOf(f, replies, now) };
+      const perPoint = history && latest && replies ? this.perPointOf(latest, replies) : [];
+      if (usage && perPoint.length) usage = { ...usage, perPoint };
     }
     this.usage = usage;
     return usage;
+  }
+
+  /**
+   * What a point of the week came to at each sample (perPointOf), worked out again only when the
+   * samples or the replies changed.
+   * @param {Told} told
+   * @param {import('./ledger.js').Replies} r
+   */
+  perPointOf(told, r) {
+    const w = this.worth;
+    if (w && w.told === told && w.list === r.replies && w.from === r.from) return w.value;
+    const value = perPointOf(told.points.week, r, told.usage.changes ?? []);
+    this.worth = { told, list: r.replies, from: r.from, value };
+    return value;
   }
 }
 
@@ -197,38 +225,52 @@ function tell(o) {
   const sessionAt = latest.session !== undefined ? sessionReset(p.session) : undefined;
   const weekly = weekReset(p.week);
   const weekAt = latest.week !== undefined ? weekly : undefined;
-  const changed = changeOf(p.week, weekly);
+  const changes = changesOf(p.week, weekly);
+  const changed = changes.at(-1);
   const usage = {
     at: latest.t,
     ...(latest.session !== undefined ? { session: latest.session } : {}),
     ...(latest.week !== undefined ? { week: latest.week } : {}),
     ...(sessionAt ? { sessionReset: sessionAt } : {}),
     ...(weekAt ? { weekReset: weekAt } : {}),
-    ...(changed ? { changed } : {}),
+    ...(changed ? { changed, changes } : {}),
     history: p,
   };
   return { usage, points: p };
 }
 
 /**
- * When the plan last seems to have changed: the latest drop of the week's percent that none of
- * its weekly resets came within, as when a new plan's limits begin (or the limits are reset once,
- * for everyone); the sample after it, the first under the new limits. Undefined where there is
- * none, or no reset is known to tell one by.
+ * Where the plan seems to have changed: each drop of the week's percent that none of its weekly
+ * resets came within, as when a new plan's limits begin (or the limits are reset once, for
+ * everyone); the sample after each, the first under the new limits, oldest first. None where no
+ * reset is known to tell one by.
+ * @param {Point[]} p the week's percents, in time order
+ * @param {Reset} [at] one of its weekly resets
+ * @returns {Point[]}
+ */
+export function changesOf(p, at) {
+  /** @type {Point[]} */
+  const out = [];
+  if (!at) return out;
+  for (let i = 1; i < p.length; i++) {
+    const [a, b] = [p[i - 1], p[i]];
+    if (b.v >= a.v - 1 || b.t - a.t >= WEEK) continue;
+    // The first of the resets to end after the sample before the drop: whether it began by the one after.
+    const k = Math.floor((a.t - at.to) / WEEK) + 1;
+    if (at.from + k * WEEK > b.t) out.push(b);
+  }
+  return out;
+}
+
+/**
+ * When the plan last seems to have changed (changesOf): the first sample under its limits.
+ * Undefined where there is no such drop, or no reset is known to tell one by.
  * @param {Point[]} p the week's percents, in time order
  * @param {Reset} [at] one of its weekly resets
  * @returns {Point | undefined}
  */
 export function changeOf(p, at) {
-  if (!at) return undefined;
-  for (let i = p.length - 1; i > 0; i--) {
-    const [a, b] = [p[i - 1], p[i]];
-    if (b.v >= a.v - 1 || b.t - a.t >= WEEK) continue;
-    // The first of the resets to end after the sample before the drop: whether it began by the one after.
-    const k = Math.floor((a.t - at.to) / WEEK) + 1;
-    if (at.from + k * WEEK > b.t) return b;
-  }
-  return undefined;
+  return changesOf(p, at).at(-1);
 }
 
 /**
@@ -516,20 +558,58 @@ function splitOf(f, r, now) {
 }
 
 /**
+ * What this computer's replies used (their x) for a point of the week at each of its samples, as
+ * track would scale the week by then: over the rises back from that sample, after the time the
+ * replies are known from and the plan's change before it, where they come to enough points. A
+ * plan's first samples have none, till its rises come to enough.
+ * @param {Point[]} q the week's percents, in time order
+ * @param {import('./ledger.js').Replies} replies
+ * @param {Point[]} changes the plan's changes (changesOf), oldest first
+ * @returns {Point[]} each sample's time, and the use a point came to then
+ */
+export function perPointOf(q, { from, replies }, changes) {
+  // What the replies written by each sample used, all told.
+  /** @type {Map<Point, number>} */
+  const by = new Map();
+  let total = 0;
+  let j = 0;
+  for (const s of q) {
+    for (; j < replies.length && replies[j].t <= s.t; j++) total += replies[j].x;
+    by.set(s, total);
+  }
+  /** @type {Point[]} */
+  const out = [];
+  let c = 0;
+  for (let i = 1; i < q.length; i++) {
+    while (c < changes.length && changes[c].t <= q[i].t) c++;
+    const after = Math.max(from, changes[c - 1]?.t ?? -Infinity);
+    let up = 0;
+    let x = 0;
+    for (const [a, b] of rises(q, WEEK_RISES, (a) => a.t >= after, i)) {
+      up += b.v - a.v;
+      x += /** @type {number} */ (by.get(b)) - /** @type {number} */ (by.get(a));
+    }
+    if (up >= WEEK_RISES.least && x > 0) out.push({ t: q[i].t, v: x / up });
+  }
+  return out;
+}
+
+/**
  * The rises of a percent to scale it by: two samples close together, the percent not down nor at
- * the limit, those `keep` keeps; from the last sample back till they come to `o.points` points,
- * or to `o.within` before it.
+ * the limit, those `keep` keeps; from sample `end` (the last) back till they come to `o.points`
+ * points, or to `o.within` before it.
  * @param {Point[]} q in time order
  * @param {Rises} o
  * @param {(a: Point, b: Point) => boolean} [keep]
+ * @param {number} [end]
  * @returns {[Point, Point][]}
  */
-function rises(q, o, keep = () => true) {
+function rises(q, o, keep = () => true, end = q.length - 1) {
   /** @type {[Point, Point][]} */
   const out = [];
-  const last = q.at(-1);
+  const last = q[end];
   let up = 0;
-  for (let k = q.length - 1; last && k > 0 && up < o.points && q[k].t > last.t - o.within; k--) {
+  for (let k = end; last && k > 0 && up < o.points && q[k].t > last.t - o.within; k--) {
     const [a, b] = [q[k - 1], q[k]];
     if (b.t - a.t > RISE || b.v < a.v || b.v >= 100 || !keep(a, b)) continue;
     out.push([a, b]);

@@ -1,6 +1,6 @@
 # agentmonitor
 
-The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, carried on to now with what this computer's sessions used since, and about when each resets. Below the list, where it leaves room, the sessions are cards on a board, in columns by what they wait for; `v` turns that room to twelve other views, from an overview (the selected session at more length, the other sessions that need you, what was said lately, and the usage at the pace it goes) and the sessions as figures at their keys to the usage as a tank the replies drip into.
+The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, carried on to now with what this computer's sessions used since, and about when each resets. Below the list, where it leaves room, the sessions are cards on a board, in columns by what they wait for; `v` turns that room to thirteen other views, from an overview (the selected session at more length, the other sessions that need you, what was said lately, and the usage at the pace it goes) and the sessions as figures at their keys to the usage as a tank the replies drip into.
 
 ```
  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread       session ~64% resets 15:10  week ~29% resets Thu
@@ -54,9 +54,9 @@ It draws every line again every 2 seconds, since a terminal can lose lines witho
                          or finishes its turn (b turns it on or off; with
                          --serve, the page beeps)
       --view <name>      the view below the list to start with: board (the
-                         default), overview, floor, lanes, ticker, pipeline,
-                         files, chart, share, today, tank, radar or spark
-                         (v and V step through them)
+                         default), overview, floor, bands, lanes, ticker,
+                         pipeline, files, chart, share, today, tank, radar or
+                         spark (v and V step through them)
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
@@ -104,7 +104,7 @@ To carry a check on, the monitor reads the replies in this computer's transcript
 
 ## Below the list
 
-Where the rows leave room below them, the monitor fills it with one of thirteen views: at first the board, the sessions as cards in columns by what they wait for (`--view` starts with another), and `v` and `V` step through the others. The overview has the selected session, what needs you, what was said and the usage, each part where there is room for it:
+Where the rows leave room below them, the monitor fills it with one of fourteen views: at first the board, the sessions as cards in columns by what they wait for (`--view` starts with another), and `v` and `V` step through the others. The overview has the selected session, what needs you, what was said and the usage, each part where there is room for it:
 
 ```
  ─ ◆ shop · Release 2.0 ───────────────────────────────────────────────────────── waiting · 2m03s ─
@@ -158,18 +158,19 @@ That is the overview. `v` shows the next view of the room, and `V` the one befor
 | overview | the selected session, what needs you, what was said lately, and the usage at its pace, as above |
 | floor | each session that runs as a figure, posed by what it does: at its keys while it works, tapping its foot under what it runs while a tool call takes a while, waving when it waits for you, holding up a reply you have not read, asleep while idle. The agents it started walk beside it, and a workflow's agents at work stand in a crowd, with how far the workflow has come |
 | board | the view at first: the sessions as cards in columns, needs you, working, background, idle, and on a wide screen ended. For 4 seconds a card that moved stands out, with the column it came from, and leaves a ghost there |
+| bands | the floor's figures in a band for each of the board's first two columns, what needs you on top and what works under it, and the sessions of the others (in the background, idle, ended) named below, each column on a line of its own where there is room. For 4 seconds a figure that moved stands out, with the column it came from over its head, and the band it left names it. Where the room is short, a band gets fewer lines of figures, or names its sessions on its own line |
 | lanes | a lane for each session over the last half hour or more, a column for each 10 seconds to 10 minutes as the width takes: its turns `█`, its tool calls that ran 3 seconds or more `▒`, the time it waited on you `?`, your prompts `▲`, and `·` while it ran idle between them |
 | ticker | the tool calls of the sessions listed and of their agents: those still open first, with how long they have run, then the others, the latest first, with how long they took, `✗` where one failed |
 | pipeline | each workflow, with its phases in the order they began, each agent in them a mark: at work (a spinner), done or failed; under them, the sessions' own agents |
 | files | the files the sessions changed in the last hour, the latest first: how often, by whom and when, `✎` on one being changed now, and `!` on one that two sessions or more changed |
-| chart | the session's percent over its five hours and the week's over its seven days, as the desktop app checked them, carried on to now, and on to the reset at its pace (yellow where that reaches 100% first); on a tall screen, when in the day the session's limit was used over the last week |
+| chart | the session's percent over its five hours and the week's over its seven days, as the desktop app checked them, carried on to now, and on to the reset at its pace (yellow where that reaches 100% first). Under them, where there is room, the rate: the tokens 1% of the week came to, weighed as the usage is carried on with, over all the days the app's checks go back (about 30). At each check it is what the latest rises of the week's percent came to then, as the week is carried on, but counted only from the plan's last change before it; the line breaks at each change, where a dotted line goes down. On a tall screen, when in the day the session's limit was used over the last week |
 | share | the points of each limit each session on this computer used, the most first, those the replies read here leave out (use elsewhere), and the points by model |
 | today | what the sessions here did since midnight: the sessions, agents, prompts and replies, the time they waited on you, the tokens, the models' shares, the replies hour by hour, and the tools called, the most first |
 | tank | the session's limit as a tank as full as its percent, each reply a drop as big as its points, falling in about 15 seconds after it was written; its pace (the last hour's) and its reset, and the week's tank beside it with its own. Where the session's percent is not known, as after a change of plan, when the desktop app's checks can leave it out, the replies drip into the week's tank |
 | radar | each session a blip, nearer the middle the more lately it did something (rings at a minute, ten, an hour and the window), and a sweep going round that lights those that just did; the sessions beside it, the latest first |
 | spark | one spark for all the sessions: it turns the faster the more of them work, waves when one needs you, sleeps when none works, and goes yellow, then red, as a limit nears |
 
-The floor, the pipeline, the tank, the radar and the spark move of themselves: while one shows, the terminal draws it ten times a second, and a web page asks for it four times a second. A click on a session or an agent in a view opens its details, and one anywhere else selects none. The views show what the monitor reads anyway: the lanes, the ticker, the pipeline and the files what was read of each transcript (its last MiB on first sight, then what was appended; its latest 200 tool calls and 100 turns), and the chart, the share, today and the tank the desktop app's checks and this computer's replies, which the monitor reads back to midnight for today.
+The floor, the bands, the pipeline, the tank, the radar and the spark move of themselves: while one shows, the terminal draws it ten times a second, and a web page asks for it four times a second. A click on a session or an agent in a view opens its details, and one anywhere else selects none. The views show what the monitor reads anyway: the lanes, the ticker, the pipeline and the files what was read of each transcript (its last MiB on first sight, then what was appended; its latest 200 tool calls and 100 turns), and the chart, the share, today and the tank the desktop app's checks and this computer's replies, which the monitor reads back to midnight for today, and to the first of the checks for the chart's rate (a few seconds in the background as it starts, then only what was appended).
 
 ## Details
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Canvas } from '../src/canvas.js';
-import { clock, timeOfDay, weekday, width } from '../src/format.js';
+import { clock, monthDay, timeOfDay, weekday, width } from '../src/format.js';
 import { boardColumn, cut, laneOf, MOVED, VIEWS, viewOf } from '../src/panels.js';
 import { helpLines, initialUi, listLines, makeTheme, settleSelection, visibleRows } from '../src/view.js';
 import { Viewer } from '../src/viewer.js';
@@ -104,6 +104,21 @@ const USAGE = {
   drops: [{ t: NOW - 16 * SECOND, seen: NOW - 10 * SECOND, limit: 'session', v: 0.2, session: 'sid-work' }],
 };
 
+/** The plan's change, two days ago. */
+const CHANGED = { t: NOW - 2 * DAY, v: 43 };
+/**
+ * The usage with 25 days of the week's samples, and what a point of the week came to: 400,000
+ * till the plan changed, a million since.
+ * @type {import('../src/usage.js').Usage}
+ */
+const RATED = {
+  ...USAGE,
+  changed: CHANGED,
+  changes: [CHANGED],
+  history: { ...USAGE.history, week: [...points(NOW - 25 * DAY, 6 * HOUR, Array.from({ length: 80 }, (_, i) => 30 + (i % 28))), ...USAGE.history.week] },
+  perPoint: [...points(NOW - 24 * DAY, 6 * HOUR, new Array(88).fill(400_000)), ...points(CHANGED.t + 6 * HOUR, 6 * HOUR, new Array(7).fill(1_000_000))],
+};
+
 const MIDNIGHT = new Date(NOW).setHours(0, 0, 0, 0);
 /** @type {import('../src/ledger.js').Day} */
 const TODAY = {
@@ -180,8 +195,8 @@ test('cut: a styled line cut to a width keeps its styles, closes the one it cuts
 });
 
 test('the views, the overview first, as v steps through them; those that move of themselves', () => {
-  assert.deepEqual(VIEWS.map((v) => v.name), ['overview', 'floor', 'board', 'lanes', 'ticker', 'pipeline', 'files', 'chart', 'share', 'today', 'tank', 'radar', 'spark']);
-  assert.deepEqual(VIEWS.filter((v) => v.animated).map((v) => v.name), ['floor', 'pipeline', 'tank', 'radar', 'spark']);
+  assert.deepEqual(VIEWS.map((v) => v.name), ['overview', 'floor', 'board', 'bands', 'lanes', 'ticker', 'pipeline', 'files', 'chart', 'share', 'today', 'tank', 'radar', 'spark']);
+  assert.deepEqual(VIEWS.filter((v) => v.animated).map((v) => v.name), ['floor', 'bands', 'pipeline', 'tank', 'radar', 'spark']);
   assert.equal(viewOf('radar').name, 'radar');
   assert.equal(viewOf('nope'), VIEWS[0]);
   assert.equal(VIEWS[0].lines, undefined, 'src/view.js draws the overview');
@@ -190,10 +205,11 @@ test('the views, the overview first, as v steps through them; those that move of
 test('every view fills the room below the rows: a line for each of it, each as wide as the screen, nothing but ASCII with --ascii', () => {
   const empty = snapshot([]);
   const bare = snapshot(sessions());
+  const rated = fullSnapshot({ usage: RATED });
   for (const t of [plain, color, ascii]) {
     for (const [cols, height] of [[120, 50], [100, 30], [72, 24], [60, 20], [43, 40], [30, 12], [20, 6]]) {
       for (const v of VIEWS.slice(1)) {
-        for (const snap of [fullSnapshot(), bare, empty]) {
+        for (const snap of [fullSnapshot(), bare, empty, rated]) {
           for (const now of [NOW, NOW + 777]) {
             const { lines } = draw(v.name, { width: cols, height, now, t, snap, index: 0, ui: { agents: 'all' } });
             const at = `${v.name} at ${cols}x${height}${t.ascii ? ' in ASCII' : ''}`;
@@ -280,6 +296,73 @@ test('the board: the sessions in columns by state; a card that moved stands out 
   ]);
   assert.equal(boardColumn(sessions()[2]), 'Needs you');
   assert.equal(boardColumn(agent({ state: 'idle', commands: [{ summary: 'Bash: serve', ts: NOW }] })), 'Background');
+});
+
+test("the bands: the floor's figures in a band for each of the board's first columns, the others' sessions named on a line below; a figure that moved stands out", () => {
+  const { view, hits, top } = draw('bands', { height: 30 });
+  assert.match(view[1], /^ ─ Bands ─+ 2 at work · 2 for you · 1 idle · 1 ended ─$/);
+  assert.match(view[2], /^ Needs you 2 ─{80,}$/);
+  // Over each head what it waits for, did, runs; then the figure; then its name.
+  assert.equal(view[3], '  ? a question: whi…  • The README is d…');
+  assert.match(view[4], /^ {3}(\\o\/|_o_) {18}o \[\]$/, 'waving; holding up a reply');
+  assert.equal(view[7], '  ◆ Fix the login     • Write the docs');
+  assert.equal(view[8], '');
+  assert.match(view[9], /^ Working 2 ─{80,}$/);
+  assert.equal(view[10], '  Edit: src/panels.…  >_ npm run build');
+  assert.match(view[11].slice(9, 15), /^[oO]{2} 4\/6$/, "its workflow's agents in a crowd beside it");
+  assert.equal(view[14], '  ● Add the views     ◐ Build the site');
+  assert.deepEqual(view.slice(15, 17), [' Idle 1 ○ Old idea', ' Ended 1 · Gone home 3h ago']);
+  for (let y = top + 3; y <= top + 7; y++) {
+    assert.deepEqual(clickAt(hits, 5, y), { open: 's:wait' });
+    assert.deepEqual(clickAt(hits, 25, y), { open: 's:read' });
+  }
+  assert.deepEqual(clickAt(hits, 25, top + 12), { open: 's:tool' });
+  assert.deepEqual(clickAt(hits, 12, top + 15), { open: 's:idle' });
+  assert.deepEqual(clickAt(hits, 12, top + 16), { open: 's:end' });
+  assert.deepEqual(clickAt(hits, 85, top + 4), { unselect: true }, 'no figure there');
+  assert.deepEqual(clickAt(hits, 5, top + 9), { unselect: true }, "a band's heading");
+  // The selected one: > before its name, without color.
+  assert.equal(draw('bands', { height: 30, index: 2 }).view[14], ' >● Add the views     ◐ Build the site');
+  // One that just moved: where from over its head, marked, and named in the band it left; one
+  // that moved to the line below, in yellow there.
+  const moves = new Map([['s:wait', { from: 'Working', to: 'Needs you', at: NOW - SECOND }], ['s:idle', { from: 'Working', to: 'Idle', at: NOW - SECOND }]]);
+  const moved = draw('bands', { height: 30, ui: { moves } }).view;
+  assert.equal(moved[3].slice(0, 20).trimEnd(), '  from Working');
+  assert.equal(moved[7].slice(0, 20).trimEnd(), ' ▸◆ Fix the login');
+  assert.match(moved[9], /^ Working 2 {2}┄ Fix the login {2}┄ Old idea ─+$/);
+  assert.ok(draw('bands', { height: 30, t: color, ui: { moves } }).lines[top + 15].includes(color.yellow('Old idea')));
+  const later = draw('bands', { height: 30, now: NOW - SECOND + MOVED, ui: { moves } }).view;
+  assert.deepEqual([later[3], later[7], later[9]], [view[3], view[7], view[9]], `after ${MOVED / SECOND}s, as any other`);
+  // Shorter: a line of figures for the first band, the second's sessions on its heading's line;
+  // shorter still, each band's on its line, with none between them.
+  const short = draw('bands', { height: 20 }).view;
+  assert.deepEqual([short[3], short[8]], [view[3], '']);
+  assert.match(short[9], /^ Working 2 {2}● Add the views {2}◐ Build the site ─+$/);
+  assert.equal(short[10], ' Idle 1 ○ Old idea  Ended 1 · Gone home 3h ago', 'on the last line, together');
+  assert.deepEqual(draw('bands', { height: 14 }).view.slice(2).map((l) => l.replace(/ ─+$/, '')), [
+    ' Needs you 2  ◆ Fix the login  • Write the docs',
+    ' Working 2  ● Add the views  ◐ Build the site',
+    ' Idle 1 ○ Old idea  Ended 1 · Gone home 3h ago',
+  ]);
+  // As narrow as a phone: fewer columns for each figure.
+  assert.equal(draw('bands', { width: 43, height: 30 }).view[7], '  ◆ Fix the l…  • Write the…');
+  const quiet = draw('bands', { snap: snapshot([sessions()[4], sessions()[5]]), height: 12 }).view;
+  assert.deepEqual(quiet.slice(2, 5), ['   None needs you, and none is at work.', view[15], view[16]]);
+  // Many of them: their sessions go on to the next line where one is left past one for each
+  // column after; where they don't fit, how many more of the column, or on the last line of all.
+  const many = snapshot([
+    ...['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf'].map((title, i) => agent({ key: `s:i${i}`, title, state: 'idle', lastActive: NOW - (10 + i) * MINUTE })),
+    ...['Hotel', 'India'].map((title, i) => agent({ key: `s:e${i}`, title, state: 'ended', live: false, lastActive: NOW - (2 + i) * HOUR })),
+  ]);
+  assert.deepEqual(draw('bands', { snap: many, width: 48, height: 20 }).view.slice(3, 6), [
+    ' Idle 7 ○ Alpha ○ Bravo ○ Charlie ○ Delta', '   ○ Echo ○ Foxtrot ○ Golf', ' Ended 2 · Hotel 2h ago · India 3h ago',
+  ]);
+  assert.deepEqual(draw('bands', { snap: many, width: 48, height: 17 }).view.slice(3, 5), [
+    ' Idle 7 ○ Alpha ○ Bravo ○ Charlie ○ Delta +3', ' Ended 2 · Hotel 2h ago · India 3h ago',
+  ]);
+  assert.equal(draw('bands', { snap: many, width: 48, height: 16 }).view[3], ' Idle 7 ○ Alpha ○ Bravo ○ Charlie ○ Delta +5');
+  const long = snapshot([agent({ key: 's:long', title: 'A name too long for the line below', state: 'ended', live: false, lastActive: NOW - 2 * HOUR })]);
+  assert.match(draw('bands', { snap: long, height: 12 }).view[3], /^ Ended 1 · A name too long for th\S*… 2h ago$/, 'its name cut, not how long ago');
 });
 
 test('a lane: for each column of time, the most worth of what its session did then', () => {
@@ -417,6 +500,34 @@ test("the chart: the session's window and the week, as sampled, carried on to no
   assert.ok(!draw('chart', { height: 20 }).view.some((l) => l.startsWith(' week')));
   assert.ok(!draw('chart', { height: 30 }).view.some((l) => l.startsWith(' hour')));
   assert.match(draw('chart', { snap: fullSnapshot({ usage: undefined }) }).view[2], /No usage known: the desktop app samples it while it runs\./);
+  assert.ok(!view.some((l) => l.startsWith(' rate')), 'what a point came to, not read');
+});
+
+test("the chart's rate: what a point of the week came to over the samples' days, broken and marked where the plan changed", () => {
+  const snap = fullSnapshot({ usage: RATED });
+  const { view } = draw('chart', { snap, height: 48 });
+  // Under the session and the week, 7 lines each, and over the hours.
+  assert.equal(view[20], ` rate    1M     tokens for 1% of the week · plan changed ${clock(CHANGED.t, NOW)}`);
+  assert.deepEqual([view[21].slice(0, 4), view[24].slice(0, 4), view[27].slice(0, 4)], ['  1M', '500k', '   0']);
+  // 400,000 a point at four tenths of the way up, from 24 days ago; a million since the plan
+  // changed, at the top, where a dotted line goes down.
+  assert.match(view[25].slice(8, 90), /^[⠁-⣿]+$/);
+  assert.match(view[21].slice(92, 98), /^[⠁-⣿]+$/);
+  assert.match(view[23].slice(10, 90), /^ +$/);
+  for (let y = 21; y <= 27; y++) assert.match(view[y][91], /[⠁-⣿]/, `line ${y}`);
+  // Below it each Monday's date.
+  /** @type {string[]} */
+  const mondays = [];
+  for (let d = new Date(NOW - 25 * DAY).setHours(24, 0, 0, 0); d < NOW; d = new Date(d).setHours(24, 0, 0, 0)) if (new Date(d).getDay() === 1) mondays.push(`╵${monthDay(d)}`);
+  assert.deepEqual(view[28].match(/╵\w+ \d+/g), mondays);
+  assert.equal(view[30], ' hour 0           6           12          18');
+  // Not yet known for the plan there is now.
+  const before = fullSnapshot({ usage: { ...RATED, perPoint: RATED.perPoint?.filter((p) => p.t < CHANGED.t) } });
+  assert.equal(draw('chart', { snap: before, height: 48 }).view[20], ` rate${' '.repeat(11)}not known for this plan yet: the week rose too little · plan changed ${clock(CHANGED.t, NOW)}`);
+  // Shorter: no hours, then no rate.
+  const lines = (/** @type {number} */ height) => draw('chart', { snap, height }).view;
+  assert.deepEqual([lines(30).some((l) => l.startsWith(' rate')), lines(30).some((l) => l.startsWith(' hour'))], [true, false]);
+  assert.ok(!lines(26).some((l) => l.startsWith(' rate')));
 });
 
 test("who used the limits: each session's points as a bar of the whole, what the replies read leave out, and by model", () => {

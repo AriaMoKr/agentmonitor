@@ -375,3 +375,12 @@ export function timeOfDay(ts) {
 export function weekday(ts) {
   return DAYS[new Date(ts).getDay()];
 }
+
+/**
+ * A moment's local date: 'Oct 5'.
+ * @param {number} ts
+ */
+export function monthDay(ts) {
+  const d = new Date(ts);
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}

@@ -158,6 +158,11 @@ export class Monitor {
     this.planUsage = new PlanUsage(desktopDirs, new Ledger(join(dir, 'projects')));
     /** Whether the replies are read back to midnight for what today came to (not when waited for). */
     this.today = !wait;
+    /**
+     * Whether they are read back to the usage's first sample, for what a point of the week came
+     * to at each (not when waited for: printed once, nothing draws it).
+     */
+    this.history = !wait;
     /** @type {{ list: unknown, midnight: number, hour: number, value: import('./ledger.js').Day } | undefined} */
     this.day = undefined;
     this.sessionAgents = new SessionAgents();
@@ -199,7 +204,7 @@ export class Monitor {
       this.jobs.read(),
       this.desktop.read(now),
       this.scanProjects(),
-      this.planUsage.read(now, { wait: this.wait, since: this.today ? midnight : undefined }),
+      this.planUsage.read(now, { wait: this.wait, since: this.today ? midnight : undefined, history: this.history }),
     ]);
     const live = await this.liveness(records, now);
     const cutoff = now - this.windowMs;

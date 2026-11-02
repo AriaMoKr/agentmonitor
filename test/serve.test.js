@@ -203,7 +203,7 @@ test('keys move the selection and open the details; each page keeps a view of it
   assert.doesNotMatch(help, /quit|shift\+drag/);
   // Taller than the window: it scrolls.
   const end = (await s.screen('page-bbbb', ['k:end'], { h: 30 })).text;
-  assert.match(end.join('\n'), /Views below the list[\s\S]*spark[\s\S]*any other key or a click goes back/);
+  assert.match(end.join('\n'), /radar[\s\S]*spark[\s\S]*any other key or a click goes back/);
   assert.match(end.at(-1) ?? '', /^ esc back .* \d+-(\d+)\/\1 $/);
   // Back to the list, and a filter typed.
   a = await s.screen('page-aaaa', ['k:escape', 'c:/', 'c:d', 'c:o', 'c:c', 'c:s', 'k:enter']);

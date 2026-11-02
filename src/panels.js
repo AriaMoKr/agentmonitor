@@ -1,11 +1,12 @@
 // The views of the room below the list's rows that v steps through after the overview: the
-// sessions as figures on a floor, as cards on a board, on lanes over the last half hour; their
-// tool calls as they come, their workflows' phases, the files they changed; the plan's usage as a
-// chart, who used it, what today came to, the session's limit as a tank the replies drip into;
-// the sessions on a radar, and one spark for them all. Pure functions of a snapshot and the
+// sessions as figures on a floor, as cards on a board, as figures in bands by the board's
+// columns, on lanes over the last half hour; their tool calls as they come, their workflows'
+// phases, the files they changed; the plan's usage as a chart, with what a point of the week came
+// to, who used it, what today came to, the session's limit as a tank the replies drip into; the
+// sessions on a radar, and one spark for them all. Pure functions of a snapshot and the
 // screen's state, as src/view.js's are: those that move do so with the time they are drawn for.
 import { Canvas } from './canvas.js';
-import { ago, clock, durationLabel, elapsed, fit, graphemes, lastPart, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
+import { ago, clock, durationLabel, elapsed, fit, graphemes, lastPart, monthDay, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
 import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, rate, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
 
 /**
@@ -546,6 +547,173 @@ function boardLines(snap, rows, ui, screen, t) {
   return frame('Board', right, canvasLines(c, t, spots), screen, t);
 }
 
+// The bands ---------------------------------------------------------------------------------
+
+/** The board's columns the bands show as figures, the first on top; the others are named below. */
+const BANDS = ['Needs you', 'Working'];
+
+/**
+ * The bands: the floor's figures, in a band for each of the board's columns that matter most,
+ * what needs you on top and what works under it; the sessions of the other columns (in the
+ * background, idle, ended) named below them, each column on a line of its own where there is
+ * room. A figure that moved to its band lately stands out, with where it came from over its head,
+ * and the band it left names it a while; one that moved below is named in yellow. Where the room
+ * is short, a band gets fewer lines of figures, or its sessions named on its own line, and the
+ * other columns share a line. A click on a session opens its details.
+ * @type {Panel}
+ */
+function bandsLines(snap, rows, ui, screen, t) {
+  const { width: cols, height, now } = screen;
+  const sessions = sessionsOf(rows);
+  const selected = selectedOf(rows, ui);
+  const room = Math.max(0, height - 2);
+  const w = cols >= 100 ? 20 : cols >= 72 ? 18 : 14;
+  const across = Math.max(1, Math.floor((cols - 1) / w));
+  const listed = new Map(sessions.map((a) => [a.key, a]));
+  /** Where a session moved from lately, if it did. @param {Agent} a */
+  const moved = (a) => {
+    const m = ui.moves.get(a.key);
+    return m && now - m.at < MOVED && m.to === boardColumn(a) ? m : undefined;
+  };
+  /** The sessions that left a column lately. @param {string} name @returns {Agent[]} */
+  const ghosts = (name) => [...ui.moves].flatMap(([k, m]) => {
+    const a = m.from === name && now - m.at < MOVED ? listed.get(k) : undefined;
+    return a ? [a] : [];
+  });
+  const bands = BANDS.map((name) => ({ name, members: sessions.filter((a) => boardColumn(a) === name), gone: ghosts(name) }))
+    .filter((b) => b.members.length || b.gone.length);
+  const quiet = BOARD.filter((col) => !BANDS.includes(col.name))
+    .map((col) => ({ name: col.name, members: sessions.filter((a) => boardColumn(a) === col.name) }))
+    .filter((g) => g.members.length);
+  // The lines of figures each band gets, a band its heading and those lines with one between
+  // them, and one between bands, a line under them for the quiet ones (and what room is left):
+  // first one line for each band in turn where it fits, then more for each in turn. One with none
+  // names its sessions on its heading's line. Where the room is shorter still, the bands have no
+  // line between them.
+  const wants = bands.map((b) => Math.ceil(b.members.length / across));
+  const gets = bands.map(() => 0);
+  const lines = (gap = 1) => gets.reduce((s, r) => s + (r ? r * (FIGURE_LINES + 1) : 1), 0) + gap * Math.max(0, bands.length - 1) + (quiet.length ? 1 : 0);
+  for (let i = 0; i < bands.length; i++) {
+    if (!wants[i]) continue;
+    gets[i] = 1;
+    if (lines() > room) gets[i] = 0;
+  }
+  for (let i = 0; i < bands.length; i++) {
+    while (gets[i] && gets[i] < wants[i]) {
+      gets[i]++;
+      if (lines() > room) {
+        gets[i]--;
+        break;
+      }
+    }
+  }
+  const gap = lines() <= room ? 1 : 0;
+  const c = new Canvas(cols, room);
+  /** @type {Map<number, Spot[]>} */
+  const spots = new Map();
+  const ghost = t.ascii ? '~' : '┄';
+  /**
+   * A session named on line `y` from column `x`, as a click opens it: its glyph and its name, with
+   * `then` after it, where they fit before `end`; the column after it, or undefined where it does
+   * not fit.
+   * @param {Agent} a @param {number} x @param {number} y @param {number} end @param {string} [then]
+   */
+  const named = (a, x, y, end, then = '') => {
+    const s = shown(a);
+    const name = truncate(nameOf(a), 24, t.ellipsis) + then;
+    if (x + 2 + width(name) > end) return undefined;
+    const chosen = a.key === selected;
+    c.put(x, y, glyphChar(s, t, now), paintOf(s, t));
+    const after = c.put(x + 2, y, name, chosen ? (t.color ? t.inverse : t.bold) : moved(a) ? t.yellow : undefined);
+    spot(spots, y, { x0: x, x1: after, action: { open: a.key } });
+    return after;
+  };
+  let y = 0;
+  bands.forEach((b, i) => {
+    if (i) y += gap;
+    const r = gets[i];
+    let x = c.put(c.put(1, y, b.name, t.bold) + 1, y, String(b.members.length), t.dim) + 2;
+    // With no line of figures, its sessions named here, and how many more where they don't fit.
+    if (!r) {
+      let k = 0;
+      for (; k < b.members.length; k++) {
+        const after = named(b.members[k], x, y, cols - 9);
+        if (after === undefined) break;
+        x = after + 2;
+      }
+      if (k < b.members.length) x = c.put(x, y, `+${b.members.length - k}`, t.dim) + 2;
+    }
+    for (const a of b.gone) {
+      const text = truncate(`${ghost} ${nameOf(a)}`, 24, t.ellipsis);
+      if (x + width(text) > cols - 2) break;
+      x = c.put(x, y, text, t.dim) + 2;
+    }
+    if (x < cols - 1) c.put(x - 1, y, t.rule.repeat(cols - x), t.dim);
+    y++;
+    if (!r) return;
+    const fits = r * across;
+    const drawn = b.members.length > fits ? b.members.slice(0, fits - 1) : b.members;
+    drawn.forEach((a, k) => {
+      const fx = 1 + (k % across) * w;
+      const top = y + Math.floor(k / across) * (FIGURE_LINES + 1);
+      drawFigure(c, fx, top, w, a, a.key === selected, now, t);
+      const m = moved(a);
+      if (m) {
+        // Where it came from over its head, for a while, and a mark by its name.
+        c.put(fx + 1, top, ' '.repeat(w - 2));
+        c.put(fx + 1, top, truncate(`from ${m.from}`, w - 2, t.ellipsis), t.yellow);
+        if (a.key !== selected || t.color) c.put(fx, top + 4, t.ascii ? '>' : '▸', t.yellow);
+      }
+      for (let l = 0; l < FIGURE_LINES; l++) spot(spots, top + l, { x0: fx, x1: fx + w, action: { open: a.key } });
+    });
+    if (drawn.length < b.members.length) {
+      const k = drawn.length;
+      c.put(3 + (k % across) * w, y + Math.floor(k / across) * (FIGURE_LINES + 1) + 2, `+${b.members.length - k} more`, t.dim);
+    }
+    y += r * (FIGURE_LINES + 1) - 1;
+  });
+  if (!bands.length && sessions.length && room > (quiet.length ? 1 : 0)) c.put(3, y++, 'None needs you, and none is at work.', t.dim);
+  // The quiet ones below them: each column's name and how many, then its sessions, those that
+  // ended with how long ago. Each column begins a line where one is left, and its sessions go on
+  // to the next where one is left past one for each column after it; where they don't fit, how
+  // many more of it, where the next has a line of its own, else of all the rest.
+  if (quiet.length && y < room) {
+    let x = 1;
+    let left = quiet.reduce((s, g) => s + g.members.length, 0);
+    for (let i = 0; i < quiet.length; i++) {
+      const g = quiet[i];
+      if (i && y < room - 1) [x, y] = [1, y + 1];
+      const wraps = () => room - 1 - y > quiet.length - 1 - i;
+      const end = () => (wraps() ? cols - 1 : cols - 6);
+      if (x + width(`${g.name} ${g.members.length}`) + 1 > end()) break;
+      x = c.put(c.put(x, y, g.name, t.bold) + 1, y, String(g.members.length), t.dim) + 1;
+      let k = 0;
+      for (; k < g.members.length; k++) {
+        const a = g.members[k];
+        const ago = OVER.has(a.state) ? ` ${since(now - a.lastActive)}` : '';
+        let after = named(a, x, y, end(), ago);
+        if (after === undefined && wraps()) {
+          [x, y] = [3, y + 1];
+          after = named(a, x, y, end(), ago);
+        }
+        if (after === undefined) break;
+        x = after + 1;
+        left--;
+      }
+      if (k < g.members.length) {
+        if (i === quiet.length - 1 || y >= room - 1) break;
+        c.put(x, y, `+${g.members.length - k}`, t.dim);
+        left -= g.members.length - k;
+      }
+      x++;
+    }
+    if (left) c.put(x, y, `+${left}`, t.dim);
+  }
+  if (!sessions.length) c.put(3, 0, 'No sessions listed.', t.dim);
+  const ended = sessions.filter((a) => boardColumn(a) === 'Ended').length;
+  return frame('Bands', tally(sessions, t, [ended > 0 && `${ended} ended`]), canvasLines(c, t, spots), screen, t);
+}
+
 // The lanes ---------------------------------------------------------------------------------
 
 /** The time of a lane's column: the shortest of these that shows half an hour at least. */
@@ -887,25 +1055,109 @@ function plot(c, y, h, points, { from, to, now, v, pace, unit, days }, t) {
   c.put(0, y, '100%', t.dim);
   if (h >= 3) c.put(0, y + Math.round((h - 1) / 2), ' 50%', t.dim);
   c.put(0, y + h - 1, '  0%', t.dim);
-  // The times below: each day's start, or the start and the end; now first, the others where
-  // they fit.
-  const ty = y + h;
+  // The times below: each day's start, or the start and the end.
   const xs = (/** @type {number} */ time) => Math.floor(X(time) / 2);
   /** @type {[number, string][]} */
+  const marks = days ? dayMarks(from, to, xs, t) : [[left, timeOfDay(from)], [c.w - 6, timeOfDay(to)]];
+  timeMarks(c, y + h, xs, { from, to, now }, marks, t);
+}
+
+/**
+ * The marks of the days from `from` to `to` under a chart, at the column `xs` gives a time: each
+ * day's start with its day of the week, or with `weeks` each Monday's with its date.
+ * @param {number} from
+ * @param {number} to
+ * @param {(time: number) => number} xs
+ * @param {Theme} t
+ * @param {boolean} [weeks]
+ * @returns {[number, string][]}
+ */
+function dayMarks(from, to, xs, t, weeks = false) {
+  const tick = t.ascii ? '|' : '╵';
+  /** @type {[number, string][]} */
   const marks = [];
-  if (days) {
-    const tick = t.ascii ? '|' : '╵';
-    for (let d = new Date(from).setHours(24, 0, 0, 0); d < to; d = new Date(d).setHours(24, 0, 0, 0)) marks.push([xs(d), `${tick}${weekday(d)}`]);
-  } else {
-    marks.push([left, timeOfDay(from)], [c.w - 6, timeOfDay(to)]);
+  const next = (/** @type {number} */ d) => new Date(d).setHours(24, 0, 0, 0);
+  for (let d = next(from); d < to; d = next(d)) {
+    if (!weeks) marks.push([xs(d), `${tick}${weekday(d)}`]);
+    else if (new Date(d).getDay() === 1) marks.push([xs(d), `${tick}${monthDay(d)}`]);
   }
-  const nowX = now > from && now < to ? Math.min(c.w - 5, Math.max(left, xs(now))) : -1;
-  if (nowX >= 0) c.put(nowX, ty, `${t.ascii ? '^' : '▴'}now`, t.cyan);
+  return marks;
+}
+
+/**
+ * The times under a chart from `from` to `to`, on line `y`: now first, where it is between them,
+ * then the marks where they fit.
+ * @param {Canvas} c
+ * @param {number} y
+ * @param {(time: number) => number} xs the column of a time
+ * @param {{ from: number, to: number, now: number }} o
+ * @param {[number, string][]} marks
+ * @param {Theme} t
+ */
+function timeMarks(c, y, xs, { from, to, now }, marks, t) {
+  const nowX = now > from && now < to ? Math.min(c.w - 5, Math.max(5, xs(now))) : -1;
+  if (nowX >= 0) c.put(nowX, y, `${t.ascii ? '^' : '▴'}now`, t.cyan);
   let free = 0;
   for (const [x, text] of marks) {
     if (x < free || (nowX >= 0 && x <= nowX + 4 && x + width(text) >= nowX)) continue;
-    free = c.put(x, ty, text, t.dim) + 1;
+    free = c.put(x, y, text, t.dim) + 1;
   }
+}
+
+/**
+ * The least of 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6 and 8 times a power of ten that is `n` or more:
+ * the top of a chart's scale.
+ * @param {number} n more than 0
+ */
+function roundUp(n) {
+  const p = 10 ** Math.floor(Math.log10(n));
+  return ([1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8].find((m) => m * p >= n) ?? 10) * p;
+}
+
+/**
+ * What a point of the week came to (perPoint) from `from` to now, on `h` lines of a canvas from
+ * line `y`: a line from sample to sample, broken where the plan changed, and a dotted line down
+ * at each change; the use on the left, from 0 to a round number over the most, and below the
+ * days, or over more than ten of them the weeks.
+ * @param {Canvas} c
+ * @param {number} y
+ * @param {number} h
+ * @param {Point[]} perPoint
+ * @param {Point[]} changes
+ * @param {number} from
+ * @param {number} now
+ * @param {Theme} t
+ */
+function ratePlot(c, y, h, perPoint, changes, from, now, t) {
+  const left = 5;
+  const w = Math.max(2, c.w - left - 1);
+  const these = perPoint.filter((p) => p.t >= from && p.t <= now);
+  const top = roundUp(Math.max(1, ...these.map((p) => p.v)));
+  const span = Math.max(1, now - from);
+  const X = (/** @type {number} */ time) => 2 * left + ((Math.max(from, Math.min(now, time)) - from) / span) * (2 * w - 1);
+  const Y = (/** @type {number} */ v) => 4 * y + (1 - Math.max(0, Math.min(top, v)) / top) * (4 * h - 1);
+  for (const ch of changes) if (ch.t > from && ch.t <= now) c.line(X(ch.t), Y(top), X(ch.t), Y(0), t.dim, 2);
+  /** @type {[number, number] | undefined} */
+  let prev;
+  // The changes by the sample before, and by this one.
+  let was = -1;
+  let k = 0;
+  for (const p of these) {
+    while (k < changes.length && changes[k].t <= p.t) k++;
+    /** @type {[number, number]} */
+    const at = [X(p.t), Y(p.v)];
+    if (prev && was === k) c.line(prev[0], prev[1], at[0], at[1]);
+    else c.dot(at[0], at[1]);
+    prev = at;
+    was = k;
+  }
+  if (these.length) {
+    c.put(0, y, tokens(top).padStart(4), t.dim);
+    if (h >= 3) c.put(0, y + Math.round((h - 1) / 2), tokens(top / 2).padStart(4), t.dim);
+    c.put(0, y + h - 1, '   0', t.dim);
+  }
+  const xs = (/** @type {number} */ time) => Math.floor(X(time) / 2);
+  timeMarks(c, y + h, xs, { from, to: now, now }, dayMarks(from, now, xs, t, now - from > 10 * DAY), t);
 }
 
 /**
@@ -951,8 +1203,9 @@ function heat(c, y, points, now, t) {
 
 /**
  * The chart: the session's limit over its window of five hours and the week's over its seven
- * days, each with its samples, carried on to now, and at its pace on to its reset; on a tall
- * screen, when in the day the session's was used over the last week.
+ * days, each with its samples, carried on to now, and at its pace on to its reset; what a point of
+ * the week came to over the samples' days, as the plans changed; on a tall screen, when in the
+ * day the session's was used over the last week.
  * @type {Panel}
  */
 function chartLines(snap, rows, ui, screen, t) {
@@ -962,10 +1215,12 @@ function chartLines(snap, rows, ui, screen, t) {
   if (!u?.history) return frame('Usage', '', [line(t.dim('   No usage known: the desktop app samples it while it runs.'), cols, t)], screen, t);
   const { session, week } = limitsOf(u, now);
   const c = new Canvas(cols, room);
-  // Each chart a title, its lines and its times; and below them the hours, where it is tall.
-  const withHeat = room >= 26;
-  const both = room >= 12;
-  const h = Math.max(2, Math.min(10, Math.floor(((withHeat ? room - 9 : room) - (both ? 4 : 2)) / (both ? 2 : 1))));
+  // Each chart a title, its lines and its times: the session's; the week's where there is room;
+  // then what a point of the week came to, where that is read (not for a snapshot printed once);
+  // and below them the hours, where it is tall.
+  const n = room >= 18 && u.perPoint ? 3 : room >= 12 ? 2 : 1;
+  const withHeat = room >= (n === 3 ? 30 : 26);
+  const h = Math.max(2, Math.min(10, Math.floor(((withHeat ? room - 9 : room) - 2 * n) / n)));
   let y = 0;
   /** @param {string} label @param {Limit | undefined} l @param {string} said */
   const title = (label, l, said) => {
@@ -982,13 +1237,27 @@ function chartLines(snap, rows, ui, screen, t) {
   title('session', session, sSaid.filter(Boolean).join(t.sep));
   plot(c, y, h, u.history.session, { from: sFrom, to: sTo, now, v: session?.v, pace: session?.pace, unit: HOUR, days: false }, t);
   y += h + 1;
-  if (both) {
+  if (n >= 2) {
     const r = week?.reset;
     const wEnd = r && r.to - r.from <= 12 * HOUR ? r.at : undefined;
     const wFrom = wEnd ? wEnd - WEEK : now - 6 * DAY;
     const pace = week && wEnd ? weekPace(u, week, wEnd, now) : undefined;
     title('week', week, [wEnd && `resets ${weekday(wEnd)} ${timeOfDay(wEnd)}`, pace !== undefined && rate(pace, 'd')].filter(Boolean).join(t.sep));
     plot(c, y, h, u.history.week, { from: wFrom, to: wEnd ?? now + DAY, now, v: week?.v, pace, unit: DAY, days: true }, t);
+    y += h + 1;
+  }
+  if (n >= 3 && u.perPoint) {
+    // The latest, unless the plan changed since: what a point came to before is not this plan's.
+    const last = u.perPoint.at(-1);
+    const changed = u.changed;
+    const latest = last && (!changed || last.t >= changed.t) ? last : undefined;
+    c.put(1, y, 'rate', t.bold);
+    if (latest) c.put(9, y, tokens(latest.v));
+    const said = latest ? 'tokens for 1% of the week' : `not known${changed && last ? ' for this plan' : ''} yet: the week rose too little`;
+    const when = changed ? `${t.sep}plan changed ${minute(changed.t, now)}` : '';
+    c.put(16, y, 16 + width(said + when) < cols ? said + when : said, t.dim);
+    y++;
+    ratePlot(c, y, h, u.perPoint, u.changes ?? [], u.history.week[0]?.t ?? now - WEEK, now, t);
     y += h + 1;
   }
   if (withHeat && y + 9 <= room) heat(c, y + 1, u.history.session, now, t);
@@ -1362,11 +1631,12 @@ export const VIEWS = [
   { name: 'overview', what: 'the selected session, what needs you, the latest messages, and the usage at its pace', animated: false },
   { name: 'floor', what: 'each session as a figure: at its keys while it works, waving when it needs you, asleep when idle; its agents walk beside it', animated: true, lines: floorLines },
   { name: 'board', what: 'the sessions as cards in columns: needs you, working, background, idle; a card that moved stands out', animated: false, lines: boardLines },
+  { name: 'bands', what: "the floor's figures in bands by the board's columns, needs you on top, then working; the rest named below", animated: true, lines: bandsLines },
   { name: 'lanes', what: 'a lane for each session over the last half hour or more: at work, in a tool, waiting on you, your prompts', animated: false, lines: lanesLines },
   { name: 'ticker', what: 'the tool calls as they come: how long the open ones have run, how long the others took', animated: false, lines: tickerLines },
   { name: 'pipeline', what: "the workflows' phases, each agent at work, done or failed; the sessions' own agents", animated: true, lines: pipelineLines },
   { name: 'files', what: 'the files changed in the last hour, and those two sessions changed', animated: false, lines: filesLines },
-  { name: 'chart', what: "the session's usage over its window and the week's, at its pace on to the reset; when in the day it was used", animated: false, lines: chartLines },
+  { name: 'chart', what: "the session's usage over its window and the week's, at its pace on to the reset; what a point of the week came to; when in the day it was used", animated: false, lines: chartLines },
   { name: 'share', what: "what each session and model on this computer used of the session's limit and the week's", animated: false, lines: shareLines },
   { name: 'today', what: 'what today came to: sessions, agents, prompts, replies, tokens, models, hours, tools, the time waited on you', animated: false, lines: todayLines },
   { name: 'tank', what: "the session's limit as a tank the replies drip into, and the week's", animated: true, lines: tankLines },
