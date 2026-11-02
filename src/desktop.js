@@ -3,7 +3,8 @@
 // session's title, whether it is archived, its model, effort and permission mode, whether
 // ultracode is on, the app's summary of its last turn, and when it was last opened and its last
 // turn started or ended: from those, which ones the app shows as unread. Keyed here by the Claude
-// Code session ID (cliSessionId) they run.
+// Code session ID (cliSessionId) they run, and by those they ran before it (priorCliSessionIds): a
+// session can go on in a new one, after a rewind say.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { entries, JsonFiles } from './files.js';
@@ -36,6 +37,15 @@ const MAX_OPENINGS = 10_000;
  * @property {number} [openedAt] when it was last opened in the app (lastFocusedAt)
  * @property {number} [turnEdgeAt] when a turn last started or ended (lastTurnEdgeAt)
  * @property {TurnSummary} [summary]
+ * @property {string[]} prior the Claude Code sessions it ran before its current one
+ *   (priorCliSessionIds)
+ * @property {{ parent: string, at: number }[]} rewinds when it was rewound, and from which of
+ *   them (rewindEdges)
+ *
+ * @typedef {object} EarlierRun a Claude Code session that a desktop app session ran before its
+ *   current one
+ * @property {DesktopSession} session
+ * @property {number} [rewoundAt] when the session was rewound from it, if it was
  */
 
 /**
@@ -65,6 +75,8 @@ export class DesktopSessions {
     this.files = new JsonFiles();
     /** @type {Map<string, DesktopSession>} */
     this.byCliSession = new Map();
+    /** @type {Map<string, EarlierRun>} */
+    this.byPriorRun = new Map();
     this.readAt = -Infinity;
     /**
      * @type {{ id: string, at: number }[]} the openings of sessions in the app, oldest first: a
@@ -107,9 +119,30 @@ export class DesktopSessions {
       const known = byCliSession.get(s.cliSessionId);
       if (!known || (s.lastActivityAt ?? 0) > (known.lastActivityAt ?? 0)) byCliSession.set(s.cliSessionId, s);
     }
+    /** @type {Map<string, EarlierRun>} */
+    const byPriorRun = new Map();
+    for (const s of all) {
+      for (const id of s.prior) {
+        const known = byPriorRun.get(id)?.session;
+        if (known && (known.lastActivityAt ?? 0) >= (s.lastActivityAt ?? 0)) continue;
+        const rewound = s.rewinds.filter((r) => r.parent === id).map((r) => r.at);
+        byPriorRun.set(id, { session: s, rewoundAt: rewound.length ? Math.min(...rewound) : undefined });
+      }
+    }
     this.noteOpenings(all);
     this.byCliSession = byCliSession;
+    this.byPriorRun = byPriorRun;
     return byCliSession;
+  }
+
+  /**
+   * The desktop app session that ran this Claude Code session before its current one, as last
+   * read.
+   * @param {string} cliSessionId
+   * @returns {EarlierRun | undefined}
+   */
+  earlierRun(cliSessionId) {
+    return this.byPriorRun.get(cliSessionId);
   }
 
   /**
@@ -186,6 +219,14 @@ export function toDesktopSession(o) {
     openedAt: num(o.lastFocusedAt),
     turnEdgeAt: num(o.lastTurnEdgeAt),
     summary: summaryOf(o),
+    prior: Array.isArray(o.priorCliSessionIds) ? o.priorCliSessionIds.filter((id) => str(id) && id !== cliSessionId) : [],
+    rewinds: Array.isArray(o.rewindEdges)
+      ? o.rewindEdges.flatMap((e) => {
+        const parent = str(e?.parent);
+        const at = num(e?.at);
+        return parent && at !== undefined ? [{ parent, at }] : [];
+      })
+      : [],
   };
 }
 

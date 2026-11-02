@@ -225,7 +225,7 @@ function progress(a) {
 export function visibleRows(snap, ui, t) {
   const needle = ui.filter.trim().toLowerCase();
   const matches = (/** @type {Agent} */ a) =>
-    [a.title, a.project, a.cwd, a.sessionId, a.kind, shortModel(a.model), a.effort, a.ultracode && 'ultracode', a.archived && 'archived', a.activity, a.agentType, String(a.pid ?? '')]
+    [a.title, a.earlier?.title, a.project, a.cwd, a.sessionId, a.kind, shortModel(a.model), a.effort, a.ultracode && 'ultracode', a.archived && 'archived', a.activity, a.agentType, String(a.pid ?? '')]
       .some((v) => v && v.toLowerCase().includes(needle));
   const sessions = snap.rows.filter((a) => {
     if (!ui.showEnded && over(a.state)) return false;
@@ -1302,14 +1302,18 @@ function* fieldLines(a, now, t, cols) {
       field('Context', join([a.ctx && `${tokens(a.ctx)} tokens`, a.outTokens && `${tokens(a.outTokens)} output tokens in the part read`])),
       field('Totals', a.cost ? join([
         `$${a.cost.usd.toFixed(2)}`,
-        `${tokens(a.cost.output)} out`,
-        `${tokens(a.cost.input + a.cost.cacheRead + a.cost.cacheWrite)} in`,
+        a.cost.output && `${tokens(a.cost.output)} out`,
+        (a.cost.input + a.cost.cacheRead + a.cost.cacheWrite) && `${tokens(a.cost.input + a.cost.cacheRead + a.cost.cacheWrite)} in`,
         (a.cost.linesAdded || a.cost.linesRemoved) && `+${a.cost.linesAdded} -${a.cost.linesRemoved} lines`,
         'as Claude Code last saved them',
       ]) : undefined),
       field('Started', when(a.startedAt)),
       field('Last', when(a.lastActive)),
-      field('Desktop', join([a.hostSessionId, a.openedAt && `last opened ${when(a.openedAt)}`, a.archived && 'archived'])),
+      field('Desktop', join([
+        a.hostSessionId, a.earlier && (a.earlier.rewoundAt ? `an earlier run, rewound ${when(a.earlier.rewoundAt)}` : 'an earlier run'),
+        a.openedAt && `last opened ${when(a.openedAt)}`, a.archived && 'archived',
+      ])),
+      field('Was titled', a.earlier && a.earlier.title !== a.earlier.of ? a.earlier.title : undefined),
       field('Job', a.job ? join([a.job.id, a.job.state, a.job.needs ?? a.job.detail]) : undefined),
     );
   } else {

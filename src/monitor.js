@@ -102,13 +102,18 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  * @property {number} [durationMs] a finished workflow's
  * @property {string} [transcript]
  * @property {number} [transcriptSize]
- * @property {boolean} [archived] in the desktop app
+ * @property {boolean} [archived] in the desktop app: the session, or the one an earlier run went
+ *   on in
  * @property {boolean} [unread] the desktop app shows it unread, with its blue dot: a session not
  *   at work whose last turn ended while another one was open there
  * @property {number} [openedAt] when it was last opened in the desktop app
  * @property {Turn} [turn] of a session not at work, when it sums up the transcript's last reply
  * @property {boolean} [blocked] its turn ended on something only you can do, as `turn` says
  * @property {string} [hostSessionId] the desktop app's ID for the session
+ * @property {{ of: string, title: string, rewoundAt?: number }} [earlier] a Claude Code session
+ *   that a desktop app session ran before its current one, titled after it ("reviews (earlier
+ *   run)"): the session's title, the one this run had, and when the session was rewound from it,
+ *   if it was
  * @property {import('./jobs.js').Job} [job]
  * @property {{ summary: string, ts: number }[]} pending tool calls waiting for their result
  * @property {{ summary: string, ts: number }[]} [commands] the commands it started that go on in
@@ -364,6 +369,8 @@ export class Monitor {
     if (isLive) this.seenLive.add(s.id);
     const children = await this.childrenOf(s, isLive, info, now);
     const d = desktop.get(s.id);
+    // A run that a desktop app session went on from in another: rewound, say.
+    const prior = d ? undefined : this.desktop.earlierRun(s.id);
     let titleFile;
     if (!info?.customTitle && !info?.aiTitle && !info?.agentName && !d?.title && s.file) {
       titleFile = (await this.json.read(join(s.file.sessionDir, 'custom-title.json')))?.customTitle;
@@ -376,6 +383,7 @@ export class Monitor {
         derived ? undefined : name, d?.title, info?.customTitle, info?.aiTitle, info?.agentName, info?.summary,
         titleFile, s.job?.name, name, tx?.head?.firstPrompt, info?.lastPrompt?.text,
       ].map(clean).find(Boolean) ?? '';
+      const of = prior && (clean(prior.session.title) || title || '(new session)');
       /** @type {State} */
       let state;
       if (record) state = record.status === 'busy' ? 'working' : record.status === 'waiting' ? 'waiting' : record.status === 'idle' ? 'idle' : 'active';
@@ -395,7 +403,7 @@ export class Monitor {
         type: /** @type {const} */ ('session'),
         state,
         live: Boolean(record),
-        title: title || '(new session)',
+        title: of ? `${of} (earlier run)` : title || '(new session)',
         activity: act.text,
         activityKind: act.kind,
         activityAt: act.at,
@@ -421,12 +429,13 @@ export class Monitor {
         waitingFor: safe(record?.waitingFor),
         transcript: s.file?.path,
         transcriptSize: s.file?.size,
-        archived: d?.archived,
+        archived: d?.archived ?? prior?.session.archived,
         unread: d ? (state === 'idle' || state === 'ended') && this.desktop.unread(d) : undefined,
         openedAt: d?.openedAt,
         turn,
         blocked: turn ? turn.category === 'blocked' : undefined,
-        hostSessionId: safe(record?.hostSessionId ?? d?.id),
+        hostSessionId: safe(record?.hostSessionId ?? d?.id ?? prior?.session.id),
+        earlier: of ? { of, title, rewoundAt: prior?.rewoundAt } : undefined,
         job: s.job,
         pending: pendingOf(info),
         commands: record ? commandsOf(info) : undefined,
