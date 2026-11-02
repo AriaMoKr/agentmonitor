@@ -32,8 +32,8 @@ Options:
       --bell             ring the bell when a session starts waiting for you,
                          or finishes its turn (b turns it on or off; with
                          --serve, the page beeps)
-      --view <name>      the view below the list to start with: overview (the
-                         default), floor, board, lanes, ticker, pipeline,
+      --view <name>      the view below the list to start with: board (the
+                         default), overview, floor, lanes, ticker, pipeline,
                          files, chart, share, today, tank, radar or spark
                          (v and V step through them)
       --ascii            draw with ASCII only
@@ -119,9 +119,10 @@ try {
 }
 const agents = /** @type {import('../src/view.js').AgentsShown} */ (values.agents ?? 'running');
 if (!AGENTS_SHOWN.includes(agents)) fail(`--agents takes ${AGENTS_SHOWN.join(', ')}, not '${values.agents}'`);
-const view = values.view ?? 'overview';
-if (!VIEWS.some((v) => v.name === view)) fail(`--view takes ${VIEWS.map((v) => v.name).join(', ')}, not '${values.view}'`);
-if (values.view !== undefined && (values.once || values.json)) fail('--view does not go with --once or --json');
+// Without --view, the viewer's own: the board.
+const view = values.view;
+if (view !== undefined && !VIEWS.some((v) => v.name === view)) fail(`--view takes ${VIEWS.map((v) => v.name).join(', ')}, not '${view}'`);
+if (view !== undefined && (values.once || values.json)) fail('--view does not go with --once or --json');
 if (values.serve && (values.once || values.json)) fail('--serve does not go with --once or --json');
 for (const o of /** @type {const} */ (['host', 'port', 'token'])) if (values[o] !== undefined && !values.serve) fail(`--${o} goes with --serve`);
 let port = 7420;

@@ -1395,7 +1395,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
     ...key('LAST', 'how long ago it last did anything'),
     ...key('ACTIVITY', 'what it is doing, with how many of its tasks are done (4/8) and how long the current step has taken'),
     '',
-    ` ${t.bold('Below the list')}${t.dim(views.length > 1 ? ': the overview, where there is room' : ', where there is room')}`,
+    views.length > 1 ? ` ${t.bold('The overview')}${t.dim(', one of the views below the list, where there is room')}` : ` ${t.bold('Below the list')}${t.dim(', where there is room')}`,
     ...key('selected', 'what the selected session or agent is doing, waits for or did last, its tasks, its latest messages'),
     ...key('Needs you', 'the other sessions waiting on you, with what for, or the reply you have not read'),
     ...key('Activity', 'the latest prompts, replies and errors of the sessions listed'),

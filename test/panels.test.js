@@ -557,11 +557,11 @@ test('the views that move do so with the time they are drawn for, though nothing
   assert.notEqual(at(NOW), at(NOW + 100));
 });
 
-test('v and V step through the views below the list, round and round, saying which; --view starts with one', () => {
+test('the board below the list at first; v and V step through the views, round and round, saying which; --view starts with another', () => {
   const monitor = { dir: '/home/me/.claude', windowMs: DAY };
   const viewer = new Viewer({ monitor, t: plain, agents: 'running', showEnded: true });
-  assert.equal(viewer.ui.panel, 'overview');
-  viewer.key({ name: 'v' });
+  assert.equal(viewer.ui.panel, 'board');
+  viewer.key({ name: 'V' });
   assert.equal(viewer.ui.panel, 'floor');
   assert.match(viewer.ui.message, /^floor: each session as a figure/);
   viewer.key({ name: 'V' });
@@ -597,7 +597,7 @@ test('the screen is drawn often while a view that moves of itself is shown, wher
 });
 
 test("the board's moves are kept whatever view is shown, each for a while", () => {
-  const viewer = new Viewer({ monitor: { dir: '/home/me/.claude', windowMs: DAY }, t: plain, agents: 'running', showEnded: true });
+  const viewer = new Viewer({ monitor: { dir: '/home/me/.claude', windowMs: DAY }, t: plain, agents: 'running', showEnded: true, view: 'overview' });
   const at = (/** @type {import('../src/monitor.js').State} */ state) => snapshot([agent({ key: 's:a', title: 'Some session', state }), agent({ key: 's:b', title: 'Other', state: 'idle' })]);
   const screen = (/** @type {number} */ now) => ({ width: 100, height: 30, now });
   viewer.lines(at('working'), screen(NOW));
@@ -617,12 +617,14 @@ test('the help lists the views below the list, which v and V step through, the o
   const ui = { ...initialUi(), panel: 'tank' };
   const text = helpLines(ui, { width: 100, height: 200, now: NOW }, plain, '/home/me/.claude', true, VIEWS).map((l) => l.trimEnd());
   assert.ok(text.includes('   v V           the next view below the list, or the one before'));
-  assert.ok(text.includes(' Below the list: the overview, where there is room'));
+  assert.ok(text.includes(' The overview, one of the views below the list, where there is room'));
   const at = text.indexOf(' Views below the list, which v and V step through');
   assert.ok(at > 0);
   const listed = text.slice(at + 1).filter((l) => /^ {3}\S/.test(l));
   assert.deepEqual(listed.map((l) => l.trim().split(' ')[0]), VIEWS.map((v) => v.name));
   assert.match(text.slice(at).join('\n'), /tank {10}the session's limit as a tank the replies drip into, and the week's\s+\(shown\)/);
-  // Given none, neither the key nor the list.
-  assert.doesNotMatch(helpLines(initialUi(), { width: 100, height: 200, now: NOW }, plain, '/home/me/.claude').join('\n'), /v V|Views below/);
+  // Given none, neither the key nor the list: what is below the list is the overview.
+  const alone = helpLines(initialUi(), { width: 100, height: 200, now: NOW }, plain, '/home/me/.claude').map((l) => l.trimEnd());
+  assert.doesNotMatch(alone.join('\n'), /v V|Views below/);
+  assert.ok(alone.includes(' Below the list, where there is room'));
 });

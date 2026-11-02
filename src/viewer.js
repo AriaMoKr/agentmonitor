@@ -27,7 +27,8 @@ export class Viewer {
    * @param {import('./view.js').AgentsShown} o.agents
    * @param {boolean} o.showEnded
    * @param {boolean} [o.bell] whether the bell starts on
-   * @param {string} [o.view] the view below the rows it starts with, by its name (src/panels.js)
+   * @param {string} [o.view] the view below the rows it starts with, by its name (src/panels.js):
+   *   the board unless told
    * @param {boolean} [o.mouse] whether clicks reach it (the help says what they do)
    * @param {() => void} [o.refresh] has everything read again now (r, w)
    * @param {(key: string | undefined) => void} [o.onFocus] told when the selected agent changes
@@ -38,7 +39,7 @@ export class Viewer {
    *   this view staying as it is; and as there is nothing here to step into, one click on a row
    *   opens it
    */
-  constructor({ monitor, t, agents, showEnded, bell = false, view = 'overview', mouse = true, refresh = () => {}, onFocus = () => {}, onOpen }) {
+  constructor({ monitor, t, agents, showEnded, bell = false, view = 'board', mouse = true, refresh = () => {}, onFocus = () => {}, onOpen }) {
     this.monitor = monitor;
     this.t = t;
     this.mouseOn = mouse;

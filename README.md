@@ -1,6 +1,6 @@
 # agentmonitor
 
-The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, carried on to now with what this computer's sessions used since, and about when each resets. Below the list, where it leaves room, are the selected session at more length, the other sessions that need you, what was said lately, and the usage at the pace it goes; `v` turns that room to twelve other views, from the sessions as figures at their keys to the usage as a tank the replies drip into.
+The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, carried on to now with what this computer's sessions used since, and about when each resets. Below the list, where it leaves room, the sessions are cards on a board, in columns by what they wait for; `v` turns that room to twelve other views, from an overview (the selected session at more length, the other sessions that need you, what was said lately, and the usage at the pace it goes) and the sessions as figures at their keys to the usage as a tank the replies drip into.
 
 ```
  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread       session ~64% resets 15:10  week ~29% resets Thu
@@ -53,8 +53,8 @@ It draws every line again every 2 seconds, since a terminal can lose lines witho
       --bell             ring the bell when a session starts waiting for you,
                          or finishes its turn (b turns it on or off; with
                          --serve, the page beeps)
-      --view <name>      the view below the list to start with: overview (the
-                         default), floor, board, lanes, ticker, pipeline,
+      --view <name>      the view below the list to start with: board (the
+                         default), overview, floor, lanes, ticker, pipeline,
                          files, chart, share, today, tank, radar or spark
                          (v and V step through them)
       --ascii            draw with ASCII only
@@ -104,7 +104,7 @@ To carry a check on, the monitor reads the replies in this computer's transcript
 
 ## Below the list
 
-Where the rows leave room below them, the monitor fills it, each part where there is room for it:
+Where the rows leave room below them, the monitor fills it with one of thirteen views: at first the board, the sessions as cards in columns by what they wait for (`--view` starts with another), and `v` and `V` step through the others. The overview has the selected session, what needs you, what was said and the usage, each part where there is room for it:
 
 ```
  ─ ◆ shop · Release 2.0 ───────────────────────────────────────────────────────── waiting · 2m03s ─
@@ -134,7 +134,7 @@ Where the rows leave room below them, the monitor fills it, each part where ther
 
 The rows come first. The room they leave goes first to the usage, then to the selected one, then to what needs you, and the activity takes the rest, so on a short screen there is less of it, or none. On a screen narrower than 64 columns the usage has no bars, and its lines wrap. A click on a session or an agent there opens its details, and one anywhere else selects none.
 
-That is the overview. `v` shows the next of the other views of the room, and `V` the one before (`--view` starts with one); the footer then says which it is and what it shows, and the help lists them all, the one shown marked. The floor, as it shows the sessions of the list above:
+That is the overview. `v` shows the next view of the room, and `V` the one before; the footer then says which it is and what it shows, and the help lists them all, the one shown marked. The floor, as it shows the sessions of the list above:
 
 ```
  ─ Floor ───────────────────────────────────────────────────────── 2 at work · 3 for you · 2 idle ─
@@ -157,7 +157,7 @@ That is the overview. `v` shows the next of the other views of the room, and `V`
 |---|---|
 | overview | the selected session, what needs you, what was said lately, and the usage at its pace, as above |
 | floor | each session that runs as a figure, posed by what it does: at its keys while it works, tapping its foot under what it runs while a tool call takes a while, waving when it waits for you, holding up a reply you have not read, asleep while idle. The agents it started walk beside it, and a workflow's agents at work stand in a crowd, with how far the workflow has come |
-| board | the sessions as cards in columns: needs you, working, background, idle, and on a wide screen ended. For 4 seconds a card that moved stands out, with the column it came from, and leaves a ghost there |
+| board | the view at first: the sessions as cards in columns, needs you, working, background, idle, and on a wide screen ended. For 4 seconds a card that moved stands out, with the column it came from, and leaves a ghost there |
 | lanes | a lane for each session over the last half hour or more, a column for each 10 seconds to 10 minutes as the width takes: its turns `█`, its tool calls that ran 3 seconds or more `▒`, the time it waited on you `?`, your prompts `▲`, and `·` while it ran idle between them |
 | ticker | the tool calls of the sessions listed and of their agents: those still open first, with how long they have run, then the others, the latest first, with how long they took, `✗` where one failed |
 | pipeline | each workflow, with its phases in the order they began, each agent in them a mark: at work (a spinner), done or failed; under them, the sessions' own agents |

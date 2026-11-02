@@ -262,19 +262,22 @@ test('in the agentmonitor app a session opened in its flyout opens in its window
   assert.equal(s.logs.filter((l) => l.includes('page opened')).length, 4, 'not a page\'s ID: none made');
 });
 
-test('v steps through the views below the list; one that moves of itself has its page ask more often, where there is room for it', async (t) => {
+test('the board below the list at first; v and V step through the views, and one that moves of itself has its page ask more often, where there is room for it', async (t) => {
   const s = await start(t, fakeMonitor(() => sessions()));
-  assert.equal((await s.screen('page-aaaa', [], { h: 30 })).fast, undefined, 'the overview');
-  let a = await s.screen('page-aaaa', ['c:v'], { h: 30 });
+  let a = await s.screen('page-aaaa', [], { h: 30 });
+  assert.match(a.text.join('\n'), / ─ Board ─/);
+  assert.equal(a.fast, undefined);
+  a = await s.screen('page-aaaa', ['c:V'], { h: 30 });
   assert.match(a.text.join('\n'), / ─ Floor ─/);
   assert.match(a.text.at(-1) ?? '', /^ floor: each session as a figure/);
   assert.equal(a.fast, true);
   assert.equal((await s.screen('page-aaaa', [], { h: 5 })).fast, undefined, 'no room for it');
   assert.equal((await s.screen('page-aaaa', [], { h: 30, quiet: true })).fast, undefined, 'out of sight');
-  a = await s.screen('page-aaaa', ['c:v'], { h: 30 });
-  assert.match(a.text.join('\n'), / ─ Board ─/);
+  a = await s.screen('page-aaaa', ['c:V'], { h: 30 });
+  assert.match(a.text.at(-1) ?? '', /^ overview: the selected session/);
   assert.equal(a.fast, undefined);
-  assert.equal((await s.screen('page-bbbb', [], { h: 30 })).fast, undefined, 'each page has its own');
+  a = await s.screen('page-bbbb', [], { h: 30 });
+  assert.deepEqual([/ ─ Board ─/.test(a.text.join('\n')), a.fast], [true, undefined], 'each page has its own');
   const radar = await start(t, fakeMonitor(() => sessions()), { view: 'radar' });
   a = await radar.screen('page-aaaa', [], { h: 30 });
   assert.match(a.text.join('\n'), / ─ Radar ─/);

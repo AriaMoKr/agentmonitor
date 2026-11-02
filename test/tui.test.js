@@ -46,12 +46,12 @@ function sessions(now = Date.now()) {
  * Runs the monitor in a fake terminal, for the test to type into and read.
  * @param {import('node:test').TestContext} t
  * @param {ReturnType<typeof fakeMonitor>} monitor
- * @param {{ cols?: number, rows?: number, bell?: boolean, mouse?: boolean, repaintMs?: number }} [o]
+ * @param {{ cols?: number, rows?: number, bell?: boolean, mouse?: boolean, repaintMs?: number, view?: string }} [o]
  */
-function start(t, monitor, { cols = 100, rows = 16, bell = false, mouse = true, repaintMs = 60_000 } = {}) {
+function start(t, monitor, { cols = 100, rows = 16, bell = false, mouse = true, repaintMs = 60_000, view } = {}) {
   const term = fakeTerminal(cols, rows);
   const done = runTui(/** @type {any} */ (monitor), {
-    intervalMs: 60_000, color: false, ascii: false, bell, agents: 'running', showEnded: true, mouse, repaintMs, stdin: term.stdin, stdout: term.stdout,
+    intervalMs: 60_000, color: false, ascii: false, bell, agents: 'running', showEnded: true, view, mouse, repaintMs, stdin: term.stdin, stdout: term.stdout,
   });
   // Ends the monitor when a test failed before it quit.
   t.after(() => term.stdin.write('\x03'));
@@ -276,8 +276,12 @@ test('a click below the rows selects none, as rows come and go, until a key or a
   await tui.done;
 });
 
-test('below the rows, the selected session and what was said; a click on a session there opens its details', async (t) => {
-  const tui = start(t, fakeMonitor([() => sessions()]), { rows: 24 });
+test('below the rows, the board at first; in the overview, the selected session and what was said, where a click on a session opens its details', async (t) => {
+  const board = start(t, fakeMonitor([() => sessions()]), { rows: 24 });
+  await board.until((s) => / ─ Board ─/.test(s));
+  board.type('q');
+  await board.done;
+  const tui = start(t, fakeMonitor([() => sessions()]), { rows: 24, view: 'overview' });
   await tui.until((s) => s.includes('Activity'));
   const text = tui.text();
   assert.match(text, /^ ─ . demo · Fix the parser ─+ working · \d+s ─ *\n Doing {6}Bash: npm test {2}\(\d+s\) *\n .{12} you {4}fix the parser please *$/m);
