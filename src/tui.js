@@ -26,6 +26,8 @@ const MOUSE_OFF = '\x1b[?1006l\x1b[?1000l';
  *   or finishes its turn (b turns it on or off)
  * @param {import('./view.js').AgentsShown} o.agents
  * @param {boolean} o.showEnded
+ * @param {boolean} [o.showArchived] whether the sessions that ended are listed with those
+ *   archived in the desktop app
  * @param {string} [o.view] the view below the list it starts with (v steps through them)
  * @param {boolean} [o.mouse] have the terminal report clicks and the wheel
  * @param {number} [o.repaintMs] how often every line is drawn again, changed or not
@@ -33,13 +35,14 @@ const MOUSE_OFF = '\x1b[?1006l\x1b[?1000l';
  * @param {NodeJS.WriteStream} [o.stdout]
  * @returns {Promise<void>}
  */
-export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEnded, view, mouse = true, repaintMs = 2000, stdin = process.stdin, stdout = process.stdout }) {
+export function runTui(monitor, { intervalMs, color, ascii, bell, agents, showEnded, showArchived = false, view, mouse = true, repaintMs = 2000, stdin = process.stdin, stdout = process.stdout }) {
   const t = makeTheme({ color, ascii });
   const viewer = new Viewer({
     monitor,
     t,
     agents,
     showEnded,
+    showArchived,
     bell,
     view,
     mouse,

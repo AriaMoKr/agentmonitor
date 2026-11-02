@@ -103,9 +103,15 @@ test('the list: the selection moves, the details open, tab goes to the next, esc
   assert.ok(tui.term.screen.raw.endsWith('\x1b[?1049l'), 'and the screen put back');
 });
 
-test('help, the filter, sorting and hiding the sessions that ended', async (t) => {
-  const tui = start(t, fakeMonitor([() => sessions()]));
+test('help, the filter, sorting, and e: the sessions that ended but those archived, none, all', async (t) => {
+  const withArchived = () => {
+    const snap = sessions();
+    snap.rows.push(agent({ key: 's:d', title: 'Put away', state: 'ended', live: false, archived: true, project: 'shelf', lastActive: Date.now() - 2 * HOUR }));
+    return snap;
+  };
+  const tui = start(t, fakeMonitor([withArchived]));
   await tui.until((s) => s.includes('Old work'));
+  assert.doesNotMatch(tui.text(), /Put away/, 'archived in the desktop app, and ended');
   tui.type('?');
   await tui.until((s) => s.includes('Keys') && s.includes('bell on or off'));
   // Taller than these 16 lines: End shows its end, k the line above, and any other key goes back.
@@ -128,6 +134,10 @@ test('help, the filter, sorting and hiding the sessions that ended', async (t) =
   await tui.until((s) => s.includes('sorted by most recent'));
   tui.type('e');
   await tui.until((s) => s.includes('hiding the sessions that ended') && !s.includes('Old work'));
+  tui.type('e');
+  await tui.until((s) => s.includes('showing every session that ended, those archived too') && s.includes('Old work') && s.includes('Put away'));
+  tui.type('e');
+  await tui.until((s) => s.includes('showing the sessions that ended, but those archived') && s.includes('Old work') && !s.includes('Put away'));
   tui.type('q');
   await tui.done;
 });

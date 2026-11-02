@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { clock, fit, timeOfDay, weekday, width } from '../src/format.js';
-import { columns, detailLines, helpLines, initialUi, listLines, makeTheme, rate, settleSelection, table, visibleRows, wrapStyled } from '../src/view.js';
+import { columns, detailLines, helpLines, initialUi, listLines, makeTheme, putAway, rate, settleSelection, table, visibleRows, wrapStyled } from '../src/view.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE, NOW } from './helpers/fixture.js';
 
@@ -124,6 +124,40 @@ test('a session whose last turn ended blocked on you: its mark, counted, listed 
   const color = makeTheme({ color: true, ascii: false, animate: false });
   const ended = listLines(snap, visibleRows(snap, ui, color), ui, { width: 160, height: 12, now: NOW }, color)[4];
   assert.ok(ended.includes('\x1b[1;33mblocked: say whether'), `a session that ended, blocked, still waits on you: ${JSON.stringify(ended)}`);
+});
+
+test('a session archived in the desktop app is put away once it ended, blocked or not: listed only with all that ended, counted nowhere', () => {
+  const snap = snapshot([
+    ...sessions(),
+    agent({ key: 's:old', title: 'Old release', state: 'ended', live: false, archived: true, project: 'kappa', lastActive: NOW - 2 * HOUR }),
+    blockedSession({ key: 's:pick', title: 'Pick a provider', state: 'ended', live: false, archived: true, project: 'lambda', lastActive: NOW - 3 * HOUR }),
+    agent({ key: 's:back', title: 'Back at work', state: 'working', archived: true, project: 'mu', lastActive: NOW - 2 * MINUTE }),
+  ]);
+  assert.deepEqual(snap.rows.map(putAway), [false, false, false, false, false, true, true, false]);
+  assert.equal(putAway(agent({ title: 'Idle, archived', archived: true })), false, 'a process still runs it');
+  const at = (/** @type {Partial<import('../src/view.js').Ui>} */ o) => ({ ...initialUi(), agents: /** @type {const} */ ('none'), ...o });
+  const titles = (/** @type {Partial<import('../src/view.js').Ui>} */ o) => visibleRows(snap, at(o), plain).map((r) => r.agent.title);
+  assert.deepEqual(titles({}), ['Waiting session', 'Back at work', 'Busy session', 'Active session', 'Idle session', 'Ended session']);
+  assert.deepEqual(titles({ showEnded: false }), ['Waiting session', 'Back at work', 'Busy session', 'Active session', 'Idle session']);
+  assert.deepEqual(titles({ showArchived: true }), [
+    'Waiting session', 'Pick a provider', 'Back at work', 'Busy session', 'Active session', 'Idle session', 'Ended session', 'Old release',
+  ]);
+  assert.deepEqual(titles({ showArchived: true, filter: 'ARCHIVED' }), ['Pick a provider', 'Back at work', 'Old release'], 'the filter knows them');
+  assert.deepEqual(titles({ filter: 'archived' }), ['Back at work']);
+  /** The header and the footer, as e is on, off or all. @param {Partial<import('../src/view.js').Ui>} o */
+  const ends = (o) => {
+    const ui = at(o);
+    const lines = listLines(snap, visibleRows(snap, ui, plain), ui, { width: 160, height: 12, now: NOW }, plain);
+    return [lines[0], /e ended:\w+/.exec(lines[11])?.[0]];
+  };
+  const [head, key] = ends({});
+  assert.match(head, /^ Claude agents {2}● 2 working {2}◆ 1 waiting {2}○ 1 idle {2}◌ 1 active {2}\S 1 ended {2}2 agents at work /);
+  assert.equal(key, 'e ended:on');
+  assert.deepEqual(ends({ showEnded: false }), [head, 'e ended:off']);
+  assert.deepEqual(ends({ showArchived: true }), [head, 'e ended:all'], 'listed, still not counted');
+  const once = (/** @type {boolean} */ showArchived) => table(snap, { width: 120, now: NOW, agents: 'none', showEnded: true, showArchived }, plain);
+  assert.ok(!once(false).includes('Old release'));
+  assert.ok(once(true).includes('Old release'));
 });
 
 /**

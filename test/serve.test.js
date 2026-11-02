@@ -60,7 +60,7 @@ function sessions(now = Date.now()) {
  * @param {import('node:test').TestContext} t
  * @param {ReturnType<typeof fakeMonitor>} monitor
  * @param {{ intervalMs?: number, ascii?: boolean, bell?: boolean, view?: string, pageTtlMs?: number, maxPages?: number, onQuit?: () => void,
- *   elsewhere?: Record<string, (key: string) => void> }} [o]
+ *   elsewhere?: Record<string, (key: string) => void>, showArchived?: boolean }} [o]
  */
 async function start(t, monitor, o = {}) {
   /** @type {string[]} */
@@ -182,6 +182,24 @@ test('the screen comes as runs of text and classes; the text from the files stay
     assert.match(run[0], /^[\x20-\x7e]*$/, 'ASCII only');
     assert.equal(run.length < 3, true, 'no boxes');
   }
+});
+
+test('a session archived in the desktop app and ended counts for nothing in the title, blocked or not; e lists it, as a page started so does', async (t) => {
+  const make = () => {
+    const snap = sessions();
+    snap.rows.push(agent({ key: 's:z', title: 'Pick a provider', state: 'ended', live: false, archived: true, blocked: true, project: 'shop', lastActive: Date.now() - HOUR }));
+    return snap;
+  };
+  const s = await start(t, fakeMonitor(make));
+  const first = await s.screen('page-aaaa');
+  assert.equal(first.title, `(1) Claude agents on ${clean(hostname())}`, 'the session that waits, not the one put away');
+  assert.ok(!first.text.some((l) => l.includes('Pick a provider')));
+  // e: none that ended, then all.
+  const all = await s.screen('page-aaaa', ['c:e', 'c:e']);
+  assert.ok(all.text.some((l) => l.includes('Pick a provider')), all.text.join('\n'));
+  assert.equal(all.title, first.title, 'listed, still not counted');
+  const started = await start(t, fakeMonitor(make), { showArchived: true });
+  assert.ok((await started.screen('page-bbbb')).text.some((l) => l.includes('Pick a provider')));
 });
 
 test('keys move the selection and open the details; each page keeps a view of its own', async (t) => {

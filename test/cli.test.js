@@ -183,6 +183,25 @@ test('--since and --hide-ended; a folder with no sessions', async (t) => {
   assert.match((await run(['--once', '--dir', empty.dir])).stdout, /No Claude Code sessions found in /);
 });
 
+test('--show-archived lists the sessions archived in the desktop app too; --json has them, with whether they are', async (t) => {
+  const cfg = makeConfig(t);
+  const now = Date.now();
+  const app = appHome(cfg.root);
+  for (const [title, isArchived] of /** @type {[string, boolean][]} */ ([['Kept session', false], ['Archived session', true]])) {
+    const id = sessionId();
+    cfg.transcript(id, [rec.prompt(title, now - HOUR, { entrypoint: 'claude-desktop' })], { mtime: now - HOUR });
+    cfg.desktopSession({ sessionId: `local_${title.split(' ')[0]}`, cliSessionId: id, title, isArchived }, undefined, app.dir);
+  }
+  const once = (/** @type {string[]} */ args) => run(['--once', ...args, '--dir', cfg.dir], { COLUMNS: '120', ...app.env });
+  const plain = (await once([])).stdout;
+  assert.match(plain, /^ Claude agents {2}· 1 ended$/m, 'the archived one not counted');
+  assert.match(plain, /Kept session/);
+  assert.doesNotMatch(plain, /Archived session/);
+  assert.match((await once(['--show-archived'])).stdout, /Kept session[\s\S]*Archived session/);
+  const json = JSON.parse((await run(['--json', '--dir', cfg.dir], app.env)).stdout);
+  assert.deepEqual(json.rows.map((/** @type {any} */ r) => [r.title, r.archived]).sort(), [['Archived session', true], ['Kept session', false]]);
+});
+
 test('--serve prints the address of the web view, on this computer only, and serves it there', async (t) => {
   const cfg = makeConfig(t);
   const now = Date.now();

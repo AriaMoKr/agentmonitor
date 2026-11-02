@@ -12,7 +12,7 @@ import { createServer } from 'node:http';
 import { hostname, networkInterfaces } from 'node:os';
 import { clean, clock, graphemes } from './format.js';
 import { qr, qrLines } from './qr.js';
-import { makeTheme } from './view.js';
+import { makeTheme, putAway } from './view.js';
 import { Viewer } from './viewer.js';
 
 /**
@@ -80,6 +80,8 @@ export function newToken() {
  * @param {boolean} o.ascii
  * @param {import('./view.js').AgentsShown} o.agents
  * @param {boolean} o.showEnded
+ * @param {boolean} [o.showArchived] whether a page lists the sessions that ended with those
+ *   archived in the desktop app
  * @param {boolean} [o.bell] whether a page's bell starts on
  * @param {string} [o.view] the view below the list a page starts with, by its name (src/panels.js)
  * @param {number} [o.pageTtlMs] how long a page that stopped asking keeps its view
@@ -92,7 +94,7 @@ export function newToken() {
  *   tray's flyout's, in its window)
  * @returns {Promise<Served>}
  */
-export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = newToken(), intervalMs, ascii, agents, showEnded, bell = false, view, pageTtlMs = 10 * 60_000, maxPages = 50, log = () => {}, onQuit, elsewhere = {} }) {
+export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = newToken(), intervalMs, ascii, agents, showEnded, showArchived = false, bell = false, view, pageTtlMs = 10 * 60_000, maxPages = 50, log = () => {}, onQuit, elsewhere = {} }) {
   if (!TOKEN.test(token)) throw new Error('a token is 16 or more letters, digits, - or _');
   const t = makeTheme({ color: true, ascii, animate: false, web: true, quit: onQuit ? 'q' : '' });
   const files = new Map(Object.entries(FILES).map(([name, [file, type]]) => [name, { body: readFileSync(new URL(`./web/${file}`, import.meta.url)), type }]));
@@ -171,6 +173,7 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
         t,
         agents,
         showEnded,
+        showArchived,
         bell,
         view,
         refresh: () => {
@@ -191,9 +194,9 @@ export async function serve(monitor, { host = '127.0.0.1', port = 7420, token = 
     return page;
   }
 
-  /** The page's title: how many sessions wait for you, and this computer's name. */
+  /** The page's title: how many sessions wait for you (none put away), and this computer's name. */
   function title() {
-    const waiting = snap?.rows.filter((r) => r.state === 'waiting' || r.blocked).length ?? 0;
+    const waiting = snap?.rows.filter((r) => !putAway(r) && (r.state === 'waiting' || r.blocked)).length ?? 0;
     return `${waiting ? `(${waiting}) ` : ''}Claude agents on ${clean(hostname())}`;
   }
 

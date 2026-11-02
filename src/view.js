@@ -28,6 +28,8 @@ import { ago, bytes, clock, durationLabel, elapsed, fit, graphemes, shortModel, 
  * @property {boolean} editingFilter
  * @property {Sort} sort
  * @property {boolean} showEnded
+ * @property {boolean} showArchived whether the sessions that ended are listed with those put
+ *   away, archived in the desktop app (putAway)
  * @property {AgentsShown} agents which agents of a session are listed under it
  * @property {boolean} bell whether the bell rings when a session starts waiting for you, or
  *   finishes its turn
@@ -62,7 +64,7 @@ export const AGENTS_SHOWN = /** @type {AgentsShown[]} */ (['running', 'all', 'no
 export function initialUi() {
   return {
     view: 'list', selected: undefined, index: 0, top: 0, logScroll: 0, helpTop: 0,
-    filter: '', editingFilter: false, sort: 'status', showEnded: true, agents: 'running', bell: false,
+    filter: '', editingFilter: false, sort: 'status', showEnded: true, showArchived: false, agents: 'running', bell: false,
     panel: 'overview', moves: new Map(), message: '', messageUntil: 0,
   };
 }
@@ -183,6 +185,22 @@ export function glyph(state, t, now) {
 const over = (state) => ORDER[state] === ORDER.ended;
 
 /**
+ * Whether a session is put away: archived in the desktop app, and ended (archiving one ends it).
+ * It is listed only with all the sessions that ended (e at all), and counted nowhere: it needs
+ * nothing of you, whatever the app's summary of its last turn said.
+ * @param {Agent} a
+ */
+export const putAway = (a) => a.archived === true && over(a.state);
+
+/**
+ * Which of the sessions that ended are listed, as e steps through them: on, all but those put
+ * away; off, none; all.
+ * @param {Ui} ui
+ * @returns {'on' | 'off' | 'all'}
+ */
+export const endedShown = (ui) => (!ui.showEnded ? 'off' : ui.showArchived ? 'all' : 'on');
+
+/**
  * Whether an agent's activity goes on now, so that how long it has taken means something.
  * @param {Agent} a
  */
@@ -207,10 +225,11 @@ function progress(a) {
 export function visibleRows(snap, ui, t) {
   const needle = ui.filter.trim().toLowerCase();
   const matches = (/** @type {Agent} */ a) =>
-    [a.title, a.project, a.cwd, a.sessionId, a.kind, shortModel(a.model), a.effort, a.ultracode && 'ultracode', a.activity, a.agentType, String(a.pid ?? '')]
+    [a.title, a.project, a.cwd, a.sessionId, a.kind, shortModel(a.model), a.effort, a.ultracode && 'ultracode', a.archived && 'archived', a.activity, a.agentType, String(a.pid ?? '')]
       .some((v) => v && v.toLowerCase().includes(needle));
   const sessions = snap.rows.filter((a) => {
     if (!ui.showEnded && over(a.state)) return false;
+    if (!ui.showArchived && putAway(a)) return false;
     return !needle || matches(a) || a.children.some((c) => matches(c) || c.children.some(matches));
   });
   sessions.sort(compare(ui.sort));
@@ -411,7 +430,8 @@ function activityCell(a, w, t, now, plain) {
  */
 
 /**
- * The counts in the header: sessions by the state their rows show, and agents at work.
+ * The counts in the header: sessions by the state their rows show, those put away not among
+ * them, and agents at work.
  * @param {Snapshot} snap
  * @param {Theme} t
  * @returns {Part[]}
@@ -421,6 +441,7 @@ function counts(snap, t) {
   const n = {};
   let agents = 0;
   for (const r of snap.rows) {
+    if (putAway(r)) continue;
     n[shown(r)] = (n[shown(r)] ?? 0) + 1;
     for (const c of r.children) {
       if (c.type === 'workflow') agents += c.children.filter((g) => g.state === 'running').length;
@@ -1091,7 +1112,7 @@ function footer(ui, rows, t, cols, now, onHit) {
   /** @type {[string, number, string | undefined][]} */
   const all = [
     [`${t.arrows} move`, 3, undefined], [`${t.enter} details`, 4, 'enter'], ['/ filter', 4, '/'], ['v view', 4, 'v'], [`s sort:${ui.sort}`, 2, 's'],
-    [`e ended:${ui.showEnded ? 'on' : 'off'}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'],
+    [`e ended:${endedShown(ui)}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'],
     [`b bell:${ui.bell ? 'on' : 'off'}`, 1, 'b'], ['? help', 5, '?'],
   ];
   // A web page is closed, not quit; the agentmonitor app's window quits as a terminal does.
@@ -1360,7 +1381,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
     ...pair(`${t.enter} l ${right}`, 'details', `esc h ${left}`, 'back, or clear the filter'),
     ...pair('/', 'filter', 'tab', 'next agent, in details'),
     ...key('s', `sort: status, most recent, name, project${mouse ? ' (or click a title)' : ''}`),
-    ...key('e', 'show or hide the sessions that ended'),
+    ...key('e', 'sessions that ended: on (but those the desktop app archived), off, all'),
     ...key('a', 'agents under their session: running, all, none'),
     ...key('w', 'window for "recently active": 1h, 6h, 24h, 3d, 7d'),
     ...key('b', 'bell on or off: it rings when a session needs you or ends its turn'),
@@ -1425,11 +1446,11 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
 /**
  * The table --once prints: the same rows as the list, without a selection or footer.
  * @param {Snapshot} snap
- * @param {{ width: number, now: number, agents: AgentsShown, showEnded: boolean }} o
+ * @param {{ width: number, now: number, agents: AgentsShown, showEnded: boolean, showArchived?: boolean }} o
  * @param {Theme} t
  */
-export function table(snap, { width: cols, now, agents, showEnded }, t) {
-  const ui = { ...initialUi(), agents, showEnded };
+export function table(snap, { width: cols, now, agents, showEnded, showArchived = false }, t) {
+  const ui = { ...initialUi(), agents, showEnded, showArchived };
   const rows = visibleRows(snap, ui, t);
   const cs = columns(cols);
   const lines = [

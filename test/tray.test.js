@@ -60,6 +60,8 @@ test('the tray shows what matters most: a session that needs you, a turn ended u
   assert.equal(level(agent({ title: 'a', state: 'active', live: false })), 'working', 'its transcript moving');
   assert.equal(level(agent({ title: 'a' }), agent({ title: 'b', state: 'ended', live: false })), 'idle');
   assert.equal(level(agent({ title: 'a', state: 'ended', live: false })), 'none');
+  assert.equal(level(agent({ title: 'a', state: 'ended', live: false, blocked: true })), 'waiting', 'ended on something only you can do');
+  assert.equal(level(agent({ title: 'a', state: 'ended', live: false, blocked: true, archived: true }), agent({ title: 'b' })), 'idle', 'archived in the desktop app: put away');
   assert.equal(level(), 'none');
 });
 

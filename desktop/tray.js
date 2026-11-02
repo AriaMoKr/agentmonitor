@@ -4,7 +4,7 @@
 // session's level for the tray's other looks, the taskbar and the jump list, and what is worth a
 // notification. Pure, so the tests can tell; main.js shows it with Electron.
 import { clean, truncate } from '../src/format.js';
-import { makeTheme, shown, usageParts } from '../src/view.js';
+import { makeTheme, putAway, shown, usageParts } from '../src/view.js';
 import { ringing } from '../src/viewer.js';
 
 /**
@@ -74,7 +74,8 @@ export function trayState(snap, now) {
   const live = [];
   for (const a of snap.rows) {
     const level = levelOf(a);
-    if (!level) continue;
+    // One archived in the desktop app counts for nothing, blocked or not.
+    if (!level || putAway(a)) continue;
     tally[level]++;
     live.push({ a, level });
   }

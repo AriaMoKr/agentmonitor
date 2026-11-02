@@ -25,6 +25,7 @@ Options:
   -a, --agents <which>   agents listed under their session: running (default),
                          all, or none
   -e, --hide-ended       list only the sessions that run
+      --show-archived    list the sessions archived in the desktop app too
   -1, --once             print the table once and exit
       --json             print what was found as JSON and exit
       --dir <path>       Claude Code's config folder (default: $CLAUDE_CONFIG_DIR,
@@ -52,11 +53,12 @@ Options:
   -h, --help
 
 Times: 30s, 5m, 2h, 1d, 1w.
-Keys: arrows move, Enter shows details, / filters, s sorts, e hides ended,
-a cycles agents, w cycles the window, b turns the bell on or off, v and V
-cycle the views below the list, ? help, q quits. The mouse: a click selects,
-a double click shows details, the wheel moves. The web page takes the same
-keys and clicks; anyone with its address sees what it shows.
+Keys: arrows move, Enter shows details, / filters, s sorts, e cycles the
+sessions that ended (on but those archived, off, all), a cycles agents, w
+cycles the window, b turns the bell on or off, v and V cycle the views below
+the list, ? help, q quits. The mouse: a click selects, a double click shows
+details, the wheel moves. The web page takes the same keys and clicks; anyone
+with its address sees what it shows.
 `;
 
 /**
@@ -76,6 +78,7 @@ try {
       interval: { type: 'string', short: 'i' },
       agents: { type: 'string', short: 'a' },
       'hide-ended': { type: 'boolean', short: 'e' },
+      'show-archived': { type: 'boolean' },
       once: { type: 'boolean', short: '1' },
       json: { type: 'boolean' },
       dir: { type: 'string' },
@@ -139,6 +142,8 @@ const monitor = new Monitor({ dir, windowMs, wait: !interactive && !values.serve
 const forced = process.env.FORCE_COLOR !== undefined && process.env.FORCE_COLOR !== '0';
 const color = values['no-color'] ? false : values.color || forced || (Boolean(process.stdout.isTTY) && !process.env.NO_COLOR);
 const ascii = Boolean(values.ascii);
+const showEnded = !values['hide-ended'];
+const showArchived = Boolean(values['show-archived']);
 
 if (values.serve) {
   const host = values.host ?? '127.0.0.1';
@@ -146,7 +151,7 @@ if (values.serve) {
   let served;
   try {
     served = await serve(monitor, {
-      host, port, token: values.token, intervalMs, ascii, agents, showEnded: !values['hide-ended'], bell: Boolean(values.bell), view,
+      host, port, token: values.token, intervalMs, ascii, agents, showEnded, showArchived, bell: Boolean(values.bell), view,
       log: (line) => process.stdout.write(`${line}\n`),
     });
   } catch (e) {
@@ -165,7 +170,7 @@ if (values.serve) {
 
 if (interactive) {
   await runTui(monitor, {
-    intervalMs, color, ascii, bell: Boolean(values.bell), agents, showEnded: !values['hide-ended'], view, mouse: !values['no-mouse'],
+    intervalMs, color, ascii, bell: Boolean(values.bell), agents, showEnded, showArchived, view, mouse: !values['no-mouse'],
   });
   process.exit(0);
 }
@@ -179,5 +184,5 @@ if (values.json) {
   process.stdout.write(JSON.stringify(snap, (k, v) => (left.has(k) ? undefined : v), 2) + '\n');
 } else {
   const width = process.stdout.columns || Number(process.env.COLUMNS) || 160;
-  process.stdout.write(table(snap, { width, now: snap.at, agents, showEnded: !values['hide-ended'] }, makeTheme({ color, ascii, animate: false })));
+  process.stdout.write(table(snap, { width, now: snap.at, agents, showEnded, showArchived }, makeTheme({ color, ascii, animate: false })));
 }

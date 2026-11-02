@@ -46,6 +46,7 @@ It draws every line again every 2 seconds, since a terminal can lose lines witho
   -a, --agents <which>   agents listed under their session: running (default),
                          all, or none
   -e, --hide-ended       list only the sessions that run
+      --show-archived    list the sessions archived in the desktop app too
   -1, --once             print the table once and exit
       --json             print what was found as JSON and exit
       --dir <path>       Claude Code's config folder (default: $CLAUDE_CONFIG_DIR,
@@ -89,14 +90,14 @@ Each session is a row, with the agents it started under it: its subagents (the A
 | ◎ background | it runs, its turn is over, and it waits on what it left running: a command in the background, or an agent or a workflow it started, still at work. It shows in place of idle |
 | ○ idle | it runs, and waits for your next message |
 | ◌ active | its transcript was written moments ago, by a process the monitor does not know |
-| · ended | its process is gone |
+| · ended | its process is gone. One the desktop app archived (which ends it) is put away: it is listed only when `e` shows all that ended |
 | ✓ done, ✗ failed, ■ stopped | an agent or workflow that is over |
 
 The columns: PROJECT is the session's folder (for an agent, its type; for a workflow, the phase it is in); NAME, its title (the one you gave it, the desktop app's, Claude's, or else the first prompt); MODEL, the model of its last reply; EFFORT, the reasoning effort it works at (`low`, `medium`, `high`, `xhigh` or `max`), with a `+` when ultracode is on (`max+`, or `ultra` when no effort is known); CTX, the context of its last reply in tokens; ACTIVITY, what it is doing, with how long that has taken; LAST, how long ago it last did anything; PID, its process; KIND, how it was started (`cli`, `desktop`, `vscode`, `sdk`, `bg` for a background session). On a narrow terminal the least needed columns go first.
 
 ACTIVITY is the tool call it is in (`Bash: Run the tests`, `Edit: src/a.js`, `Agent: Explore: find the parser`), `thinking`, the agents it waits for, or what it waits for you to do (`waiting: a question: Which branch?`). While it works through a task list (the desktop app's, or TodoWrite's), it begins with how many of the steps are done: `2/4`. For a session that is idle or ended it is the desktop app's summary of its last turn (`blocked:` and what you are to do, when the turn ended on you), else its last reply, or the error that stopped it (a usage limit, say). A session that runs with a command left going on in the background, or an agent or a workflow it started still at work, shows that in place of the summary or the reply: `background: Bash: Serve the site`, `background: 1 agent running`.
 
-The first line counts the sessions by the state they show, and the agents at work. At its right are how much of your plan's usage limits is used, about when each resets, and the time: `session ~64%` of its limit for five hours (the current session, as `/usage` calls it), `week ~29%` of its limit for the week, yellow from 75% and red from 90%. They come from the desktop app, which checks them about every 15 minutes while it runs: the monitor carries its latest check on to now with what the sessions on this computer used since, and the `~` says so, as it is an estimate. Where it can't tell how, it shows the check as it was, and once that is 45 minutes old, how old (`2h ago`). Without the desktop app there are none. On a narrow screen the first line leaves out what is needed least first: the time, the sessions that ended and the agents at work, the title and the sessions idle, in the background or active, those at work and the resets, then those that wait for you; the usage goes last.
+The first line counts the sessions by the state they show (but those put away), and the agents at work. At its right are how much of your plan's usage limits is used, about when each resets, and the time: `session ~64%` of its limit for five hours (the current session, as `/usage` calls it), `week ~29%` of its limit for the week, yellow from 75% and red from 90%. They come from the desktop app, which checks them about every 15 minutes while it runs: the monitor carries its latest check on to now with what the sessions on this computer used since, and the `~` says so, as it is an estimate. Where it can't tell how, it shows the check as it was, and once that is 45 minutes old, how old (`2h ago`). Without the desktop app there are none. On a narrow screen the first line leaves out what is needed least first: the time, the sessions that ended and the agents at work, the title and the sessions idle, in the background or active, those at work and the resets, then those that wait for you; the usage goes last.
 
 The app keeps no reset times, so the monitor works them out from its earlier checks, and shows one only where they pin it down. The session's limit resets five hours after its window began, which the server puts on the 10-minute mark at or before its first use, and which shows as its percent rising from 0, or dropping, between two checks: `resets 15:10` when the checks put that start within half an hour. The week's resets at the same time each week, which shows where drops of its percent agree, two of them at least: `resets Thu`, or the time once it is less than a day off and known within the hour. A percent is left out once its reset has surely come, or, with no reset known, five hours after the check for the session's, and seven days after for the week's.
 
@@ -221,9 +222,9 @@ Tasks is its task list: the steps done, the one in progress and those to do, and
 | ↑ ↓, j k, PgUp PgDn, Home End | move |
 | Enter, l, → | details |
 | Esc, h, ←, Backspace | back, or clear the filter |
-| / | filter: rows whose name, folder, model, effort, activity, session ID or PID hold the text (`ultracode` finds the sessions with it on); a session stays when one of its agents matches |
+| / | filter: rows whose name, folder, model, effort, activity, session ID or PID hold the text (`ultracode` finds the sessions with it on, `archived` those the desktop app archived); a session stays when one of its agents matches |
 | s | sort: by state (waiting and blocked, unread, working, in the background, idle, ended), most recent, name, project |
-| e | show or hide the sessions that ended |
+| e | the sessions that ended: all but those the desktop app archived (at first), none, or all (`--hide-ended` starts with none, `--show-archived` with all) |
 | a | agents under their session: those at work, all, none |
 | w | the window for "recently active": 1h, 6h, 24h, 3d, 7d |
 | b | the bell, on or off: it rings when a session starts waiting for you, or finishes its turn (`--bell` starts with it on) |
@@ -350,6 +351,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
 - Ultracode can be wrong. A desktop app session shows the app's setting for it. Any other session shows it once a reminder of it turns up in the part of its transcript read. Claude Code sends that reminder after the first prompt, after about every tenth one since, and after a compaction, so the first read of a long transcript can miss it. And nothing in the transcript says when ultracode was turned off.
 - A command goes on in the background from the result of the call that started it (`Command running in background with ID: …`, or moved there after its timeout) until the message about its end comes in, or TaskStop stops it. Those of a session whose process is gone are not shown. A session that runs, its turn over, is in the background while a command of its goes on, or an agent or a workflow it started is at work.
 - A session that ended is listed while its last record is within the window. That is the time written in the record, not the file's: when the desktop app quits, Claude Code appends its totals, with no time, to the transcript of each session open.
+- Archiving a session in the desktop app ends it, and once it has ended it is put away: listed only when `e` shows all that ended, and counted nowhere (not in the first line, the web page's title nor the agentmonitor app's tray and taskbar), whatever the app's summary of its last turn said. While a process runs it, one resumed in a terminal say, it is listed as any other.
 - A subagent started in the background says in its metadata when it finished or was stopped. One in the foreground is done once the tool call that started it has its result. An agent whose last reply ended its turn is done, and one with no call open that wrote nothing for 15 minutes counts as ended.
 - A workflow runs until its record says how it ended, or, with no record, until its session ends or nothing is written for 15 minutes. Its agents' states come from its journal.
 - A desktop app session is unread when all of these hold:

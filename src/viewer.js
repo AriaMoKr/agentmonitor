@@ -3,7 +3,7 @@
 // do to them. The full-screen monitor has one; the web view has one for each page open.
 import { durationLabel } from './format.js';
 import { MOVED, VIEWS, boardColumn, viewOf } from './panels.js';
-import { AGENTS_SHOWN, SORTS, detailLines, helpLines, initialUi, listLines, settleSelection, visibleRows } from './view.js';
+import { AGENTS_SHOWN, SORTS, detailLines, endedShown, helpLines, initialUi, listLines, settleSelection, visibleRows } from './view.js';
 
 /** The windows the w key steps through. */
 export const WINDOWS = [1, 6, 24, 72, 168].map((h) => h * 3_600_000);
@@ -26,6 +26,8 @@ export class Viewer {
    * @param {import('./view.js').Theme} o.t
    * @param {import('./view.js').AgentsShown} o.agents
    * @param {boolean} o.showEnded
+   * @param {boolean} [o.showArchived] whether the sessions that ended are listed with those
+   *   archived in the desktop app (e steps through on, off and all)
    * @param {boolean} [o.bell] whether the bell starts on
    * @param {string} [o.view] the view below the rows it starts with, by its name (src/panels.js):
    *   the board unless told
@@ -39,14 +41,14 @@ export class Viewer {
    *   this view staying as it is; and as there is nothing here to step into, one click on a row
    *   opens it
    */
-  constructor({ monitor, t, agents, showEnded, bell = false, view = 'board', mouse = true, refresh = () => {}, onFocus = () => {}, onOpen }) {
+  constructor({ monitor, t, agents, showEnded, showArchived = false, bell = false, view = 'board', mouse = true, refresh = () => {}, onFocus = () => {}, onOpen }) {
     this.monitor = monitor;
     this.t = t;
     this.mouseOn = mouse;
     this.refresh = refresh;
     this.onFocus = onFocus;
     this.onOpen = onOpen;
-    this.ui = { ...initialUi(), agents, showEnded, bell, panel: viewOf(view).name };
+    this.ui = { ...initialUi(), agents, showEnded, showArchived, bell, panel: viewOf(view).name };
     /** @type {Map<string, string>} each session's state as rings was last told it */
     this.states = new Map();
     /** @type {Map<string, string>} each session's column on the board, as last drawn */
@@ -348,10 +350,13 @@ export class Viewer {
         return;
       case 's':
         return this.sortBy(SORTS[(SORTS.indexOf(ui.sort) + 1) % SORTS.length]);
-      case 'e':
-        ui.showEnded = !ui.showEnded;
-        this.say(ui.showEnded ? 'showing the sessions that ended' : 'hiding the sessions that ended');
+      case 'e': {
+        const next = { on: 'off', off: 'all', all: 'on' }[endedShown(ui)];
+        ui.showEnded = next !== 'off';
+        ui.showArchived = next === 'all';
+        this.say(next === 'on' ? 'showing the sessions that ended, but those archived' : next === 'off' ? 'hiding the sessions that ended' : 'showing every session that ended, those archived too');
         return;
+      }
       case 'a':
         ui.agents = AGENTS_SHOWN[(AGENTS_SHOWN.indexOf(ui.agents) + 1) % AGENTS_SHOWN.length];
         this.say(ui.agents === 'running' ? 'listing the agents at work' : ui.agents === 'all' ? 'listing every agent' : 'listing no agents');
