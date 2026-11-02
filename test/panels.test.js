@@ -83,8 +83,8 @@ const points = (base, step, vs) => vs.map((v, i) => ({ t: base + i * step, v }))
 
 /**
  * The plan's usage: the session at ~43% with two hours left, at 9 points an hour, its samples
- * rising from 0 over its window so far; the week at ~63% with two days left; what this computer's
- * sessions used of each; and a reply written 16 seconds ago.
+ * rising from 0 over its window so far; the week at ~63% with two days left, at 0.4 points an
+ * hour; what this computer's sessions used of each; and a reply written 16 seconds ago.
  * @type {import('../src/usage.js').Usage}
  */
 const USAGE = {
@@ -95,13 +95,13 @@ const USAGE = {
   },
   tracked: {
     at: NOW, session: 43, sessionReset: { at: NOW + 2 * HOUR, from: NOW + 2 * HOUR, to: NOW + 2 * HOUR }, sessionPace: 9,
-    week: 63, weekReset: { at: NOW + 2 * DAY, from: NOW + 2 * DAY, to: NOW + 2 * DAY },
+    week: 63, weekReset: { at: NOW + 2 * DAY, from: NOW + 2 * DAY, to: NOW + 2 * DAY }, weekPace: 0.4,
   },
   split: {
     session: { from: NOW - 3 * HOUR, to: NOW, sessions: [['sid-work', 20], ['sid-wait', 8.5], ['zz', 0.4]], models: [['claude-opus-5-5', 28.5], ['claude-haiku-5-5', 0.4]] },
     week: { from: NOW - 5 * DAY, to: NOW, sessions: [['sid-work', 22], ['sid-wait', 12]], models: [['claude-opus-5-5', 34]] },
   },
-  drops: [{ t: NOW - 16 * SECOND, seen: NOW - 10 * SECOND, v: 0.2, session: 'sid-work' }],
+  drops: [{ t: NOW - 16 * SECOND, seen: NOW - 10 * SECOND, limit: 'session', v: 0.2, session: 'sid-work' }],
 };
 
 const MIDNIGHT = new Date(NOW).setHours(0, 0, 0, 0);
@@ -465,7 +465,7 @@ test('today: the counts, the time waited on you, the tokens, the models, the rep
   assert.match(wide.find((l) => l.startsWith('     A ')) ?? '', /^ {5}A .* 80 +B .* 79$/);
 });
 
-test('the tank: as full as the session\'s percent, each reply falling in some seconds after it was written; the week\'s beside it', () => {
+test('the tank: as full as the session\'s percent, each reply falling in some seconds after it was written; the week\'s beside it, which the replies fall into where the session\'s points for them are not known', () => {
   const { view } = draw('tank', { height: 30 });
   assert.match(view[1], /^ ─ Tank ─+ 1 reply in the last 30s ─$/);
   assert.equal(view[2].slice(0, 28), `  ┌${'─'.repeat(24)}┐`);
@@ -479,12 +479,26 @@ test('the tank: as full as the session\'s percent, each reply falling in some se
   assert.equal(view[3].slice(28, 33), ' 100%');
   assert.equal(view[18].trim().split(/ {2,}/).join('|'), 'session|week');
   assert.match(view[7], /~63%/, "the week's at its own surface");
+  assert.deepEqual([view[8].slice(71), view[9].slice(71)], ['+0.4%/h', `resets ${weekday(NOW + 2 * DAY)}`], 'with its own pace, in tenths below one, and its reset');
   // The reply written 16 seconds ago and read 10 seconds ago falls in now; it fell before it was read, and is in a moment after.
+  /** The drops falling in a tank, its inside from column `x`. @param {string[]} v @param {number} x */
+  const fallingIn = (v, x) => v.slice(3, 10).map((l) => l.slice(x, x + 24)).join('').replace(/[ ≈~█]/g, '');
   /** The drops falling in the session's tank, at a time. @param {number} now */
-  const drops = (now) => draw('tank', { height: 30, now }).view.slice(3, 10).map((l) => l.slice(3, 27)).join('').replace(/[ ≈~█]/g, '');
+  const drops = (now) => fallingIn(draw('tank', { height: 30, now }).view, 3);
   assert.equal(drops(NOW), '•');
   assert.equal(drops(NOW - 1500), '', 'not yet');
   assert.equal(drops(NOW + 600), '', 'fallen in');
+  // Where the session's points for the replies are not known, they fall into the week's tank, as big as their points of it.
+  const toWeek = USAGE.drops?.map((d) => ({ ...d, limit: /** @type {const} */ ('week'), v: 0.04 }));
+  const both = draw('tank', { height: 30, snap: fullSnapshot({ usage: { ...USAGE, drops: toWeek } }) }).view;
+  assert.deepEqual([fallingIn(both, 3), fallingIn(both, 45)], ['', '·']);
+  // No session's percent at all, as after a change of plan: the week's tank alone, where the session's was.
+  const weekOnly = { ...USAGE, session: undefined, tracked: { at: NOW, week: 63, weekReset: USAGE.tracked?.weekReset, weekPace: 4.2 }, drops: toWeek };
+  const alone = draw('tank', { height: 30, snap: fullSnapshot({ usage: weekOnly }) }).view;
+  assert.match(alone[1], /^ ─ Tank ─+ 1 reply in the last 30s ─$/);
+  assert.equal(alone[18].trim(), 'week');
+  assert.deepEqual(alone.slice(7, 10).map((l) => l.slice(29)), ['~63%', '+4%/h', `resets ${weekday(NOW + 2 * DAY)}`]);
+  assert.equal(fallingIn(alone, 3), '·');
   assert.match(draw('tank', { snap: fullSnapshot({ usage: { ...USAGE, drops: [] } }) }).view[1], /each reply a drop ─$/);
   assert.match(draw('tank', { snap: fullSnapshot({ usage: undefined }) }).view[2], /No usage known/);
 });

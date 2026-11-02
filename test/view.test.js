@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { clock, fit, timeOfDay, weekday, width } from '../src/format.js';
-import { columns, detailLines, helpLines, initialUi, listLines, makeTheme, settleSelection, table, visibleRows, wrapStyled } from '../src/view.js';
+import { columns, detailLines, helpLines, initialUi, listLines, makeTheme, rate, settleSelection, table, visibleRows, wrapStyled } from '../src/view.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE, NOW } from './helpers/fixture.js';
 
@@ -877,6 +877,11 @@ test("the week's pace below the rows: since the plan changed, where that was aft
   assert.equal(week({ t: NOW - 48 * HOUR, v: 5 }), `${head} · +18%/d: about 77% by then`, '36 points in the two days since');
   assert.equal(week({ t: NOW - 12 * HOUR, v: 0 }), head, 'half a day: no pace yet');
   assert.equal(week({ t: NOW - 6 * 24 * HOUR, v: 0 }), `${head} · +8%/d: about 57% by then`, 'before the reset: since the reset');
+  assert.equal(week({ t: NOW - 48 * HOUR, v: 40 }), `${head} · +0.5%/d: about 42% by then`, 'a point in two days: in tenths');
+});
+
+test('a pace as said: in whole points, or in tenths below one', () => {
+  assert.deepEqual([rate(12.4, 'h'), rate(1.5, 'h'), rate(0.96, 'h'), rate(0.36, 'd'), rate(0.04, 'h'), rate(0, 'h')], ['+12%/h', '+2%/h', '+1%/h', '+0.4%/d', '+0%/h', '+0%/h']);
 });
 
 test('with less room below the rows, what was said goes first, then what needs you, then the selected session; the usage last', () => {

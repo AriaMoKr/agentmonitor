@@ -5,10 +5,11 @@
 // its percent dropped before, and the session's five hours after its window began, on the
 // 10-minute mark at or before its first use, where its percent began to rise. The percents are
 // carried on from the latest sample to now with what this computer's replies used since
-// (src/ledger.js), at as many points for so much as the samples rose by with them lately; and the
-// session's pace with the last hour's. At that rate too, what each session and model used of each
-// limit, and the points the replies just written add. A plan changed shows where the week's percent
-// dropped at no reset of it: the rises before then measured other limits, and are not used.
+// (src/ledger.js), at as many points for so much as the samples rose by with them lately; and each
+// one's pace with the last hour's. At that rate too, what each session and model used of each
+// limit, and the points the replies just written add: to the session's, or where it is not carried
+// on to the week's. A plan changed shows where the week's percent dropped at no reset of it: the
+// rises before then measured other limits, and are not used.
 import { join } from 'node:path';
 import { JsonFiles } from './files.js';
 
@@ -35,7 +36,7 @@ const WEEK_RISES = { points: 20, within: WEEK, least: 5 };
  * resets it on one: every reset its limit errors in the transcripts named was (quotaLimits).
  */
 const MARK = 10 * MINUTE;
-/** A session's pace is the last hour's, when the replies are known for so long of it at least. */
+/** A limit's pace is the last hour's, when the replies are known for so long of it at least. */
 const PACE_LEAST = 15 * MINUTE;
 
 /**
@@ -51,7 +52,8 @@ const PACE_LEAST = 15 * MINUTE;
  * @property {Tracked} [tracked] the percents carried on to a later time
  * @property {{ session?: Share, week?: Share }} [split] what this computer's replies used of
  *   each, as carried on: the session's in its window, the week's since its reset
- * @property {Drop[]} [drops] the replies of the last half minute, as they add to the session's
+ * @property {Drop[]} [drops] the replies of the last half minute, as they add to the session's, or
+ *   where it is not carried on to the week's
  */
 
 /**
@@ -62,10 +64,11 @@ const PACE_LEAST = 15 * MINUTE;
  * @property {[string, number][]} sessions by session ID
  * @property {[string, number][]} models
  *
- * @typedef {object} Drop a reply just written, as it adds to the session's limit
+ * @typedef {object} Drop a reply just written, as it adds to a limit
  * @property {number} t when it was written
  * @property {number} seen when the read that found it began
- * @property {number} v its points
+ * @property {'session' | 'week'} limit the limit it adds to
+ * @property {number} v its points of that limit
  * @property {string} [session]
  */
 
@@ -79,6 +82,8 @@ const PACE_LEAST = 15 * MINUTE;
  *   replies (of the part of it they are known for)
  * @property {number} [week]
  * @property {Reset} [weekReset]
+ * @property {number} [weekPace] the week's points an hour, at the pace of the last hour's replies
+ *   (as the session's)
  */
 
 /**
@@ -357,7 +362,8 @@ export function repliesSince(p, now, changed) {
  * and 0 with no window; the windows those the replies began; and in a window its pace, the points
  * the last hour's replies came to, in whatever window they were, as an hour's worth. The week's:
  * what it used since the sample, or since its reset when one came between, and only with that
- * reset known. Each one only where its rises come to enough points; undefined when neither does.
+ * reset known; and its pace as the session's. Each one only where its rises come to enough points;
+ * undefined when neither does.
  * @param {Points} p
  * @param {import('./ledger.js').Replies} replies
  * @param {number} now
@@ -411,6 +417,12 @@ function follow(p, { from, replies }, now, weekAt, changed) {
     }
     return up >= o.least && x > 0 ? up / x : undefined;
   };
+  // A pace: the points the last hour's replies came to, as an hour's worth; of the part of it they
+  // are known for, when that is long enough.
+  const since = Math.max(now - HOUR, from);
+  const paced = now - since >= PACE_LEAST;
+  /** At so many points for each of use. @param {number} perUse */
+  const pace = (perUse) => (perUse * used(since, now) * HOUR) / (now - since);
   /** @type {Tracked} */
   const out = { at: now };
   // Each percent from the last sample alone: the samples before tell nothing of one it leaves out.
@@ -431,8 +443,7 @@ function follow(p, { from, replies }, now, weekAt, changed) {
       out.session = Math.min(100, Math.round(v));
       const end = w + SESSION;
       out.sessionReset = { at: end, from: end, to: end };
-      const since = Math.max(now - HOUR, from);
-      if (now - since >= PACE_LEAST) out.sessionPace = (a * used(since, now) * HOUR) / (now - since);
+      if (paced) out.sessionPace = pace(a);
     }
   }
   const last = p.week.at(-1)?.t === latest ? p.week.at(-1) : undefined;
@@ -451,6 +462,7 @@ function follow(p, { from, replies }, now, weekAt, changed) {
       out.weekReset = { at: weekAt.at + on, from: weekAt.from + on, to: weekAt.to + on };
       f.weekFrom = weekAt.at + k * WEEK;
     }
+    if (paced) out.weekPace = pace(b);
   }
   if (out.session !== undefined || out.week !== undefined) f.tracked = out;
   return f;
@@ -462,7 +474,8 @@ const DROPS = 30_000;
 /**
  * What this computer's replies used of each limit, as track carried it on: the session's in the
  * window now, the week's since its reset (from the time the replies are known, if later); and the
- * replies of the last half minute, as they add to the session's.
+ * replies of the last half minute, as they add to the session's, or where it is not carried on
+ * (its points for them not known) to the week's.
  * @param {Followed} f
  * @param {import('./ledger.js').Replies} r
  * @param {number} now
@@ -490,10 +503,13 @@ function splitOf(f, r, now) {
   if (f.b !== undefined && f.weekFrom !== undefined) split.week = share(f.b, Math.max(f.weekFrom, r.from));
   /** @type {Drop[]} */
   const drops = [];
-  if (f.a !== undefined) {
+  /** @type {[Drop['limit'], number] | undefined} */
+  const into = f.a !== undefined ? ['session', f.a] : f.b !== undefined ? ['week', f.b] : undefined;
+  if (into) {
+    const [limit, perUse] = into;
     for (let i = writtenBy(r.replies, now - DROPS); i < r.replies.length; i++) {
       const x = r.replies[i];
-      if (x.t <= now) drops.push({ t: x.t, seen: x.seen ?? x.t, v: f.a * x.x, ...(x.session ? { session: x.session } : {}) });
+      if (x.t <= now) drops.push({ t: x.t, seen: x.seen ?? x.t, limit, v: perUse * x.x, ...(x.session ? { session: x.session } : {}) });
     }
   }
   return { split, drops };

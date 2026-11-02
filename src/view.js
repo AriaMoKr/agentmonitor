@@ -456,7 +456,8 @@ const USAGE_FRESH = 45 * MINUTE;
  * @property {number} v the percent used
  * @property {boolean} near carried on to now with this computer's replies, not sampled
  * @property {import('./usage.js').Reset} [reset] when it resets
- * @property {number} [pace] the session's points an hour, at the pace of the last hour's replies
+ * @property {number} [pace] its points an hour, at the pace of the last hour's replies, where it is
+ *   carried on (below the list and in the chart, the week's is weekPace's instead: since it reset)
  */
 
 /**
@@ -475,7 +476,7 @@ export function limitsOf(u, now) {
     session: k?.session !== undefined ? { v: k.session, near: true, reset: k.sessionReset, pace: k.sessionPace }
       : u.session !== undefined && now < (s ? s.to : u.at + SESSION) ? { v: u.session, near: false, reset: s }
         : undefined,
-    week: k?.week !== undefined ? { v: k.week, near: true, reset: k.weekReset }
+    week: k?.week !== undefined ? { v: k.week, near: true, reset: k.weekReset, pace: k.weekPace }
       : u.week !== undefined && now < (w ? w.to : u.at + WEEK) ? { v: u.week, near: false, reset: w }
         : undefined,
   };
@@ -504,6 +505,13 @@ export function weekPace(u, week, end, now) {
  * @param {Theme} t
  */
 export const levelOf = (n, s, t) => (n >= 90 ? t.red(s) : n >= 75 ? t.yellow(s) : s);
+
+/**
+ * A pace as said, `+12%/h`: in whole points, or in tenths below one (the week's an hour often is).
+ * @param {number} pace points a unit
+ * @param {string} per the unit: h or d
+ */
+export const rate = (pace, per) => `+${pace < 1 ? Math.round(pace * 10) / 10 : Math.round(pace)}%/${per}`;
 
 /**
  * When the session's limit resets, to five minutes, where it is known within half an hour.
@@ -914,10 +922,9 @@ function paceLines(u, cols, now, t) {
    * @param {number} end @param {(at: number) => string} when
    */
   const ahead = (l, pace, unit, per, end, when) => {
-    const rate = `+${Math.round(pace)}%/${per}`;
     const full = pace > 0 ? now + ((100 - l.v) / pace) * unit : Infinity;
-    if (full < end) return t.yellow(`${rate}: 100% ${when(full)}, ${till(end - full)}${nb}before`);
-    return `${rate}${t.dim(':')} ${t.dim('about')}${nb}${Math.round(l.v + (pace * (end - now)) / unit)}%${nb}${t.dim(`by${nb}then`)}`;
+    if (full < end) return t.yellow(`${rate(pace, per)}: 100% ${when(full)}, ${till(end - full)}${nb}before`);
+    return `${rate(pace, per)}${t.dim(':')} ${t.dim('about')}${nb}${Math.round(l.v + (pace * (end - now)) / unit)}%${nb}${t.dim(`by${nb}then`)}`;
   };
   if (session) {
     const end = sessionEnd(session.reset);
@@ -926,7 +933,7 @@ function paceLines(u, cols, now, t) {
     if (session.v >= 100) said.push(t.red('used up'));
     if (end !== undefined) said.push(resets(timeOfDay(end), end));
     if (session.pace !== undefined && session.v < 100) {
-      said.push(end === undefined ? `+${Math.round(session.pace)}%/h` : ahead(session, session.pace, HOUR, 'h', end, (at) => `at${nb}${timeOfDay(at)}`));
+      said.push(end === undefined ? rate(session.pace, 'h') : ahead(session, session.pace, HOUR, 'h', end, (at) => `at${nb}${timeOfDay(at)}`));
     }
     line('session', session, end === undefined ? undefined : 1 - (end - now) / SESSION, said);
   }

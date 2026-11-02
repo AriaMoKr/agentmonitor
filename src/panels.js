@@ -6,7 +6,7 @@
 // screen's state, as src/view.js's are: those that move do so with the time they are drawn for.
 import { Canvas } from './canvas.js';
 import { ago, clock, durationLabel, elapsed, fit, graphemes, lastPart, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
-import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
+import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, rate, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -978,7 +978,7 @@ function chartLines(snap, rows, ui, screen, t) {
   const sFrom = sEnd ? sEnd - SESSION : now - 4 * HOUR;
   const sTo = sEnd ?? now + HOUR;
   // A plan can have no session's limit: the app's checks leave it out then.
-  const sSaid = u.session === undefined ? ['not in the last check'] : [sEnd && `resets ${timeOfDay(sEnd)}, in ${till(Math.max(0, sEnd - now))}`, session?.pace !== undefined && `+${Math.round(session.pace)}%/h`];
+  const sSaid = u.session === undefined ? ['not in the last check'] : [sEnd && `resets ${timeOfDay(sEnd)}, in ${till(Math.max(0, sEnd - now))}`, session?.pace !== undefined && rate(session.pace, 'h')];
   title('session', session, sSaid.filter(Boolean).join(t.sep));
   plot(c, y, h, u.history.session, { from: sFrom, to: sTo, now, v: session?.v, pace: session?.pace, unit: HOUR, days: false }, t);
   y += h + 1;
@@ -987,7 +987,7 @@ function chartLines(snap, rows, ui, screen, t) {
     const wEnd = r && r.to - r.from <= 12 * HOUR ? r.at : undefined;
     const wFrom = wEnd ? wEnd - WEEK : now - 6 * DAY;
     const pace = week && wEnd ? weekPace(u, week, wEnd, now) : undefined;
-    title('week', week, [wEnd && `resets ${weekday(wEnd)} ${timeOfDay(wEnd)}`, pace !== undefined && `+${Math.round(pace)}%/d`].filter(Boolean).join(t.sep));
+    title('week', week, [wEnd && `resets ${weekday(wEnd)} ${timeOfDay(wEnd)}`, pace !== undefined && rate(pace, 'd')].filter(Boolean).join(t.sep));
     plot(c, y, h, u.history.week, { from: wFrom, to: wEnd ?? now + DAY, now, v: week?.v, pace, unit: DAY, days: true }, t);
     y += h + 1;
   }
@@ -1172,7 +1172,9 @@ function tank(c, x, y, w, h, v, drops, now, t) {
 /**
  * The tank: the session's limit as a tank the replies drip into, as full as its percent, each
  * reply a drop as big as its points, some seconds after it was written; with its pace and its
- * reset. The week's beside it.
+ * reset. The week's beside it, with its own; the replies drip into it instead where the session's
+ * points for them are not known (its percent left out of the desktop app's samples, as after a
+ * change of plan, or not carried on yet).
  * @type {Panel}
  */
 function tankLines(snap, rows, ui, screen, t) {
@@ -1186,24 +1188,24 @@ function tankLines(snap, rows, ui, screen, t) {
   const w = Math.max(6, Math.min(24, Math.floor((cols - 40) / 2)));
   const drops = u?.drops ?? [];
   let x = 2;
-  /** @param {string} label @param {Limit} l @param {Drop[]} falling @param {string[]} said */
-  const draw = (label, l, falling, said) => {
-    tank(c, x, 0, w, h, l.v, falling, now, t);
+  /** @param {Drop['limit']} limit @param {Limit} l @param {string} [resets] */
+  const draw = (limit, l, resets) => {
+    tank(c, x, 0, w, h, l.v, drops.filter((d) => d.limit === limit), now, t);
     // Beside it, its percent at its surface (100% at its top, where there is room), and the rest.
     const at = Math.max(1, h - Math.round((Math.max(0, Math.min(100, l.v)) / 100) * h));
     if (at > 2) c.put(x + w + 3, 1, '100%', t.dim);
     c.put(x + w + 3, at, `${l.near ? '~' : ''}${l.v}%`, levelStyle(l.v, t) ?? t.bold);
-    said.forEach((s, i) => c.put(x + w + 3, at + 1 + i, s, t.dim));
-    c.put(x + 1, h + 2, label, t.bold);
+    [l.pace === undefined ? '' : rate(l.pace, 'h'), resets ?? ''].filter(Boolean).forEach((s, i) => c.put(x + w + 3, at + 1 + i, s, t.dim));
+    c.put(x + 1, h + 2, limit, t.bold);
     x += w + 18;
   };
   if (session) {
     const end = sessionEnd(session.reset);
-    draw('session', session, drops, [session.pace !== undefined ? `+${Math.round(session.pace)}%/h` : '', end !== undefined ? `resets ${timeOfDay(end)}` : ''].filter(Boolean));
+    draw('session', session, end === undefined ? undefined : `resets ${timeOfDay(end)}`);
   }
   if (week && x + w + 16 <= cols) {
     const r = week.reset;
-    draw('week', week, [], r && r.to - r.from <= 12 * HOUR ? [`resets ${weekday(r.at)}`] : []);
+    draw('week', week, r && r.to - r.from <= 12 * HOUR ? `resets ${weekday(r.at)}` : undefined);
   }
   const lately = drops.filter((d) => d.t >= now - 30 * SECOND).length;
   return frame('Tank', t.dim(lately ? `${count(lately, 'reply', 'replies')} in the last 30s` : 'each reply a drop'), canvasLines(c, t), screen, t);

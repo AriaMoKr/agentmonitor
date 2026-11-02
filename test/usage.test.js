@@ -34,6 +34,9 @@ const ends = (m) => ({ at: NOW + m * MINUTE, from: NOW + m * MINUTE, to: NOW + m
 /** Replies while the samples below rose 30 points: 1 point for each thousand. @type {[number, number][]} */
 const ROSE = [[160, 1000], [140, 10_000], [125, 10_000], [110, 10_000]];
 
+/** Its numbers to a thousandth. @param {unknown} v */
+const round = (v) => JSON.parse(JSON.stringify(v, (_, n) => (typeof n === 'number' ? Math.round(n * 1000) / 1000 : n)));
+
 test('the latest of the desktop app\'s samples of the usage, in whole percent; what is not a sample is left out', () => {
   const file = {
     version: 2,
@@ -188,6 +191,25 @@ test("the session's pace: the points the last hour's replies came to, as an hour
   assert.deepEqual([short?.session, short?.sessionPace], [10, undefined], 'known for 14 minutes: too few to tell');
 });
 
+test("the week's pace, as the session's: the points the last hour's replies came to, as an hour's worth, while the week is carried on", () => {
+  const later = { at: NOW + 2 * DAY, from: NOW + 2 * DAY - 9 * MINUTE, to: NOW + 2 * DAY + 5 * MINUTE };
+  // 6 points for 30,000, 1 for each 5,000: 1 in the last hour, and 4 just before it.
+  const p = { session: [], week: points([150, 20], [135, 22], [120, 24], [105, 26]) };
+  const replies = known(...ROSE, [61, 20_000], [50, 2000], [10, 3000]);
+  assert.equal(track(p, replies, NOW, later)?.weekPace, 1);
+  assert.equal(track(p, replies, NOW), undefined, 'its reset not known: not carried on, so no pace');
+  // Known for the last 20 minutes: 6 points in them, 18 an hour.
+  const recent = { session: [], week: points([13, 20], [3, 26]) };
+  const one = [{ t: NOW - 12 * MINUTE, asked: NOW - 12 * MINUTE, x: 30_000 }];
+  assert.equal(track(recent, { from: NOW - 20 * MINUTE, replies: one }, NOW, later)?.weekPace, 18);
+  const short = track(recent, { from: NOW - 14 * MINUTE, replies: one }, NOW, later);
+  assert.deepEqual([short?.week, short?.weekPace], [26, undefined], 'known for 14 minutes: too few to tell');
+  // With the session carried on too, each at its own points for the same replies.
+  const both = { session: points([150, 0], [135, 10], [120, 20], [105, 30]), week: p.week };
+  const paces = track(both, replies, NOW, later);
+  assert.deepEqual([paces?.sessionPace, paces?.weekPace], [5, 1]);
+});
+
 test('the session scaled by the rises within a window this computer\'s replies began, after the time they are known from', () => {
   const here = /** @type {[number, number][]} */ ([[150, 0], [135, 20], [120, 30], [105, 40]]);
   const used = known(...ROSE, [60, 20_000]);
@@ -201,11 +223,11 @@ test('the week carried on from its last sample, or from its reset when one came 
   // 6 points for 30,000: 1 for each 5,000.
   const p = { session: [], week: points([150, 20], [135, 22], [120, 24], [105, 26]) };
   const later = { at: NOW + 2 * DAY, from: NOW + 2 * DAY - 9 * MINUTE, to: NOW + 2 * DAY + 5 * MINUTE };
-  assert.deepEqual(track(p, known(...ROSE, [60, 20_000]), NOW, later), { at: NOW, week: 30, weekReset: later });
+  assert.deepEqual(track(p, known(...ROSE, [60, 20_000]), NOW, later), { at: NOW, week: 30, weekReset: later, weekPace: 0 });
   const since = { at: NOW - 30 * MINUTE, from: NOW - 39 * MINUTE, to: NOW - 25 * MINUTE };
   assert.deepEqual(
     track(p, known(...ROSE, [60, 20_000], [20, 10_000]), NOW, since),
-    { at: NOW, week: 2, weekReset: { at: since.at + WEEK, from: since.from + WEEK, to: since.to + WEEK } },
+    { at: NOW, week: 2, weekReset: { at: since.at + WEEK, from: since.from + WEEK, to: since.to + WEEK }, weekPace: 2 },
     'reset 30 minutes ago: what was used since, and the next a week on',
   );
   assert.equal(track(p, known(...ROSE), NOW), undefined, 'no reset known');
@@ -216,7 +238,7 @@ test('each percent carried on from the last sample alone: one it leaves out is n
   // The session's 20 points for 20,000 would make it 50 now; the last sample has the week alone.
   const p = { session: points([150, 0], [135, 10], [120, 20]), week: points([150, 20], [135, 22], [120, 24], [105, 26]) };
   const later = { at: NOW + 2 * DAY, from: NOW + 2 * DAY - 9 * MINUTE, to: NOW + 2 * DAY + 5 * MINUTE };
-  assert.deepEqual(track(p, known(...ROSE, [60, 20_000]), NOW, later), { at: NOW, week: 30, weekReset: later });
+  assert.deepEqual(track(p, known(...ROSE, [60, 20_000]), NOW, later), { at: NOW, week: 30, weekReset: later, weekPace: 0 });
   assert.equal(track({ ...p, week: p.week.slice(0, 2) }, known(...ROSE, [60, 20_000]), NOW, later)?.session, 50, 'the session in the last sample');
 });
 
@@ -227,7 +249,7 @@ test("after the plan changed, the percents scaled by the rises since alone: thos
   const week = points([150, 50], [135, 60], [120, 0], [105, 2], [90, 4]);
   assert.equal(track({ session: [], week }, replies, NOW, later), undefined);
   // 5 points for 30,000 since, a point for each 6,000: 5 and 10,000's worth, 1.7.
-  assert.deepEqual(track({ session: [], week: [...week, ...points([75, 5])] }, replies, NOW, later), { at: NOW, week: 7, weekReset: later });
+  assert.deepEqual(track({ session: [], week: [...week, ...points([75, 5])] }, replies, NOW, later), { at: NOW, week: 7, weekReset: later, weekPace: 0 });
   const before = { t: NOW - 8 * HOUR, v: 0 };
   assert.equal(track({ session: [], week: [...week, ...points([75, 5])] }, replies, NOW, later, before)?.week, 9, 'changed before the replies are known: all their rises, 15 points for 40,000');
   // Nor are the replies needed back to them.
@@ -244,33 +266,56 @@ test('the replies are needed back to the earliest rise the scales may use, or th
   assert.equal(repliesSince({ session: points([20 * 24 * 60, 0], [20 * 24 * 60 - 15, 10]), week: [] }, NOW), NOW - 8 * DAY);
 });
 
-test("what this computer's sessions and models used of each limit, as the samples are carried on; the replies of the last half minute, as they add to the session's", async (t) => {
+const OPUS = 'claude-opus-5-5';
+
+/**
+ * The usage as the app's samples given tell, carried on with these replies of this computer's
+ * sessions aaa and bbb: 1,000 just before the samples, 10,000 between each two, 20,000 an hour ago
+ * and 500 20 seconds ago, which a read 5 seconds ago found; known from eight hours back.
+ * @param {import('node:test').TestContext} t
+ * @param {[number, number | undefined, number | undefined][]} samples
+ */
+async function usageWith(t, samples) {
   const cfg = makeConfig(t);
+  cfg.planUsage(samples);
+  const replies = /** @type {[number, number, string, string][]} */ ([
+    [160 * MINUTE, 1000, 'aaa', OPUS], [140 * MINUTE, 10_000, 'aaa', OPUS], [125 * MINUTE, 10_000, 'bbb', OPUS],
+    [110 * MINUTE, 10_000, 'aaa', 'claude-sonnet-5-5'], [60 * MINUTE, 20_000, 'bbb', OPUS], [20_000, 500, 'aaa', OPUS],
+  ]).map(([ago, x, session, model]) => ({ t: NOW - ago, asked: NOW - ago, x, session, model, seen: ago < MINUTE ? NOW - 5000 : NOW - ago }));
+  const ledger = /** @type {import('../src/ledger.js').Ledger} */ (/** @type {unknown} */ ({ read: async () => ({ from: NOW - 8 * HOUR, replies }) }));
+  return new PlanUsage(async () => [cfg.desktop], ledger).read(NOW, { wait: true });
+}
+
+test("what this computer's sessions and models used of each limit, as the samples are carried on; the replies of the last half minute, as they add to the session's", async (t) => {
   // The week resets 10 hours from now, as two drops a week apart tell; the session and the week
   // rose 30 and 6 points with the replies 150 to 105 minutes ago.
   const R = NOW + 10 * HOUR;
   const resets = [R - 2 * WEEK, R - WEEK].flatMap((r) => [[r - 10 * MINUTE, 0, 80], [r + 5 * MINUTE, 0, 1]]);
-  cfg.planUsage([...resets, [NOW - 150 * MINUTE, 0, 20], [NOW - 135 * MINUTE, 10, 22], [NOW - 120 * MINUTE, 20, 24], [NOW - 105 * MINUTE, 30, 26]]);
-  const opus = 'claude-opus-5-5';
-  const replies = /** @type {[number, number, string, string][]} */ ([
-    [160 * MINUTE, 1000, 'aaa', opus], [140 * MINUTE, 10_000, 'aaa', opus], [125 * MINUTE, 10_000, 'bbb', opus],
-    [110 * MINUTE, 10_000, 'aaa', 'claude-sonnet-5-5'], [60 * MINUTE, 20_000, 'bbb', opus], [20_000, 500, 'aaa', opus],
-  ]).map(([ago, x, session, model]) => ({ t: NOW - ago, asked: NOW - ago, x, session, model, seen: ago < MINUTE ? NOW - 5000 : NOW - ago }));
-  const ledger = /** @type {import('../src/ledger.js').Ledger} */ (/** @type {unknown} */ ({ read: async () => ({ from: NOW - 8 * HOUR, replies }) }));
-  const u = await new PlanUsage(async () => [cfg.desktop], ledger).read(NOW, { wait: true });
-  /** Its numbers to a thousandth. @param {unknown} v */
-  const round = (v) => JSON.parse(JSON.stringify(v, (_, n) => (typeof n === 'number' ? Math.round(n * 1000) / 1000 : n)));
+  const u = await usageWith(t, [...resets, [NOW - 150 * MINUTE, 0, 20], [NOW - 135 * MINUTE, 10, 22], [NOW - 120 * MINUTE, 20, 24], [NOW - 105 * MINUTE, 30, 26]]);
   assert.deepEqual(round(u?.tracked), {
     at: NOW, session: 51, sessionReset: ends(140), sessionPace: 0.5,
-    week: 30, weekReset: { at: R, from: R - 9 * MINUTE, to: R + 5 * MINUTE },
+    week: 30, weekReset: { at: R, from: R - 9 * MINUTE, to: R + 5 * MINUTE }, weekPace: 0.1,
   });
   // A point of the session for each thousand, of the week for each 5,000: the session's in its
   // window, begun with the first reply; the week's since its reset, as far back as the replies are known.
   assert.deepEqual(round(u?.split), {
-    session: { from: NOW - 160 * MINUTE, to: NOW, sessions: [['bbb', 30], ['aaa', 21.5]], models: [[opus, 41.5], ['claude-sonnet-5-5', 10]] },
-    week: { from: NOW - 8 * HOUR, to: NOW, sessions: [['bbb', 6], ['aaa', 4.3]], models: [[opus, 8.3], ['claude-sonnet-5-5', 2]] },
+    session: { from: NOW - 160 * MINUTE, to: NOW, sessions: [['bbb', 30], ['aaa', 21.5]], models: [[OPUS, 41.5], ['claude-sonnet-5-5', 10]] },
+    week: { from: NOW - 8 * HOUR, to: NOW, sessions: [['bbb', 6], ['aaa', 4.3]], models: [[OPUS, 8.3], ['claude-sonnet-5-5', 2]] },
   });
-  assert.deepEqual(round(u?.drops), [{ t: NOW - 20_000, seen: NOW - 5000, v: 0.5, session: 'aaa' }]);
+  assert.deepEqual(round(u?.drops), [{ t: NOW - 20_000, seen: NOW - 5000, limit: 'session', v: 0.5, session: 'aaa' }]);
+});
+
+test("where the session is not carried on, the replies just written add to the week's: its percent left out of the samples, as after a change of plan", async (t) => {
+  const R = NOW + 10 * HOUR;
+  const resets = [R - 2 * WEEK, R - WEEK].flatMap((r) => [[r - 10 * MINUTE, 0, 80], [r + 5 * MINUTE, 0, 1]]);
+  const weekAlone = [[150, 20], [135, 22], [120, 24], [105, 26]].map(([m, v]) => /** @type {[number, undefined, number]} */ ([NOW - m * MINUTE, undefined, v]));
+  const u = await usageWith(t, [...resets, ...weekAlone]);
+  assert.deepEqual(round(u?.tracked), { at: NOW, week: 30, weekReset: { at: R, from: R - 9 * MINUTE, to: R + 5 * MINUTE }, weekPace: 0.1 });
+  assert.deepEqual(Object.keys(u?.split ?? {}), ['week']);
+  assert.deepEqual(round(u?.drops), [{ t: NOW - 20_000, seen: NOW - 5000, limit: 'week', v: 0.1, session: 'aaa' }], 'a point for each 5,000');
+  // Neither carried on: no drops.
+  const none = await usageWith(t, [[NOW - 150 * MINUTE, undefined, 20], [NOW - 105 * MINUTE, undefined, 26]]);
+  assert.deepEqual([none?.tracked, none?.drops], [undefined, undefined]);
 });
 
 test('the sample carried on once the replies are read, in the background unless waited for; till then, the sample alone', async (t) => {
