@@ -659,6 +659,25 @@ test('the detail view of an unread session: the reply not read yet, and when it 
   assert.match(text, /Desktop {4}local_u · last opened .+ \(10m ago\)/);
 });
 
+test('an earlier run of a desktop app session: its details say so, and the title it had, which the filter knows', () => {
+  const run = agent({
+    key: 's:e', title: 'reviews (earlier run)', state: 'ended', live: false, kind: 'desktop', sessionId: 'e1', hostSessionId: 'local_r',
+    earlier: { of: 'reviews', title: 'Sessions, folders, and repos review', rewoundAt: NOW - 15 * MINUTE },
+    cost: { usd: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, linesAdded: 0, linesRemoved: 0, apiMs: 0, durationMs: 0 },
+  });
+  const details = (/** @type {import('../src/monitor.js').Agent} */ a) => detailLines(a, snapshot([a]), initialUi(), { width: 100, height: 20, now: NOW }, plain).join('\n');
+  const text = details(run);
+  assert.match(text, /Desktop {4}local_r · an earlier run, rewound .+ \(15m ago\)/);
+  assert.match(text, /Was titled Sessions, folders, and repos review/);
+  assert.match(text, /Totals {5}\$0\.00 · as Claude Code last saved them/, 'no reply, no tokens to count');
+  const restarted = details({ ...run, earlier: { of: 'reviews', title: 'reviews' } });
+  assert.match(restarted, /Desktop {4}local_r · an earlier run *$/m);
+  assert.doesNotMatch(restarted, /Was titled/, 'the title it had is the one it is named after');
+  const titles = (/** @type {string} */ filter) => visibleRows(snapshot([...sessions(), run]), { ...initialUi(), filter }, plain).map((r) => r.agent.title);
+  assert.deepEqual(titles('FOLDERS, AND REPOS'), ['reviews (earlier run)']);
+  assert.deepEqual(titles('earlier run'), ['reviews (earlier run)']);
+});
+
 test("the detail view of a blocked session: what you are to do, the app's summary, its category", () => {
   const s = blockedSession({ key: 's:b', title: 'Blocked session', kind: 'desktop', sessionId: 'b1', unread: true });
   const lines = detailLines(s, snapshot([s]), initialUi(), { width: 100, height: 20, now: NOW }, plain);

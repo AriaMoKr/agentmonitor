@@ -187,9 +187,10 @@ test('--show-archived lists the sessions archived in the desktop app too; --json
   const cfg = makeConfig(t);
   const now = Date.now();
   const app = appHome(cfg.root);
-  for (const [title, isArchived] of /** @type {[string, boolean][]} */ ([['Kept session', false], ['Archived session', true]])) {
+  // The archived one older, so the two are listed in one order.
+  for (const [title, isArchived, at] of /** @type {[string, boolean, number][]} */ ([['Kept session', false, now - HOUR], ['Archived session', true, now - 2 * HOUR]])) {
     const id = sessionId();
-    cfg.transcript(id, [rec.prompt(title, now - HOUR, { entrypoint: 'claude-desktop' })], { mtime: now - HOUR });
+    cfg.transcript(id, [rec.prompt(title, at, { entrypoint: 'claude-desktop' })], { mtime: at });
     cfg.desktopSession({ sessionId: `local_${title.split(' ')[0]}`, cliSessionId: id, title, isArchived }, undefined, app.dir);
   }
   const once = (/** @type {string[]} */ args) => run(['--once', ...args, '--dir', cfg.dir], { COLUMNS: '120', ...app.env });

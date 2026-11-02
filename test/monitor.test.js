@@ -652,6 +652,42 @@ test("the desktop app's summary of a session's last turn: what it came to, or wh
   assert.deepEqual(seen('local_for'), ['idle', 'summary', 'Topics set; homepage unchanged', false]);
 });
 
+test("a desktop app session's earlier runs, which it went on from in others: named after it, archived with it", async (t) => {
+  const cfg = makeConfig(t);
+  // Started over before its first reply (a setting changed), then rewound.
+  const first = sessionId();
+  cfg.transcript(first, [rec.customTitle('Sessions, folders, and repos review'), rec.prompt('Review the sessions', NOW - 40 * MINUTE)], { mtime: NOW - 40 * MINUTE });
+  const rewound = sessionId();
+  cfg.transcript(rewound, [rec.customTitle('reviews'), rec.prompt('Review the sessions', NOW - 39 * MINUTE), rec.reply('Reviewed.', NOW - 30 * MINUTE)], { mtime: NOW - 30 * MINUTE });
+  const current = sessionId();
+  cfg.transcript(current, [rec.customTitle('reviews'), rec.prompt('Review the folders', NOW - 15 * MINUTE), rec.reply('Reviewed.', NOW - 2 * MINUTE)], { mtime: NOW - 2 * MINUTE });
+  cfg.registry({ pid: 1, sessionId: current, status: 'idle', entrypoint: 'claude-desktop', hostSessionId: 'local_r', statusUpdatedAt: NOW - 2 * MINUTE });
+  cfg.desktopSession({
+    sessionId: 'local_r', cliSessionId: current, title: 'reviews', lastActivityAt: NOW - 2 * MINUTE, lastFocusedAt: NOW - MINUTE,
+    priorCliSessionIds: [first, rewound, current, 7, ''],
+    rewindEdges: [{ id: 'e1', parent: rewound, child: current, at: NOW - 15 * MINUTE, forkPoint: 'u1' }, { parent: first }, null, 'junk'],
+  });
+  // An archived session's earlier run, and a run no record names.
+  const shelved = sessionId();
+  cfg.transcript(shelved, [rec.prompt('Old work', NOW - 50 * MINUTE)], { mtime: NOW - 50 * MINUTE });
+  cfg.desktopSession({ sessionId: 'local_a', cliSessionId: sessionId(), title: 'Old work', isArchived: true, priorCliSessionIds: [shelved], rewindEdges: 'junk' });
+  const alone = sessionId();
+  cfg.transcript(alone, [rec.prompt('On its own', NOW - 20 * MINUTE)], { mtime: NOW - 20 * MINUTE });
+  cfg.desktopSession({ sessionId: 'local_b', cliSessionId: sessionId(), title: 'Odd record', priorCliSessionIds: 'junk' });
+  const rows = (await monitorOf(cfg, { running: { 1: 'claude.exe' } }).monitor.refresh(NOW)).rows;
+  const row = (/** @type {string} */ id) => {
+    const r = rows.find((x) => x.sessionId === id);
+    return [r?.title, r?.state, r?.hostSessionId, r?.earlier, r?.archived, r?.unread];
+  };
+  assert.deepEqual(row(current), ['reviews', 'idle', 'local_r', undefined, false, false]);
+  assert.deepEqual(row(first), [
+    'reviews (earlier run)', 'ended', 'local_r', { of: 'reviews', title: 'Sessions, folders, and repos review', rewoundAt: undefined }, false, undefined,
+  ], 'never unread: the session is');
+  assert.deepEqual(row(rewound), ['reviews (earlier run)', 'ended', 'local_r', { of: 'reviews', title: 'reviews', rewoundAt: NOW - 15 * MINUTE }, false, undefined]);
+  assert.deepEqual(row(shelved), ['Old work (earlier run)', 'ended', 'local_a', { of: 'Old work', title: 'Old work', rewoundAt: undefined }, true, undefined]);
+  assert.deepEqual(row(alone), ['On its own', 'ended', undefined, undefined, undefined, undefined]);
+});
+
 test('the window can change between refreshes', async (t) => {
   const cfg = makeConfig(t);
   const id = sessionId();
