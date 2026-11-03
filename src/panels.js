@@ -1322,7 +1322,7 @@ function shareLines(snap, rows, ui, screen, t) {
     // The week's points in dollars too, at the plan's price.
     const priced = label === 'week' ? perPoint : undefined;
     /** @param {number} v @param {number} cells */
-    const price = (v, cells) => (priced ? ` ${fit(dollars(v * priced), cells, 'right')}` : '');
+    const price = (v, cells) => (priced ? ` ${fit(dollars(v * priced, true), cells, 'right')}` : '');
     const spent = priced ? ` ${dollars(l.v * priced)} ${t.dim(`of the week's ${dollars(100 * priced)}`)} ` : '';
     body.push(line(` ${t.bold(fit(label, 7))} ${levelOf(l.v, `${l.near ? '~' : ''}${l.v}%`, t)} ${spent} ${t.dim(`this computer: ${pts(mine)} points since ${minute(share.from, now)}`)}`, cols, t));
     const list = share.sessions.filter(([, v]) => v >= 0.05);
@@ -1408,7 +1408,7 @@ function projectsLines(snap, rows, ui, screen, t) {
     return ` ${paint(t.bar.full.repeat(used))}${t.dim(t.bar.empty.repeat(bw - used))}`;
   };
   /** The points, and with the plan's price the dollars, in their columns. @param {number} v */
-  const numbers = (v) => (share ? ` ${fit(v > 0 ? pts(v) : '', 5, 'right')}${priced ? ` ${fit(v > 0 ? dollars(v * priced) : '', 7, 'right')}` : ''}` : '');
+  const numbers = (v) => (share ? ` ${fit(v > 0 ? pts(v) : '', 5, 'right')}${priced ? ` ${fit(v > 0 ? dollars(v * priced, true) : '', 7, 'right')}` : ''}` : '');
   const fits = Math.max(1, room - (rest >= 1 ? 1 : 0));
   let listed = order.length > fits ? order.slice(0, fits - 1) : order;
   // The project listed alone, where it is not among them, in place of the last.

@@ -352,10 +352,13 @@ test("what this computer's sessions and models used of each limit, as the sample
     week: 30, weekReset: { at: R, from: R - 9 * MINUTE, to: R + 5 * MINUTE }, weekPace: 0.1,
   });
   // A point of the session for each thousand, of the week for each 5,000: the session's in its
-  // window, begun with the first reply; the week's since its reset, as far back as the replies are known.
+  // window, begun with the first reply; the week's since its reset, as far back as the replies are
+  // known; and all of them, the same here, the reset before the first.
+  const week = { from: NOW - 8 * HOUR, to: NOW, sessions: [['bbb', 6], ['aaa', 4.3]], models: [[OPUS, 8.3], ['claude-sonnet-5-5', 2]] };
   assert.deepEqual(round(u?.split), {
     session: { from: NOW - 160 * MINUTE, to: NOW, sessions: [['bbb', 30], ['aaa', 21.5]], models: [[OPUS, 41.5], ['claude-sonnet-5-5', 10]] },
-    week: { from: NOW - 8 * HOUR, to: NOW, sessions: [['bbb', 6], ['aaa', 4.3]], models: [[OPUS, 8.3], ['claude-sonnet-5-5', 2]] },
+    week,
+    all: week,
   });
   assert.deepEqual(round(u?.drops), [{ t: NOW - 20_000, seen: NOW - 5000, limit: 'session', v: 0.5, session: 'aaa' }]);
 });
@@ -366,7 +369,7 @@ test("where the session is not carried on, the replies just written add to the w
   const weekAlone = [[150, 20], [135, 22], [120, 24], [105, 26]].map(([m, v]) => /** @type {[number, undefined, number]} */ ([NOW - m * MINUTE, undefined, v]));
   const u = await usageWith(t, [...resets, ...weekAlone]);
   assert.deepEqual(round(u?.tracked), { at: NOW, week: 30, weekReset: { at: R, from: R - 9 * MINUTE, to: R + 5 * MINUTE }, weekPace: 0.1 });
-  assert.deepEqual(Object.keys(u?.split ?? {}), ['week']);
+  assert.deepEqual(Object.keys(u?.split ?? {}), ['week', 'all']);
   assert.deepEqual(round(u?.drops), [{ t: NOW - 20_000, seen: NOW - 5000, limit: 'week', v: 0.1, session: 'aaa' }], 'a point for each 5,000');
   // Neither carried on: no drops.
   const none = await usageWith(t, [[NOW - 150 * MINUTE, undefined, 20], [NOW - 105 * MINUTE, undefined, 26]]);
@@ -385,6 +388,10 @@ test("after the plan changed within the week, the week's split counts from its f
   // bbb's before the change are left out, and what is left comes to the week's percent.
   assert.deepEqual(round(u?.split?.week), {
     from: NOW - 120 * MINUTE, to: NOW, sessions: [['bbb', 4], ['aaa', 2.1]], models: [[OPUS, 4.1], ['claude-sonnet-5-5', 2]],
+  });
+  // All of them, those before the change too, as the plan counts use now: 51,500 in all.
+  assert.deepEqual(round(u?.split?.all), {
+    from: NOW - 8 * HOUR, to: NOW, sessions: [['bbb', 6], ['aaa', 4.3]], models: [[OPUS, 8.3], ['claude-sonnet-5-5', 2]],
   });
 });
 

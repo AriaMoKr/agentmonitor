@@ -59,8 +59,9 @@ It draws every line again every 2 seconds, since a terminal can lose lines witho
                          pipeline, files, chart, share, projects, today,
                          tank, radar or spark (v and V step through them)
       --plan-price <n>   the plan's price a month, in dollars (200, say), for
-                         what the week's use came to: in the share and
-                         projects views, the tank and a session's details
+                         what the week's use came to: in the list's WEEK and
+                         TOTAL, the share and projects views, the tank and a
+                         session's details
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
@@ -96,7 +97,7 @@ Each session is a row, with the agents it started under it: its subagents (the A
 | · ended | its process is gone. One the desktop app archived (which ends it) is put away: it is listed only when `e` shows all that ended |
 | ✓ done, ✗ failed, ■ stopped | an agent or workflow that is over |
 
-The columns: PROJECT is the session's folder (for an agent, its type; for a workflow, the phase it is in); NAME, its title (the one you gave it, the desktop app's, Claude's, or else the first prompt); MODEL, the model of its last reply; EFFORT, the reasoning effort it works at (`low`, `medium`, `high`, `xhigh` or `max`), with a `+` when ultracode is on (`max+`, or `ultra` when no effort is known); CTX, the context of its last reply in tokens; ACTIVITY, what it is doing, with how long that has taken; LAST, how long ago it last did anything; PID, its process; KIND, how it was started (`cli`, `desktop`, `vscode`, `sdk`, `bg` for a background session). On a narrow terminal the least needed columns go first.
+The columns: PROJECT is the session's folder (for an agent, its type; for a workflow, the phase it is in); NAME, its title (the one you gave it, the desktop app's, Claude's, or else the first prompt); MODEL, the model of its last reply; EFFORT, the reasoning effort it works at (`low`, `medium`, `high`, `xhigh` or `max`), with a `+` when ultracode is on (`max+`, or `ultra` when no effort is known); CTX, the context of its last reply in tokens; ACTIVITY, what it is doing, with how long that has taken; LAST, how long ago it last did anything; with the plan's price (`--plan-price`, or the agentmonitor app's menu), WEEK, what the session's use (its agents' with it) came to since the week's limit reset or your plan changed, as its details say, and TOTAL, what it came to in all its replies read here, back to the desktop app's first check of the usage (about 30 days); PID, its process; KIND, how it was started (`cli`, `desktop`, `vscode`, `sdk`, `bg` for a background session). On a narrow terminal the least needed columns go first.
 
 ACTIVITY is the tool call it is in (`Bash: Run the tests`, `Edit: src/a.js`, `Agent: Explore: find the parser`), `thinking`, the agents it waits for, or what it waits for you to do (`waiting: a question: Which branch?`). While it works through a task list (the desktop app's, or TodoWrite's), it begins with how many of the steps are done: `2/4`. For a session that is idle or ended it is the desktop app's summary of its last turn (`blocked:` and what you are to do, when the turn ended on you), else its last reply, or the error that stopped it (a usage limit, say). A session that runs with a command left going on in the background, or an agent or a workflow it started still at work, shows that in place of the summary or the reply: `background: Bash: Serve the site`, `background: 1 agent running`.
 
@@ -307,7 +308,7 @@ Its tooltip counts the sessions and gives the plan's usage. Its menu lists the s
 - Notify when a session needs you or ends its turn: a notification when the bell would ring. Off until you turn it on, and on Windows shown only while its settings let apps notify (Settings, System, Notifications).
 - Flash when a session needs you or ends its turn: the window's taskbar button flashes until you bring the window to the front; with the window in the tray, the icon blinks a few seconds. On at first.
 - Tray icon: its look, above.
-- The plan's price a month: None at first, or $20, $100 or $200, for what the week's use came to in the share and projects views, the tank and a session's details, as `--plan-price` gives it. Another price, put in its `settings.json` as `planPrice`, is offered too.
+- The plan's price a month: None at first, or $20, $100 or $200, for what the week's use came to in the list's WEEK and TOTAL, the share and projects views, the tank and a session's details, as `--plan-price` gives it. Another price, put in its `settings.json` as `planPrice`, is offered too.
 - Minimize to the tray: on at first.
 - Start at login, in the tray: off at first.
 - In the Start menu, or In the applications menu: there after the first start. Taken out here, it stays out.
@@ -368,6 +369,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
   This is the app's blue dot: the app marks a session unread when one of its turns ends while you are in another session, and clears the dot when you open it.
 - A few seconds after a turn of a desktop app session ends, the app writes its summary of the turn: a category (completed, blocked, review ready), a few words on what it came to, and, when it is blocked, what you are to do. The monitor uses a summary while the session is not at work, and only one that names the transcript's last reply: it is not used before the app writes it, nor for a turn the app did not sum up, nor once the session went on. A blocked summary marks the session blocked.
 - With the plan's price, a point of the week's limit is a week's worth of the price over 100: the price a month times 12, over the 52.18 weeks of a year, over 100 ($0.46 at $200 a month). A plan's price is the same however much you use it, so this is the share of it that the use took, not a bill. The session's limit, five hours of the week, gets no dollars of its own. Charges past the plan, for usage bought beyond its limits, are in no file the monitor reads.
+- A session's TOTAL counts its replies read here at the week's rate now, those before a change of plan too, as if they had been under the plan you have now: an estimate of what they came to. Its use before the desktop app's first check, or elsewhere, is not in it. Its details say since when (`since Oct 3`), or `in all` when it began after that check.
 
 ## Limits
 

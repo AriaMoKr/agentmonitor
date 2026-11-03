@@ -55,9 +55,9 @@ const PACE_LEAST = 15 * MINUTE;
  * @property {Tracked} [tracked] the percents carried on to a later time
  * @property {Point[]} [perPoint] what this computer's replies used (their x) for a point of the
  *   week, at each of its samples they tell it for (perPointOf): read with `history`
- * @property {{ session?: Share, week?: Share }} [split] what this computer's replies used of
- *   each, as carried on: the session's in its window, the week's since its reset or the plan's
- *   change, the later
+ * @property {{ session?: Share, week?: Share, all?: Share }} [split] what this computer's replies
+ *   used of each, as carried on: the session's in its window, the week's since its reset or the
+ *   plan's change, the later; and all those read, in the week's points as the plan counts them now
  * @property {Drop[]} [drops] the replies of the last half minute, as they add to the session's, or
  *   where it is not carried on to the week's
  */
@@ -520,12 +520,13 @@ const DROPS = 30_000;
 /**
  * What this computer's replies used of each limit, as track carried it on: the session's in the
  * window now, the week's since its reset or the plan's change, the later (from the time the replies
- * are known, if later still); and the replies of the last half minute, as they add to the
- * session's, or where it is not carried on (its points for them not known) to the week's.
+ * are known, if later still), and all the replies read, in the week's points as the plan counts
+ * them now; and the replies of the last half minute, as they add to the session's, or where it is
+ * not carried on (its points for them not known) to the week's.
  * @param {Followed} f
  * @param {import('./ledger.js').Replies} r
  * @param {number} now
- * @returns {{ split: { session?: Share, week?: Share }, drops: Drop[] }}
+ * @returns {{ split: { session?: Share, week?: Share, all?: Share }, drops: Drop[] }}
  */
 function splitOf(f, r, now) {
   /** @param {number} scale @param {number} from @returns {Share} */
@@ -543,10 +544,15 @@ function splitOf(f, r, now) {
     const most = (/** @type {Map<string, number>} */ m) => [...m].sort((a, b) => b[1] - a[1]);
     return { from, to: now, sessions: most(sessions), models: most(models) };
   };
-  /** @type {{ session?: Share, week?: Share }} */
+  /** @type {{ session?: Share, week?: Share, all?: Share }} */
   const split = {};
   if (f.a !== undefined && f.window !== undefined) split.session = share(f.a, Math.max(f.window, r.from));
-  if (f.b !== undefined && f.weekFrom !== undefined) split.week = share(f.b, Math.max(f.weekFrom, r.from));
+  if (f.b !== undefined && f.weekFrom !== undefined) {
+    split.week = share(f.b, Math.max(f.weekFrom, r.from));
+    // What each session came to in all, as far back as the replies are read (with `history`, the
+    // week's first sample): an estimate of the use before the plan's change too, as if under it.
+    split.all = share(f.b, r.from);
+  }
   /** @type {Drop[]} */
   const drops = [];
   /** @type {[Drop['limit'], number] | undefined} */

@@ -191,12 +191,14 @@ export function bytes(n) {
 
 /**
  * Dollars: whole ones as they are, else to the cent: '$200', '$46', '$10.12'; '<$0.01' for less.
+ * With `cents`, whole ones to the cent too ('$46.00'): in a column, the points line up.
  * @param {number} v
+ * @param {boolean} [cents]
  */
-export function dollars(v) {
-  const cents = Math.round(v * 100);
-  if (!cents && v > 0) return '<$0.01';
-  return cents % 100 ? `$${(cents / 100).toFixed(2)}` : `$${cents / 100}`;
+export function dollars(v, cents = false) {
+  const n = Math.round(v * 100);
+  if (!n && v > 0) return '<$0.01';
+  return n % 100 || cents ? `$${(n / 100).toFixed(2)}` : `$${n / 100}`;
 }
 
 /**
