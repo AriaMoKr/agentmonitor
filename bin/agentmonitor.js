@@ -37,6 +37,9 @@ Options:
                          default), overview, floor, bands, lanes, ticker,
                          pipeline, files, chart, share, today, tank, radar or
                          spark (v and V step through them)
+      --plan-price <n>   the plan's price a month, in dollars (200, say), for
+                         what the week's use came to: in the share view and a
+                         session's details
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
@@ -84,6 +87,7 @@ try {
       dir: { type: 'string' },
       bell: { type: 'boolean' },
       view: { type: 'string' },
+      'plan-price': { type: 'string' },
       ascii: { type: 'boolean' },
       color: { type: 'boolean' },
       'no-color': { type: 'boolean' },
@@ -126,6 +130,12 @@ if (!AGENTS_SHOWN.includes(agents)) fail(`--agents takes ${AGENTS_SHOWN.join(', 
 const view = values.view;
 if (view !== undefined && !VIEWS.some((v) => v.name === view)) fail(`--view takes ${VIEWS.map((v) => v.name).join(', ')}, not '${view}'`);
 if (view !== undefined && (values.once || values.json)) fail('--view does not go with --once or --json');
+const price = values['plan-price'];
+const planPrice = price === undefined ? undefined : Number(price.replace(/^\$/, ''));
+if (price !== undefined && (!/^\$?\d+(\.\d+)?$/.test(price) || !planPrice || planPrice > 100_000)) {
+  fail(`--plan-price takes the plan's price a month in dollars, as 200 or 17.50, not '${price}'`);
+}
+if (price !== undefined && values.once) fail('--plan-price does not go with --once');
 if (values.serve && (values.once || values.json)) fail('--serve does not go with --once or --json');
 for (const o of /** @type {const} */ (['host', 'port', 'token'])) if (values[o] !== undefined && !values.serve) fail(`--${o} goes with --serve`);
 let port = 7420;
@@ -138,7 +148,7 @@ if (values.token !== undefined && !TOKEN.test(values.token)) fail('--token takes
 const dir = resolve(values.dir ?? (process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')));
 const interactive = Boolean(process.stdout.isTTY && process.stdin.isTTY) && !values.once && !values.json;
 // Printed once, the usage waits for the transcripts it is carried on with.
-const monitor = new Monitor({ dir, windowMs, wait: !interactive && !values.serve });
+const monitor = new Monitor({ dir, windowMs, wait: !interactive && !values.serve, planPrice });
 const forced = process.env.FORCE_COLOR !== undefined && process.env.FORCE_COLOR !== '0';
 const color = values['no-color'] ? false : values.color || forced || (Boolean(process.stdout.isTTY) && !process.env.NO_COLOR);
 const ascii = Boolean(values.ascii);

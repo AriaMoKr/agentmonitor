@@ -373,6 +373,21 @@ test("where the session is not carried on, the replies just written add to the w
   assert.deepEqual([none?.tracked, none?.drops], [undefined, undefined]);
 });
 
+test("after the plan changed within the week, the week's split counts from its first sample under the new limits: the use before was of other limits", async (t) => {
+  const R = NOW + 10 * HOUR;
+  const resets = [R - 2 * WEEK, R - WEEK].flatMap((r) => [[r - 10 * MINUTE, 0, 80], [r + 5 * MINUTE, 0, 1]]);
+  // The week dropped from 50 to 0 two hours ago, at no reset, and rose 6 points with 30,000 since:
+  // a point for each 5,000.
+  const week = [[135, 50], [120, 0], [105, 2], [90, 2], [75, 2], [60, 6]].map(([m, v]) => /** @type {[number, undefined, number]} */ ([NOW - m * MINUTE, undefined, v]));
+  const u = await usageWith(t, [...resets, ...week]);
+  assert.deepEqual([u?.changed, u?.tracked?.week], [{ t: NOW - 120 * MINUTE, v: 0 }, 6]);
+  // Not as far back as the replies are known (the reset was days before): the 21,000 of aaa's and
+  // bbb's before the change are left out, and what is left comes to the week's percent.
+  assert.deepEqual(round(u?.split?.week), {
+    from: NOW - 120 * MINUTE, to: NOW, sessions: [['bbb', 4], ['aaa', 2.1]], models: [[OPUS, 4.1], ['claude-sonnet-5-5', 2]],
+  });
+});
+
 test('the sample carried on once the replies are read, in the background unless waited for; till then, the sample alone', async (t) => {
   const cfg = makeConfig(t);
   cfg.planUsage([[NOW - 150 * MINUTE, 0, 20], [NOW - 135 * MINUTE, 10, 22], [NOW - 120 * MINUTE, 20, 24], [NOW - 105 * MINUTE, 30, 26]]);

@@ -49,14 +49,15 @@ const PACE_LEAST = 15 * MINUTE;
  * @property {Reset} [weekReset] when the week's resets
  * @property {Points} [history] the percents of the samples of its org, in time order
  * @property {Point} [changed] the week's first sample after the plan last seems to have changed
- *   (changeOf): the week's pace counts from it, where that is after its reset
+ *   (changeOf): the week's pace and its split count from it, where that is after its reset
  * @property {Point[]} [changes] the week's first sample after each time the plan seems to have
  *   changed, oldest first (changesOf), the last of them `changed`
  * @property {Tracked} [tracked] the percents carried on to a later time
  * @property {Point[]} [perPoint] what this computer's replies used (their x) for a point of the
  *   week, at each of its samples they tell it for (perPointOf): read with `history`
  * @property {{ session?: Share, week?: Share }} [split] what this computer's replies used of
- *   each, as carried on: the session's in its window, the week's since its reset
+ *   each, as carried on: the session's in its window, the week's since its reset or the plan's
+ *   change, the later
  * @property {Drop[]} [drops] the replies of the last half minute, as they add to the session's, or
  *   where it is not carried on to the week's
  */
@@ -424,7 +425,8 @@ export function track(p, replies, now, weekAt, changed = changeOf(p.week, weekAt
  * @property {number} [a] the session's points for each of use (a reply's x)
  * @property {number} [window] the start of the session's window now
  * @property {number} [b] the week's points for each of use
- * @property {number} [weekFrom] when the week's limit last reset
+ * @property {number} [weekFrom] when the week's limit last reset, or the plan last changed where
+ *   that is later (its first sample under the new limits)
  */
 
 /**
@@ -495,7 +497,9 @@ function follow(p, { from, replies }, now, weekAt, changed) {
     if (now < weekAt.at) {
       out.week = Math.min(100, Math.round(last.v + b * used(last.t, now)));
       out.weekReset = weekAt;
-      f.weekFrom = weekAt.at - WEEK;
+      // Since the reset, or the plan's change where later: the percents before were of other
+      // limits. (A reset since came after any change, which is a sample.)
+      f.weekFrom = Math.max(weekAt.at - WEEK, changed?.t ?? -Infinity);
     } else {
       // Reset since: what was used since the latest reset, and the next a week on.
       const k = Math.floor((now - weekAt.at) / WEEK);
@@ -515,9 +519,9 @@ const DROPS = 30_000;
 
 /**
  * What this computer's replies used of each limit, as track carried it on: the session's in the
- * window now, the week's since its reset (from the time the replies are known, if later); and the
- * replies of the last half minute, as they add to the session's, or where it is not carried on
- * (its points for them not known) to the week's.
+ * window now, the week's since its reset or the plan's change, the later (from the time the replies
+ * are known, if later still); and the replies of the last half minute, as they add to the
+ * session's, or where it is not carried on (its points for them not known) to the week's.
  * @param {Followed} f
  * @param {import('./ledger.js').Replies} r
  * @param {number} now

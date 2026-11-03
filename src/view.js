@@ -2,7 +2,7 @@
 // in detail, and the help; and the plain table --once prints. Pure functions of a snapshot and
 // the screen's state, so the tests can draw them; the list and the details also say where a
 // click goes, as they draw it.
-import { ago, bytes, clock, durationLabel, elapsed, fit, graphemes, shortModel, timeOfDay, tokens, truncate, weekday, width } from './format.js';
+import { ago, bytes, clock, dollars, durationLabel, elapsed, fit, graphemes, shortModel, timeOfDay, tokens, truncate, weekday, width } from './format.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -518,6 +518,17 @@ export function weekPace(u, week, end, now) {
   const start = c && c.t > end - WEEK ? c : { t: end - WEEK, v: 0 };
   return now - start.t >= DAY ? (Math.max(0, week.v - start.v) / (now - start.t)) * DAY : undefined;
 }
+
+/** Weeks in a year, on average. */
+const WEEKS_A_YEAR = 365.2425 / 7;
+
+/**
+ * What a point of the week's limit comes to, in dollars, at the plan's price a month: a week's
+ * worth of a year of the price, over the limit's 100 points. A plan's price is flat, so this is
+ * the share of it that the use took; the session's limit, five hours of the week, has none.
+ * @param {number} monthly
+ */
+export const pointPrice = (monthly) => (monthly * 12) / WEEKS_A_YEAR / 100;
 
 /**
  * Text about a limit used `n` percent: yellow from 75 and red from 90.
@@ -1155,7 +1166,7 @@ export function detailLines(a, snap, ui, { width: cols, height, now }, t, hits =
 
   const body = Math.max(0, height - 3);
   const hasLog = a.type !== 'workflow';
-  const top = [...fieldLines(a, now, t, cols)];
+  const top = [...fieldLines(a, snap, now, t, cols)];
   if (a.plan) top.push('', ...planLines(a.plan, hasLog ? Math.max(3, Math.floor((height - 4) / 3)) : body, cols, t));
   /** @type {{ at: number, key: string }[]} the agents' lines in `top` */
   const kidLines = [];
@@ -1278,11 +1289,12 @@ function planLines(plan, room, cols, t) {
 /**
  * The detail view's fields, as ' Label  value' lines.
  * @param {Agent} a
+ * @param {Snapshot} snap
  * @param {number} now
  * @param {Theme} t
  * @param {number} cols
  */
-function* fieldLines(a, now, t, cols) {
+function* fieldLines(a, snap, now, t, cols) {
   const field = (/** @type {string} */ label, /** @type {string | undefined} */ value) =>
     value ? t.pad(` ${t.dim(fit(label, 10))} ${truncate(value, Math.max(0, cols - 13), t.ellipsis)}`, cols) : null;
   const when = (/** @type {number | undefined} */ ts) => (ts ? `${clock(ts, now)} (${ago(now - ts)} ago)` : undefined);
@@ -1293,6 +1305,9 @@ function* fieldLines(a, now, t, cols) {
   }
   (a.commands ?? []).slice(-5).forEach((c, i) => lines.push(field(i ? '' : 'Background', `${c.summary}  (${elapsed(now - c.ts)})`)));
   if (a.type === 'session') {
+    // What it used of the week's limit since it reset or the plan changed, at the plan's price.
+    const price = snap.planPrice;
+    const week = price ? snap.usage?.split?.week?.sessions.find(([id]) => id === a.sessionId)?.[1] : undefined;
     lines.push(
       field('Session', join([a.sessionId, a.kind, a.version && `Claude Code ${a.version}`])),
       field('Resume', a.sessionId && a.state === 'ended' ? `claude --resume ${a.sessionId}, in its folder` : undefined),
@@ -1307,6 +1322,9 @@ function* fieldLines(a, now, t, cols) {
         (a.cost.linesAdded || a.cost.linesRemoved) && `+${a.cost.linesAdded} -${a.cost.linesRemoved} lines`,
         'as Claude Code last saved them',
       ]) : undefined),
+      field('Plan', price && week && week >= 0.05
+        ? `${dollars(week * pointPrice(price))} this week: ${week < 10 ? week.toFixed(1) : Math.round(week)} points of its limit, at ${dollars(price)} a month`
+        : undefined),
       field('Started', when(a.startedAt)),
       field('Last', when(a.lastActive)),
       field('Desktop', join([

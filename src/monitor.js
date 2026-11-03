@@ -137,6 +137,8 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  *   replies are read back to it
  * @property {Map<string, string>} [cwds] the sessions' folders, as the replies read last said
  *   them, for those that are not listed
+ * @property {number} [planPrice] the plan's price a month, in dollars, when told: what the
+ *   week's use came to is shown at it
  */
 
 /** The states of something still at work, or waiting to be. */
@@ -152,11 +154,14 @@ export class Monitor {
    * @param {() => Promise<import('./procs.js').ProcessTable>} [o.processTable]
    * @param {boolean} [o.wait] whether a refresh waits for what is read in the background (the
    *   replies the usage is carried on with): for a snapshot printed once
+   * @param {number} [o.planPrice] the plan's price a month, in dollars
    */
-  constructor({ dir, windowMs, desktopDirs = () => desktopDataDirs(), isRunning: running = isRunning, processTable: table = () => processTable(), wait = false }) {
+  constructor({ dir, windowMs, desktopDirs = () => desktopDataDirs(), isRunning: running = isRunning, processTable: table = () => processTable(), wait = false, planPrice }) {
     this.dir = dir;
     this.windowMs = windowMs;
     this.wait = wait;
+    /** @type {number | undefined} the plan's price a month, in dollars: the agentmonitor app's setting changes it */
+    this.planPrice = planPrice;
     this.registry = new Registry(join(dir, 'sessions'));
     this.jobs = new Jobs(join(dir, 'jobs'));
     this.desktop = new DesktopSessions(desktopDirs);
@@ -248,6 +253,7 @@ export class Monitor {
       at: now, dir: this.dir, windowMs: this.windowMs, found: files.size > 0 || records.length > 0, rows, usage,
       ...(today ? { today } : {}),
       ...(replies?.cwds ? { cwds: replies.cwds } : {}),
+      ...(this.planPrice ? { planPrice: this.planPrice } : {}),
     };
   }
 

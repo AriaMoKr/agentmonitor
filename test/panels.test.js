@@ -552,6 +552,29 @@ test("who used the limits: each session's points as a bar of the whole, what the
   assert.match(draw('share', { snap: fullSnapshot({ usage: { ...USAGE, split: undefined } }) }).view[2], /Not known yet/);
 });
 
+test("who used the limits, with the plan's price: the week's points in dollars too, and a point's price in the heading", () => {
+  const { view } = draw('share', { height: 26, snap: fullSnapshot({ planPrice: 200 }) });
+  const bar = (/** @type {number} */ n) => `${'█'.repeat(n)}${'░'.repeat(30 - n)}`;
+  // $200 a month is $46 a week: a point of the week's limit, $0.46.
+  assert.match(view[1], /^ ─ Who used the limits ─+ in points of each limit; a point of the week \$0\.46, at \$200 a month ─$/);
+  // The names two columns narrower, for the dollars.
+  assert.deepEqual(view.slice(2, 4), [
+    ` session ~43%  this computer: 29 points since ${timeOfDay(NOW - 3 * HOUR)}`,
+    `   ${'Add the views'.padEnd(22)} ${bar(6)}    20`,
+  ], 'none for the session\'s limit: five hours of the week');
+  assert.deepEqual(view.slice(9, 14), [
+    ` week    ~63%  $28.98 of the week's $46  this computer: 34 points since ${clock(NOW - 5 * DAY, NOW)}`,
+    `   ${'Add the views'.padEnd(22)} ${bar(7)}    22  $10.12`,
+    `   ${'Fix the login'.padEnd(22)} ${bar(4)}    12   $5.52`,
+    `   ${'elsewhere'.padEnd(22)} ${bar(9)}    29  $13.34  not in the replies read here`,
+    `   ${'by model'.padEnd(22)} opus 5.5 34 ($15.64)`,
+  ]);
+  // Where the heading has no room for a point's price, only what the numbers are in.
+  const heading = (/** @type {number} */ width) => draw('share', { width, height: 26, snap: fullSnapshot({ planPrice: 200 }) }).view[1];
+  assert.match(heading(95), /^ ─ Who used the limits ─ in points of each limit; a point of the week \$0\.46, at \$200 a month ─$/);
+  assert.match(heading(94), /^ ─ Who used the limits ─+ in points of each limit ─$/);
+});
+
 test('today: the counts, the time waited on you, the tokens, the models, the replies hour by hour, and the tools', () => {
   const { view } = draw('today', { height: 26 });
   assert.match(view[1], /^ ─ Today ─+ since midnight ─$/);
