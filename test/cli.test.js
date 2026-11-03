@@ -106,7 +106,7 @@ test('--once prints a table of the sessions, and so does a run whose output is n
     const lines = stdout.trimEnd().split('\n');
     // Its command has run for 10s: it waits on a tool.
     assert.match(lines[0], /^ Claude agents {2}◐ 1 in a tool {2}· 1 ended$/);
-    assert.match(lines[1], /PROJECT +NAME +MODEL +EFFORT +CTX +ACTIVITY +LAST +KIND$/);
+    assert.match(lines[1], /PROJECT +NAME +MODEL +EFFORT +CTX +CACHE +ACTIVITY +LAST +KIND$/);
     assert.match(stdout, /◐ live +Live session +opus 5\.5 +xhigh +60k +Bash: npm test +\d+s +\d+s +cli\n/);
     assert.match(stdout, /· demo +Ended session .*All done\. +1h +cli\n/);
     for (const l of lines) assert.ok(width(l) <= 120, l);

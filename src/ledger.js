@@ -384,6 +384,16 @@ export function weightOf(model) {
 }
 
 /**
+ * What a context of so many tokens adds to a reply's use (its x) when the prompt cache no longer
+ * holds it: written to the cache again, where it would have been read from it.
+ * @param {number} tokens
+ * @param {string} model
+ */
+export function rewriteOf(tokens, model) {
+  return tokens * (KINDS.cacheWrite - KINDS.cacheRead) * weightOf(model);
+}
+
+/**
  * A message's usage, weighed.
  * @param {Message} m
  * @returns {Reply}

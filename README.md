@@ -4,19 +4,19 @@ The Claude agents on this computer, live in a terminal, in a window of its own w
 
 ```
  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread       session ~64% resets 15:10  week ~29% resets Thu
-   PROJECT          NAME                      MODEL      EFFORT    CTX ACTIVITY                            LAST KIND
->◆ shop             Release 2.0               opus 5.5   high      88k waiting: permission: Bash     2m03s   2m cli
- ◇ shop             Pick the payment provider opus 5.5   xhigh+    73k blocked: choose Stripe or Adyen       7m desktop
- • infra            Plan the migration        opus 5.5   max      201k plan in MIGRATION.md: three steps,…  18m desktop
- ● docs             Write the API docs        sonnet 5.5 xhigh     64k 1 agent running               4m00s   2s vscode
- ● Review           └─ review-docs                                     Review: 2 running, 3/5 done   4m00s   2s workflow
- ● Review              ├─ review:examples     sonnet 5.5 high      52k Bash: Run the examples          41s   2s agent
- ● Review              └─ review:links        sonnet 5.5 low       24k WebFetch: https://example.com/a… 6s   6s agent
- ◐ shop             Fix the flaky upload test opus 5.5   high     142k 2/4 Bash: Run the upload tests  14s  14s desktop
- ● Explore          └─ find the retry logic   haiku 4.5  medium    31k Grep: retry in src               3s   3s agent
- ◎ docs             Preview the docs site     sonnet 5.5 medium    38k background: Bash: Serve the… 25m00s  24m cli
- ○ shop             Triage the issues         sonnet 5.5 high      41k Labelled 14 issues; 3 need a perso…   1h bg
- · tools            Upgrade the linter        opus 5.5   xhigh     96k Done: eslint 10 with the flat conf…   5h cli
+   PROJECT          NAME                   MODEL      EFFORT    CTX CACHE ACTIVITY                         LAST KIND
+>◆ shop             Release 2.0            opus 5.5   high      88k   58m waiting: permission: Bash  2m03s   2m cli
+ ◇ shop             Pick the payment prov… opus 5.5   xhigh+    73k   53m blocked: choose Stripe or Adyen    7m desktop
+ • infra            Plan the migration     opus 5.5   max      201k   42m plan in MIGRATION.md: three ste…  18m desktop
+ ● docs             Write the API docs     sonnet 5.5 xhigh     64k       1 agent running            4m00s   2s vscode
+ ● Review           └─ review-docs                                        Review: 2 running, 3/5 do… 4m00s   2s workflow
+ ● Review              ├─ review:examples  sonnet 5.5 high      52k       Bash: Run the examples       41s   2s agent
+ ● Review              └─ review:links     sonnet 5.5 low       24k       WebFetch: https://example.co… 6s   6s agent
+ ◐ shop             Fix the flaky upload … opus 5.5   high     142k       2/4 Bash: Run the upload te… 14s  14s desktop
+ ● Explore          └─ find the retry log… haiku 4.5  medium    31k       Grep: retry in src            3s   3s agent
+ ◎ docs             Preview the docs site  sonnet 5.5 medium    38k   36m background: Bash: Serve … 25m00s  24m cli
+ ○ shop             Triage the issues      sonnet 5.5 high      41k       Labelled 14 issues; 3 need a pe…   1h bg
+ · tools            Upgrade the linter     opus 5.5   xhigh     96k       Done: eslint 10 with the flat c…   5h cli
  ↑↓ move  ⏎ details  / filter  v view  s sort:status  e ended:on  a agents:running  w window  ? help  q quit      1/12
 ```
 
@@ -97,7 +97,7 @@ Each session is a row, with the agents it started under it: its subagents (the A
 | · ended | its process is gone. One the desktop app archived (which ends it) is put away: it is listed only when `e` shows all that ended |
 | ✓ done, ✗ failed, ■ stopped | an agent or workflow that is over |
 
-The columns: PROJECT is the session's folder (for an agent, its type; for a workflow, the phase it is in); NAME, its title (the one you gave it, the desktop app's, Claude's, or else the first prompt); MODEL, the model of its last reply; EFFORT, the reasoning effort it works at (`low`, `medium`, `high`, `xhigh` or `max`), with a `+` when ultracode is on (`max+`, or `ultra` when no effort is known); CTX, the context of its last reply in tokens; ACTIVITY, what it is doing, with how long that has taken; LAST, how long ago it last did anything; with the plan's price (`--plan-price`, or the agentmonitor app's menu), WEEK, what the session's use (its agents' with it) came to since the week's limit reset or your plan changed, as its details say, and TOTAL, what it came to in all its replies read here, back to the desktop app's first check of the usage (about 30 days); PID, its process; KIND, how it was started (`cli`, `desktop`, `vscode`, `sdk`, `bg` for a background session). On a narrow terminal the least needed columns go first.
+The columns: PROJECT is the session's folder (for an agent, its type; for a workflow, the phase it is in); NAME, its title (the one you gave it, the desktop app's, Claude's, or else the first prompt); MODEL, the model of its last reply; EFFORT, the reasoning effort it works at (`low`, `medium`, `high`, `xhigh` or `max`), with a `+` when ultracode is on (`max+`, or `ultra` when no effort is known); CTX, the context of its last reply in tokens; CACHE, while it is not at work, how much longer the prompt cache keeps that context (yellow in its last ten minutes; after that, its next reply writes it all again); ACTIVITY, what it is doing, with how long that has taken; LAST, how long ago it last did anything; with the plan's price (`--plan-price`, or the agentmonitor app's menu), WEEK, what the session's use (its agents' with it) came to since the week's limit reset or your plan changed, as its details say, and TOTAL, what it came to in all its replies read here, back to the desktop app's first check of the usage (about 30 days); PID, its process; KIND, how it was started (`cli`, `desktop`, `vscode`, `sdk`, `bg` for a background session). On a narrow terminal the least needed columns go first.
 
 ACTIVITY is the tool call it is in (`Bash: Run the tests`, `Edit: src/a.js`, `Agent: Explore: find the parser`), `thinking`, the agents it waits for, or what it waits for you to do (`waiting: a question: Which branch?`). While it works through a task list (the desktop app's, or TodoWrite's), it begins with how many of the steps are done: `2/4`. For a session that is idle or ended it is the desktop app's summary of its last turn (`blocked:` and what you are to do, when the turn ended on you), else its last reply, or the error that stopped it (a usage limit, say). A session that runs with a command left going on in the background, or an agent or a workflow it started still at work, shows that in place of the summary or the reply: `background: Bash: Serve the site`, `background: 1 agent running`.
 
@@ -180,7 +180,7 @@ The floor, the bands, the pipeline, the tank, the radar and the spark move of th
 
 ## Details
 
-Enter shows everything known about the selected row, and its latest events: your prompts, its replies, its tool calls and what failed, newest at the bottom.
+Enter shows everything known about the selected row, and its latest events: your prompts, its replies, its tool calls and what failed, newest at the bottom. For a session not at work that includes its prompt cache: till when it keeps the context, or since when it has not, and what a reply after that adds, writing it all again (`Cache miss`).
 
 ```
  ◐ Fix the flaky upload test                                                        in a tool · 14s
@@ -370,6 +370,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
 - A few seconds after a turn of a desktop app session ends, the app writes its summary of the turn: a category (completed, blocked, review ready), a few words on what it came to, and, when it is blocked, what you are to do. The monitor uses a summary while the session is not at work, and only one that names the transcript's last reply: it is not used before the app writes it, nor for a turn the app did not sum up, nor once the session went on. A blocked summary marks the session blocked.
 - With the plan's price, a point of the week's limit is a week's worth of the price over 100: the price a month times 12, over the 52.18 weeks of a year, over 100 ($0.46 at $200 a month). A plan's price is the same however much you use it, so this is the share of it that the use took, not a bill. The session's limit, five hours of the week, gets no dollars of its own. Charges past the plan, for usage bought beyond its limits, are in no file the monitor reads.
 - A session's TOTAL counts its replies read here at the week's rate now, those before a change of plan too, as if they had been under the plan you have now: an estimate of what they came to. Its use before the desktop app's first check, or elsewhere, is not in it. Its details say since when (`since Oct 3`), or `in all` when it began after that check.
+- The prompt cache keeps a conversation's context for a while after each request that reads or writes it, so that the next reply reads it for a fraction of what writing it costs. How long, each reply's usage says: an hour (as for Claude Code's sessions on a plan), or five minutes. The monitor counts from when the session's last reply was asked for: its first record's time, less the time it spent thinking. The process can quit meanwhile: a session resumed in time still reads its cache. A compaction starts the context over, so nothing is shown till its next reply. Once the cache has run out, the next reply writes the whole context again: the session's details say what that adds, in points of each limit at the rates the usage is carried on with (and at the plan's price), counting the context in full, though a part all sessions share (the system prompt and the tools) is often still cached by another.
 
 ## Limits
 

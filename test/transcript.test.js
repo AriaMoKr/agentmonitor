@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promptText, TAIL_BYTES, Transcript } from '../src/transcript.js';
-import { NOW, rec } from './helpers/fixture.js';
+import { HOUR, iso, MINUTE, NOW, rec } from './helpers/fixture.js';
 
 /** @param {import('node:test').TestContext} t */
 function tempFile(t) {
@@ -159,6 +159,29 @@ test('output tokens of one message, written block by block, count once', async (
   const tx = new Transcript(path);
   await update(tx);
   assert.equal(tx.info.outTokens, 100);
+});
+
+test("the prompt cache: when the last reply was asked for, before it thought, and how long the cache keeps what it wrote; nothing after a compaction", async (t) => {
+  const path = tempFile(t);
+  writeFileSync(path, jsonl([rec.prompt('go on', NOW - 20 * MINUTE), rec.reply('first', NOW - 19 * MINUTE, { ttl: '5m' })]));
+  const tx = new Transcript(path);
+  await update(tx);
+  const cache = () => [tx.info.cacheAt, tx.info.cacheTtl];
+  assert.deepEqual(cache(), [NOW - 19 * MINUTE, 5 * MINUTE]);
+  // Asked for before it thought, as its first record says; its later records change nothing.
+  appendFileSync(path, jsonl([
+    rec.reply('thought', NOW - 10 * MINUTE, { id: 'msg_b', ttl: '1h', think: 30_000 }),
+    rec.reply('and said', NOW - 9 * MINUTE, { id: 'msg_b', ttl: '1h' }),
+  ]));
+  await update(tx);
+  assert.deepEqual(cache(), [NOW - 10 * MINUTE - 30_000, HOUR]);
+  // A reply that does not say for how long keeps that; an API error is no reply.
+  appendFileSync(path, jsonl([rec.reply('read it all', NOW - 5 * MINUTE, { id: 'msg_c' }), rec.apiError('Overloaded', NOW - 4 * MINUTE)]));
+  await update(tx);
+  assert.deepEqual(cache(), [NOW - 5 * MINUTE, HOUR]);
+  appendFileSync(path, jsonl([{ type: 'system', subtype: 'compact_boundary', uuid: 'c1', timestamp: iso(NOW - 2 * MINUTE) }]));
+  await update(tx);
+  assert.deepEqual(cache(), [0, HOUR], 'what was cached is not the conversation any more');
 });
 
 test('reads what was appended, and waits for a line to be finished', async (t) => {

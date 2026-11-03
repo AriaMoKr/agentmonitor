@@ -118,7 +118,7 @@ test('waiting and idle sessions; a name the user gave comes first', async (t) =>
   cfg.transcript(waiting, [rec.prompt('Deploy it', NOW - 2 * MINUTE), rec.tool('toolu_w', 'Bash', { command: 'deploy.sh' }, NOW - MINUTE)], { mtime: NOW - MINUTE });
   cfg.registry({ pid: 10, sessionId: waiting, status: 'waiting', waitingFor: 'permission: Bash', name: 'Release', nameSource: 'user', statusUpdatedAt: NOW - MINUTE });
   const idle = sessionId();
-  cfg.transcript(idle, [rec.prompt('Explain the code', NOW - 20 * MINUTE), rec.reply('It reads the registry.', NOW - 19 * MINUTE)], { mtime: NOW - 19 * MINUTE });
+  cfg.transcript(idle, [rec.prompt('Explain the code', NOW - 20 * MINUTE), rec.reply('It reads the registry.', NOW - 19 * MINUTE, { ttl: '1h', think: 20_000 })], { mtime: NOW - 19 * MINUTE });
   cfg.registry({ pid: 11, sessionId: idle, status: 'idle', statusUpdatedAt: NOW - 19 * MINUTE });
   const { monitor } = monitorOf(cfg, { running: { 10: 'claude.exe', 11: 'node.exe' } });
   const rows = (await monitor.refresh(NOW)).rows;
@@ -133,6 +133,10 @@ test('waiting and idle sessions; a name the user gave comes first', async (t) =>
   assert.equal(i?.title, 'Explain the code');
   assert.equal(i?.activity, 'It reads the registry.');
   assert.equal(i?.activityKind, 'reply');
+  // Its prompt cache: from when its reply was asked for, an hour; once it runs out, its 50,000
+  // tokens of context written again where they were read, weighed as output.
+  assert.deepEqual(i?.cache && { ...i.cache, rewrite: Math.round(i.cache.rewrite) }, { at: NOW - 19 * MINUTE - 20_000, ttl: HOUR, rewrite: 14_225 });
+  assert.equal(w?.cache, undefined, 'none said for how long');
 });
 
 test('a call that asks you something: a question, a plan to approve, the offer of a session', async (t) => {
