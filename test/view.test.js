@@ -659,6 +659,19 @@ test('the detail view of an unread session: the reply not read yet, and when it 
   assert.match(text, /Desktop {4}local_u · last opened .+ \(10m ago\)/);
 });
 
+test("a session's details with the plan's price: what it used of the week's limit, in dollars", () => {
+  const s = agent({ key: 's:p', title: 'Priced session', state: 'idle', sessionId: 'p1' });
+  /** @param {[string, number][]} sessions @param {number} [planPrice] */
+  const text = (sessions, planPrice) => {
+    const usage = { at: NOW, split: { week: { from: NOW - 48 * HOUR, to: NOW, sessions, models: [] } } };
+    return detailLines(s, snapshot([s], { usage, planPrice }), initialUi(), { width: 100, height: 20, now: NOW }, plain).join('\n');
+  };
+  assert.match(text([['other', 30], ['p1', 22]], 200), /Plan {7}\$10\.12 this week: 22 points of its limit, at \$200 a month/);
+  assert.match(text([['p1', 8.5]], 100), /Plan {7}\$1\.95 this week: 8\.5 points of its limit, at \$100 a month/);
+  assert.doesNotMatch(text([['p1', 22]]), / Plan /, 'no price told');
+  assert.doesNotMatch(text([['other', 30], ['p1', 0.01]], 200), / Plan /, 'next to none of the week');
+});
+
 test('an earlier run of a desktop app session: its details say so, and the title it had, which the filter knows', () => {
   const run = agent({
     key: 's:e', title: 'reviews (earlier run)', state: 'ended', live: false, kind: 'desktop', sessionId: 'e1', hostSessionId: 'local_r',

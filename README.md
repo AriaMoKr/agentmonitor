@@ -58,6 +58,9 @@ It draws every line again every 2 seconds, since a terminal can lose lines witho
                          default), overview, floor, bands, lanes, ticker,
                          pipeline, files, chart, share, today, tank, radar or
                          spark (v and V step through them)
+      --plan-price <n>   the plan's price a month, in dollars (200, say), for
+                         what the week's use came to: in the share view and a
+                         session's details
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
@@ -165,7 +168,7 @@ That is the overview. `v` shows the next view of the room, and `V` the one befor
 | pipeline | each workflow, with its phases in the order they began, each agent in them a mark: at work (a spinner), done or failed; under them, the sessions' own agents |
 | files | the files the sessions changed in the last hour, the latest first: how often, by whom and when, `✎` on one being changed now, and `!` on one that two sessions or more changed |
 | chart | the session's percent over its five hours and the week's over its seven days, as the desktop app checked them, carried on to now, and on to the reset at its pace (yellow where that reaches 100% first). Under them, where there is room, the rate: the tokens 1% of the week came to, weighed as the usage is carried on with, over all the days the app's checks go back (about 30). At each check it is what the latest rises of the week's percent came to then, as the week is carried on, but counted only from the plan's last change before it; the line breaks at each change, where a dotted line goes down. On a tall screen, when in the day the session's limit was used over the last week |
-| share | the points of each limit each session on this computer used, the most first, those the replies read here leave out (use elsewhere), and the points by model |
+| share | the points of each limit each session on this computer used, the most first, those the replies read here leave out (use elsewhere), and the points by model. With the plan's price (`--plan-price`, or the agentmonitor app's menu), the week's in dollars too: the week's percent of a week's price, and each session's, model's and elsewhere's points of it |
 | today | what the sessions here did since midnight: the sessions, agents, prompts and replies, the time they waited on you, the tokens, the models' shares, the replies hour by hour, and the tools called, the most first |
 | tank | the session's limit as a tank as full as its percent, each reply a drop as big as its points, falling in about 15 seconds after it was written; its pace (the last hour's) and its reset, and the week's tank beside it with its own. Where the session's percent is not known, as after a change of plan, when the desktop app's checks can leave it out, the replies drip into the week's tank |
 | radar | each session a blip, nearer the middle the more lately it did something (rings at a minute, ten, an hour and the window), and a sweep going round that lights those that just did; the sessions beside it, the latest first |
@@ -213,7 +216,7 @@ Enter shows everything known about the selected row, and its latest events: your
  esc back  ↑↓ scroll  home/end  tab next
 ```
 
-Tasks is its task list: the steps done, the one in progress and those to do, and `in an earlier turn` when none changed since your last prompt. A session that runs commands in the background lists them as Background, each with how long it has run. A session that ended shows the `claude --resume` command that takes it up again, run in its folder. A desktop app session shows when you last opened it there, and an unread one shows its last turn as Unread. A blocked one shows what you are to do as Blocked, with the app's summary of the turn under it, and its title line adds the summary's category when it is not the usual one (blocked, review ready). An agent's transcript is read while it works, and while it is selected, below the list or in its details, so a finished agent shows what it did too.
+Tasks is its task list: the steps done, the one in progress and those to do, and `in an earlier turn` when none changed since your last prompt. A session that runs commands in the background lists them as Background, each with how long it has run. A session that ended shows the `claude --resume` command that takes it up again, run in its folder. A desktop app session shows when you last opened it there, and an unread one shows its last turn as Unread. With the plan's price, a session shows as Plan what its points of the week's limit came to since the week reset, or since your plan changed where that is later. A blocked one shows what you are to do as Blocked, with the app's summary of the turn under it, and its title line adds the summary's category when it is not the usual one (blocked, review ready). An agent's transcript is read while it works, and while it is selected, below the list or in its details, so a finished agent shows what it did too.
 
 ## Keys
 
@@ -303,6 +306,7 @@ Its tooltip counts the sessions and gives the plan's usage. Its menu lists the s
 - Notify when a session needs you or ends its turn: a notification when the bell would ring. Off until you turn it on, and on Windows shown only while its settings let apps notify (Settings, System, Notifications).
 - Flash when a session needs you or ends its turn: the window's taskbar button flashes until you bring the window to the front; with the window in the tray, the icon blinks a few seconds. On at first.
 - Tray icon: its look, above.
+- The plan's price a month: None at first, or $20, $100 or $200, for what the week's use came to in the share view and a session's details, as `--plan-price` gives it. Another price, put in its `settings.json` as `planPrice`, is offered too.
 - Minimize to the tray: on at first.
 - Start at login, in the tray: off at first.
 - In the Start menu, or In the applications menu: there after the first start. Taken out here, it stays out.
@@ -362,6 +366,7 @@ And the processes: whether each PID in `sessions/` exists (signal 0, which only 
 
   This is the app's blue dot: the app marks a session unread when one of its turns ends while you are in another session, and clears the dot when you open it.
 - A few seconds after a turn of a desktop app session ends, the app writes its summary of the turn: a category (completed, blocked, review ready), a few words on what it came to, and, when it is blocked, what you are to do. The monitor uses a summary while the session is not at work, and only one that names the transcript's last reply: it is not used before the app writes it, nor for a turn the app did not sum up, nor once the session went on. A blocked summary marks the session blocked.
+- With the plan's price, a point of the week's limit is a week's worth of the price over 100: the price a month times 12, over the 52.18 weeks of a year, over 100 ($0.46 at $200 a month). A plan's price is the same however much you use it, so this is the share of it that the use took, not a bill. The session's limit, five hours of the week, gets no dollars of its own. Charges past the plan, for usage bought beyond its limits, are in no file the monitor reads.
 
 ## Limits
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  ago, bytes, clean, clock, durationLabel, elapsed, fit, kindLabel, lastPart, parseDuration,
+  ago, bytes, clean, clock, dollars, durationLabel, elapsed, fit, kindLabel, lastPart, parseDuration,
   relativeTo, shortModel, timeOfDay, tokens, toolName, toolSummary, truncate, weekday, width,
 } from '../src/format.js';
 
@@ -105,6 +105,10 @@ test('tokens and bytes', () => {
   assert.equal(bytes(822_041), '803 KB');
   assert.equal(bytes(53_125_220), '50.7 MB');
   assert.equal(bytes(3 * 1024 ** 3), '3 GB');
+});
+
+test('dollars: whole ones as they are, else to the cent', () => {
+  assert.deepEqual([200, 45.9968, 17.5, 10.1193, 0.46, 0.005, 0.004, 0].map(dollars), ['$200', '$46', '$17.50', '$10.12', '$0.46', '$0.01', '<$0.01', '$0']);
 });
 
 test('shortModel', () => {

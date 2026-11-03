@@ -79,6 +79,10 @@ test('a wrong option ends with status 2, saying why', async () => {
     [['--view', 'nope'], /--view takes overview, floor, board, bands, lanes, ticker, pipeline, files, chart, share, today, tank, radar, spark, not 'nope'/],
     [['--view', 'radar', '--once'], /--view does not go with --once or --json/],
     [['--view', 'radar', '--json'], /--view does not go with --once or --json/],
+    [['--plan-price', 'lots'], /--plan-price takes the plan's price a month in dollars, as 200 or 17\.50, not 'lots'/],
+    [['--plan-price', '0'], /--plan-price takes the plan's price a month in dollars, as 200 or 17\.50, not '0'/],
+    [['--plan-price=-20'], /--plan-price takes the plan's price a month in dollars, as 200 or 17\.50, not '-20'/],
+    [['--plan-price', '200', '--once'], /--plan-price does not go with --once/],
   ])) {
     const r = await run(args);
     assert.equal(r.code, 2, args.join(' '));
@@ -129,6 +133,10 @@ test('--once and --json with the plan\'s usage, as the desktop app sampled it', 
     week: 29,
     sessionReset: { at: resets, from: resets, to: mark(now - 20 * MINUTE) + 5 * HOUR },
   });
+  assert.equal(json.planPrice, undefined);
+  for (const price of ['17.50', '$200']) {
+    assert.equal(JSON.parse((await run(['--json', '--plan-price', price, '--dir', cfg.dir], app.env)).stdout).planPrice, Number(price.replace('$', '')), 'with the plan\'s price');
+  }
 });
 
 test('--once and --json with the session\'s usage carried on to now with the replies in the transcripts', async (t) => {

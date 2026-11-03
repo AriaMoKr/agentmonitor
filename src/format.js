@@ -190,6 +190,16 @@ export function bytes(n) {
 }
 
 /**
+ * Dollars: whole ones as they are, else to the cent: '$200', '$46', '$10.12'; '<$0.01' for less.
+ * @param {number} v
+ */
+export function dollars(v) {
+  const cents = Math.round(v * 100);
+  if (!cents && v > 0) return '<$0.01';
+  return cents % 100 ? `$${(cents / 100).toFixed(2)}` : `$${cents / 100}`;
+}
+
+/**
  * A model ID made short: 'claude-opus-5-5' → 'opus 5.5', 'claude-sonnet-4-5-20250929' →
  * 'sonnet 4.5', a Bedrock ID likewise; any other model as it is. '' for Claude Code's
  * '<synthetic>' messages.

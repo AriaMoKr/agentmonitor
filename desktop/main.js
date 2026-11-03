@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, screen, session, shell, Tray } from 'electron';
-import { clock } from '../src/format.js';
+import { clock, dollars } from '../src/format.js';
 import { Monitor } from '../src/monitor.js';
 import { serve } from '../src/serve.js';
 import { sessionStates } from '../src/viewer.js';
@@ -71,6 +71,12 @@ const LOOKS = [
 ];
 
 /**
+ * The plan's prices a month that the menu offers, in dollars: Claude's plans' in November 2026.
+ * Another can be kept in the settings by hand, and the menu offers it too.
+ */
+const PRICES = [20, 100, 200];
+
+/**
  * @typedef {object} Settings what the app keeps from one run to the next, in its folder
  * @property {boolean} notify a notification when a session needs you or ends its turn
  * @property {boolean} flash then the taskbar button flashes, or with the window in the tray the
@@ -78,6 +84,8 @@ const LOOKS = [
  * @property {Look} trayIcon what the tray icon draws
  * @property {boolean} minimizeToTray the window minimized goes to the tray, off the taskbar
  * @property {number} zoom the page's zoom level: 0 as it is, each step of 1 a fifth bigger
+ * @property {number} [planPrice] the plan's price a month, in dollars, for what the week's use
+ *   came to (the monitor's planPrice); none unless chosen
  * @property {boolean} [launcher] in the Start menu or the applications menu; undefined until the
  *   first start puts it there
  * @property {boolean} [toldTray] whether it was said that a closed window goes on in the tray
@@ -95,6 +103,8 @@ let win;
 let flyout;
 /** @type {Tray | undefined} */
 let tray;
+/** @type {Monitor | undefined} */
+let monitor;
 /** @type {import('../src/serve.js').Served | undefined} */
 let served;
 /** The web view's address: the window's page and the flyout's are it, each with its ID. */
@@ -170,7 +180,8 @@ async function start() {
   session.defaultSession.setPermissionRequestHandler((_page, _what, answer) => answer(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   const dir = resolve(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'));
-  served = await serve(new Monitor({ dir, windowMs: 24 * HOUR }), {
+  monitor = new Monitor({ dir, windowMs: 24 * HOUR, planPrice: settings.planPrice });
+  served = await serve(monitor, {
     host: '127.0.0.1', port: 0, intervalMs: 1000, ascii: false, agents: 'running', showEnded: true, log,
     // q in the window or the flyout quits, as in a terminal.
     onQuit: () => app.quit(),
@@ -458,7 +469,7 @@ async function update() {
   latest = { state, gauge: gaugeOf(snap.usage, now) };
   const fresh = notices(before, snap);
   before = sessionStates(snap);
-  const key = JSON.stringify([state.level, state.counts, state.usage, state.listed, settings.notify, settings.flash, settings.trayIcon, settings.minimizeToTray, settings.launcher]);
+  const key = JSON.stringify([state.level, state.counts, state.usage, state.listed, settings.notify, settings.flash, settings.trayIcon, settings.planPrice, settings.minimizeToTray, settings.launcher]);
   if (key !== drawn) {
     drawn = key;
     tray.setToolTip(state.tooltip);
@@ -677,6 +688,8 @@ function tasks() {
  */
 function trayMenu(state) {
   const label = (/** @type {string} */ s) => menuLabel(s, platform);
+  // The plan's prices offered, and one kept in the settings by hand.
+  const prices = [...new Set([...PRICES, ...(settings.planPrice ? [settings.planPrice] : [])])].sort((a, b) => a - b);
   /** @type {Electron.MenuItemConstructorOptions[]} */
   const items = [
     { label: 'Show Claude agents', click: () => show() },
@@ -693,6 +706,12 @@ function trayMenu(state) {
     {
       label: 'Tray icon',
       submenu: LOOKS.map(([look, text]) => ({ label: text, type: /** @type {const} */ ('radio'), checked: settings.trayIcon === look, click: () => change({ trayIcon: look }) })),
+    },
+    {
+      label: "The plan's price a month",
+      submenu: [undefined, ...prices].map((p) => ({
+        label: p ? dollars(p) : 'None', type: /** @type {const} */ ('radio'), checked: settings.planPrice === p, click: () => change({ planPrice: p }),
+      })),
     },
   );
   if (platform !== 'darwin') {
@@ -712,6 +731,7 @@ function trayMenu(state) {
  */
 function change(to) {
   Object.assign(settings, to);
+  if ('planPrice' in to && monitor) monitor.planPrice = settings.planPrice;
   save();
   drawn = '';
   if (to.flash === false) stopFlashing();
@@ -824,6 +844,7 @@ function load() {
   const look = LOOKS.find(([l]) => l === o.trayIcon);
   if (look) s.trayIcon = look[0];
   if (Number.isFinite(o.zoom)) s.zoom = Math.max(-4, Math.min(6, o.zoom));
+  if (Number.isFinite(o.planPrice) && o.planPrice > 0 && o.planPrice <= 100_000) s.planPrice = o.planPrice;
   const b = o.bounds;
   if (b && ['x', 'y', 'width', 'height'].every((k) => Number.isInteger(b[k])) && b.width >= 200 && b.height >= 120) {
     s.bounds = { x: b.x, y: b.y, width: b.width, height: b.height };

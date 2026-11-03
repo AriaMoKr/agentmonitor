@@ -6,8 +6,8 @@
 // sessions on a radar, and one spark for them all. Pure functions of a snapshot and the
 // screen's state, as src/view.js's are: those that move do so with the time they are drawn for.
 import { Canvas } from './canvas.js';
-import { ago, clock, durationLabel, elapsed, fit, graphemes, lastPart, monthDay, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
-import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, rate, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
+import { ago, clock, dollars, durationLabel, elapsed, fit, graphemes, lastPart, monthDay, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
+import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, pointPrice, rate, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -1267,10 +1267,11 @@ function chartLines(snap, rows, ui, screen, t) {
 // The share ---------------------------------------------------------------------------------
 
 /**
- * Who used the limits: of the session's in its window and of the week's since its reset, the
- * points each session on this computer used, as bars of the whole limit, the most first; what
- * the rest came to (other computers, or use before the replies read); and the points by model.
- * A click on a session opens it.
+ * Who used the limits: of the session's in its window and of the week's since its reset (or the
+ * plan's change, where later), the points each session on this computer used, as bars of the
+ * whole limit, the most first; what the rest came to (other computers, or use before the replies
+ * read); and the points by model. With the plan's price, the week's points in dollars too. A
+ * click on a session opens it.
  * @type {Panel}
  */
 function shareLines(snap, rows, ui, screen, t) {
@@ -1278,13 +1279,15 @@ function shareLines(snap, rows, ui, screen, t) {
   const room = Math.max(0, height - 2);
   const u = snap.usage;
   const limits = u ? limitsOf(u, now) : {};
+  const perPoint = snap.planPrice ? pointPrice(snap.planPrice) : undefined;
   const bySession = new Map(snap.rows.filter((a) => a.sessionId).map((a) => [a.sessionId, a]));
   /** @param {string} id */
   const named = (id) => {
     const a = bySession.get(id);
     return a ? nameOf(a) : lastPart(snap.cwds?.get(id) ?? '') || (id ? id.slice(0, 8) : 'other');
   };
-  const nw = cols >= 100 ? 24 : cols >= 72 ? 16 : 12;
+  // With the plan's price, the names give two columns to the week's dollars, for its rows to fit 100.
+  const nw = cols >= 100 ? (perPoint ? 22 : 24) : cols >= 72 ? 16 : 12;
   const bw = cols >= 100 ? 30 : cols >= 72 ? 20 : 10;
   /** @param {number} v */
   const pts = (v) => (v < 10 ? v.toFixed(1) : String(Math.round(v)));
@@ -1301,26 +1304,36 @@ function shareLines(snap, rows, ui, screen, t) {
     const start = body.length;
     if (i) body.push(line('', cols, t));
     const mine = share.sessions.reduce((n, [, v]) => n + v, 0);
-    body.push(line(` ${t.bold(fit(label, 7))} ${levelOf(l.v, `${l.near ? '~' : ''}${l.v}%`, t)}  ${t.dim(`this computer: ${pts(mine)} points since ${minute(share.from, now)}`)}`, cols, t));
+    // The week's points in dollars too, at the plan's price.
+    const priced = label === 'week' ? perPoint : undefined;
+    /** @param {number} v @param {number} cells */
+    const price = (v, cells) => (priced ? ` ${fit(dollars(v * priced), cells, 'right')}` : '');
+    const spent = priced ? ` ${dollars(l.v * priced)} ${t.dim(`of the week's ${dollars(100 * priced)}`)} ` : '';
+    body.push(line(` ${t.bold(fit(label, 7))} ${levelOf(l.v, `${l.near ? '~' : ''}${l.v}%`, t)} ${spent} ${t.dim(`this computer: ${pts(mine)} points since ${minute(share.from, now)}`)}`, cols, t));
     const list = share.sessions.filter(([, v]) => v >= 0.05);
     const rest = l.v - mine;
-    const models = share.models.filter(([, v]) => v >= 0.05).map(([m, v]) => `${shortModel(m) || m || 'other'} ${pts(v)}`).join(t.dim(t.sep));
+    const models = share.models.filter(([, v]) => v >= 0.05).map(([m, v]) => `${shortModel(m) || m || 'other'} ${pts(v)}${priced ? ` (${dollars(v * priced)})` : ''}`).join(t.dim(t.sep));
     const fits = Math.max(1, each - (body.length - start) - (rest >= 1 ? 1 : 0) - (models ? 1 : 0));
     const listed = list.length > fits ? list.slice(0, fits - 1) : list;
     for (const [id, v] of listed) {
       const a = bySession.get(id);
-      body.push(line(`   ${fit(named(id), nw, 'left', t.ellipsis)} ${bar(v, undefined, bw, t)} ${fit(pts(v), 5, 'right')}`, cols, t, a ? { open: a.key } : NONE));
+      body.push(line(`   ${fit(named(id), nw, 'left', t.ellipsis)} ${bar(v, undefined, bw, t)} ${fit(pts(v), 5, 'right')}${price(v, 7)}`, cols, t, a ? { open: a.key } : NONE));
     }
     if (list.length > listed.length) body.push(line(t.dim(`   and ${list.length - listed.length} more`), cols, t));
     if (rest >= 1) {
       const used = Math.round((Math.min(100, rest) / 100) * bw);
       const gray = t.dim(t.bar.full.repeat(used) + t.bar.empty.repeat(bw - used));
-      body.push(line(`   ${t.dim(fit('elsewhere', nw))} ${gray} ${fit(pts(rest), 5, 'right')}  ${t.dim('not in the replies read here')}`, cols, t));
+      body.push(line(`   ${t.dim(fit('elsewhere', nw))} ${gray} ${fit(pts(rest), 5, 'right')}${price(rest, 7)}  ${t.dim('not in the replies read here')}`, cols, t));
     }
     if (models) body.push(line(`   ${t.dim(fit('by model', nw))} ${models}`, cols, t));
   }
   if (!body.length) body.push(line(t.dim("   Not known yet: it needs the desktop app's samples of the usage, and this computer's replies read."), cols, t));
-  return frame('Who used the limits', t.dim('in points of each limit'), body, screen, t);
+  // With the plan's price, what a point of the week comes to, where the heading has room for it
+  // (its rules and spaces take 8 columns), else only what the numbers are in.
+  const title = 'Who used the limits';
+  const note = 'in points of each limit';
+  const priced = perPoint && snap.planPrice ? `${note}; a point of the week ${dollars(perPoint)}, at ${dollars(snap.planPrice)} a month` : note;
+  return frame(title, t.dim(width(title) + width(priced) + 8 < cols ? priced : note), body, screen, t);
 }
 
 // Today -------------------------------------------------------------------------------------
@@ -1637,7 +1650,7 @@ export const VIEWS = [
   { name: 'pipeline', what: "the workflows' phases, each agent at work, done or failed; the sessions' own agents", animated: true, lines: pipelineLines },
   { name: 'files', what: 'the files changed in the last hour, and those two sessions changed', animated: false, lines: filesLines },
   { name: 'chart', what: "the session's usage over its window and the week's, at its pace on to the reset; what a point of the week came to; when in the day it was used", animated: false, lines: chartLines },
-  { name: 'share', what: "what each session and model on this computer used of the session's limit and the week's", animated: false, lines: shareLines },
+  { name: 'share', what: "what each session and model on this computer used of the session's limit and the week's; with the plan's price, the week's in dollars", animated: false, lines: shareLines },
   { name: 'today', what: 'what today came to: sessions, agents, prompts, replies, tokens, models, hours, tools, the time waited on you', animated: false, lines: todayLines },
   { name: 'tank', what: "the session's limit as a tank the replies drip into, and the week's", animated: true, lines: tankLines },
   { name: 'radar', what: 'the sessions as blips, nearer the middle the more lately they did something; the sweep lights what just did', animated: true, lines: radarLines },
