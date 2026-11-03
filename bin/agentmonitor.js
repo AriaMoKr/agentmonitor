@@ -35,11 +35,11 @@ Options:
                          --serve, the page beeps)
       --view <name>      the view below the list to start with: board (the
                          default), overview, floor, bands, lanes, ticker,
-                         pipeline, files, chart, share, today, tank, radar or
-                         spark (v and V step through them)
+                         pipeline, files, chart, share, projects, today,
+                         tank, radar or spark (v and V step through them)
       --plan-price <n>   the plan's price a month, in dollars (200, say), for
-                         what the week's use came to: in the share view and a
-                         session's details
+                         what the week's use came to: in the share and
+                         projects views, the tank and a session's details
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)

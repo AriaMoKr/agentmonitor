@@ -1,6 +1,6 @@
 # agentmonitor
 
-The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, carried on to now with what this computer's sessions used since, and about when each resets. Below the list, where it leaves room, the sessions are cards on a board, in columns by what they wait for; `v` turns that room to thirteen other views, from an overview (the selected session at more length, the other sessions that need you, what was said lately, and the usage at the pace it goes) and the sessions as figures at their keys to the usage as a tank the replies drip into.
+The Claude agents on this computer, live in a terminal, in a window of its own with an icon in the system tray, or in a browser here or on another computer: every Claude Code session that runs (in a terminal, the Claude desktop app's Code tab, an IDE or the background) or was active lately, what each one is doing now and how far through its task list it is, and the subagents and workflows it started. For the desktop app's sessions it also shows the app's summary of each one's last turn, which ones wait on you, and which ones the app shows as unread. At the top is how much of your plan's usage limits is used, the five-hour session's and the week's, as the desktop app last checked, carried on to now with what this computer's sessions used since, and about when each resets. Below the list, where it leaves room, the sessions are cards on a board, in columns by what they wait for; `v` turns that room to fourteen other views, from an overview (the selected session at more length, the other sessions that need you, what was said lately, and the usage at the pace it goes) and the sessions as figures at their keys to the usage as a tank the replies drip into.
 
 ```
  ● 1 working  ◐ 1 in a tool  ◆ 1 waiting  ◇ 1 blocked  • 1 unread       session ~64% resets 15:10  week ~29% resets Thu
@@ -56,11 +56,11 @@ It draws every line again every 2 seconds, since a terminal can lose lines witho
                          --serve, the page beeps)
       --view <name>      the view below the list to start with: board (the
                          default), overview, floor, bands, lanes, ticker,
-                         pipeline, files, chart, share, today, tank, radar or
-                         spark (v and V step through them)
+                         pipeline, files, chart, share, projects, today,
+                         tank, radar or spark (v and V step through them)
       --plan-price <n>   the plan's price a month, in dollars (200, say), for
-                         what the week's use came to: in the share view and a
-                         session's details
+                         what the week's use came to: in the share and
+                         projects views, the tank and a session's details
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
@@ -169,12 +169,13 @@ That is the overview. `v` shows the next view of the room, and `V` the one befor
 | files | the files the sessions changed in the last hour, the latest first: how often, by whom and when, `✎` on one being changed now, and `!` on one that two sessions or more changed |
 | chart | the session's percent over its five hours and the week's over its seven days, as the desktop app checked them, carried on to now, and on to the reset at its pace (yellow where that reaches 100% first). Under them, where there is room, the rate: the tokens 1% of the week came to, weighed as the usage is carried on with, over all the days the app's checks go back (about 30). At each check it is what the latest rises of the week's percent came to then, as the week is carried on, but counted only from the plan's last change before it; the line breaks at each change, where a dotted line goes down. On a tall screen, when in the day the session's limit was used over the last week |
 | share | the points of each limit each session on this computer used, the most first, those the replies read here leave out (use elsewhere), and the points by model. With the plan's price (`--plan-price`, or the agentmonitor app's menu), the week's in dollars too: the week's percent of a week's price, and each session's, model's and elsewhere's points of it |
+| projects | the sessions by project (their folder's last part), the most used of the week first: the points of the week each project's sessions here used, those not listed too, as a bar against the most (with the plan's price, in dollars too), how long ago one of them was last active, and its sessions listed, a glyph each, what needs you first; then what the replies read here leave out (use elsewhere). A click on a project lists its sessions alone, as the footer says, till Esc or a click on it again; one on a session's glyph opens it |
 | today | what the sessions here did since midnight: the sessions, agents, prompts and replies, the time they waited on you, the tokens, the models' shares, the replies hour by hour, and the tools called, the most first |
-| tank | the session's limit as a tank as full as its percent, each reply a drop as big as its points, falling in about 15 seconds after it was written; its pace (the last hour's) and its reset, and the week's tank beside it with its own. Where the session's percent is not known, as after a change of plan, when the desktop app's checks can leave it out, the replies drip into the week's tank |
+| tank | the session's limit as a tank as full as its percent, each reply a drop as big as its points, falling in about 15 seconds after it was written; its pace (the last hour's) and its reset, and the week's tank beside it with its own. Where the session's percent is not known, as after a change of plan, when the desktop app's checks can leave it out, the replies drip into the week's tank. With the plan's price, beside the week's tank what it comes to in dollars: full (a week of the plan), as full as it is, and at its pace an hour |
 | radar | each session a blip, nearer the middle the more lately it did something (rings at a minute, ten, an hour and the window), and a sweep going round that lights those that just did; the sessions beside it, the latest first |
 | spark | one spark for all the sessions: it turns the faster the more of them work, waves when one needs you, sleeps when none works, and goes yellow, then red, as a limit nears |
 
-The floor, the bands, the pipeline, the tank, the radar and the spark move of themselves: while one shows, the terminal draws it ten times a second, and a web page asks for it four times a second. A click on a session or an agent in a view opens its details, and one anywhere else selects none. The views show what the monitor reads anyway: the lanes, the ticker, the pipeline and the files what was read of each transcript (its last MiB on first sight, then what was appended; its latest 200 tool calls and 100 turns), and the chart, the share, today and the tank the desktop app's checks and this computer's replies, which the monitor reads back to midnight for today, and to the first of the checks for the chart's rate (a few seconds in the background as it starts, then only what was appended).
+The floor, the bands, the pipeline, the tank, the radar and the spark move of themselves: while one shows, the terminal draws it ten times a second, and a web page asks for it four times a second. A click on a session or an agent in a view opens its details, one on a project in the projects view lists its sessions alone, and one anywhere else selects none. The views show what the monitor reads anyway: the lanes, the ticker, the pipeline and the files what was read of each transcript (its last MiB on first sight, then what was appended; its latest 200 tool calls and 100 turns), and the chart, the share, the projects, today and the tank the desktop app's checks and this computer's replies, which the monitor reads back to midnight for today, and to the first of the checks for the chart's rate (a few seconds in the background as it starts, then only what was appended).
 
 ## Details
 
@@ -224,7 +225,7 @@ Tasks is its task list: the steps done, the one in progress and those to do, and
 |---|---|
 | ↑ ↓, j k, PgUp PgDn, Home End | move |
 | Enter, l, → | details |
-| Esc, h, ←, Backspace | back, or clear the filter |
+| Esc, h, ←, Backspace | back, or clear the filter and the project listed alone |
 | / | filter: rows whose name (or the one an earlier run had), folder, model, effort, activity, session ID or PID hold the text (`ultracode` finds the sessions with it on, `archived` those the desktop app archived); a session stays when one of its agents matches |
 | s | sort: by state (waiting and blocked, unread, working, in the background, idle, ended), most recent, name, project |
 | e | the sessions that ended: all but those the desktop app archived (at first), none, or all (`--hide-ended` starts with none, `--show-archived` with all) |
@@ -264,7 +265,7 @@ What keeps it to you:
 - It only reads, as in a terminal. It answers GET and HEAD and nothing else, and what a page sends, its keys and clicks, moves only that page's view, but for `w`: the window for "recently active" is the same for every page.
 - The page runs only its own script and style (its Content-Security-Policy forbids anything else), puts the text it is sent in as text, never as markup, and keeps nothing: no cookies, nothing cached.
 
-Each page has its own view: the row selected, the filter, the details open. A page that stops asking for 10 minutes is forgotten. It draws on a grid of monospace cells in a terminal's colors, dark or light as the browser prefers, and while you select text it holds still, so the selection stays.
+Each page has its own view: the row selected, the filter and the project listed alone, the details open. A page that stops asking for 10 minutes is forgotten. It draws on a grid of monospace cells in a terminal's colors, dark or light as the browser prefers, and while you select text it holds still, so the selection stays.
 
 Its title counts the sessions that wait for you: `(2) Claude agents on <computer>`. Each page has its own bell too, a short beep, which `b` turns on or off and `--bell` starts with on; it rings only for what happens once it is on. A browser lets a page sound only after a tap, a click or a key on it, so until then the page says so at the bottom. A page out of sight (in another tab, or minimized) asks every 3 seconds, for its title and its bell only, so it still beeps. One that shows a view below the list that moves of itself asks four times a second while it does.
 
@@ -306,7 +307,7 @@ Its tooltip counts the sessions and gives the plan's usage. Its menu lists the s
 - Notify when a session needs you or ends its turn: a notification when the bell would ring. Off until you turn it on, and on Windows shown only while its settings let apps notify (Settings, System, Notifications).
 - Flash when a session needs you or ends its turn: the window's taskbar button flashes until you bring the window to the front; with the window in the tray, the icon blinks a few seconds. On at first.
 - Tray icon: its look, above.
-- The plan's price a month: None at first, or $20, $100 or $200, for what the week's use came to in the share view and a session's details, as `--plan-price` gives it. Another price, put in its `settings.json` as `planPrice`, is offered too.
+- The plan's price a month: None at first, or $20, $100 or $200, for what the week's use came to in the share and projects views, the tank and a session's details, as `--plan-price` gives it. Another price, put in its `settings.json` as `planPrice`, is offered too.
 - Minimize to the tray: on at first.
 - Start at login, in the tray: off at first.
 - In the Start menu, or In the applications menu: there after the first start. Taken out here, it stays out.

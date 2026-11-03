@@ -26,6 +26,9 @@ import { ago, bytes, clock, dollars, durationLabel, elapsed, fit, graphemes, sho
  * @property {number} helpTop the help's first line on screen, when it is taller than the screen
  * @property {string} filter
  * @property {boolean} editingFilter
+ * @property {string | undefined} project the project whose sessions alone are listed, by its
+ *   folder's last part ('' for those with no folder known): a click on it in the projects view;
+ *   undefined for all of them
  * @property {Sort} sort
  * @property {boolean} showEnded
  * @property {boolean} showArchived whether the sessions that ended are listed with those put
@@ -42,9 +45,10 @@ import { ago, bytes, clock, dollars, durationLabel, elapsed, fit, graphemes, sho
  * @typedef {{ agent: Agent, depth: number, prefix: string }} Row
  * @typedef {{ width: number, height: number, now: number }} Screen
  *
- * @typedef {{ select: string } | { unselect: true } | { open: string } | { sort: Sort } | { key: string }} Action
+ * @typedef {{ select: string } | { unselect: true } | { open: string } | { sort: Sort } | { key: string } | { project: string }} Action
  *   what a click does: select the row with this key (a second click opens it), select none (below
- *   the rows), open this agent's details, sort, or press a key
+ *   the rows), open this agent's details, sort, press a key, or list this project's sessions
+ *   alone (or, when they are, all of them again)
  * @typedef {{ y: number, x0: number, x1: number, action: Action }} Hit a place a click acts on:
  *   line y, from column x0 up to x1
  * @typedef {{ x0: number, x1: number, action: Action }} Spot a part of a line a click acts on
@@ -64,7 +68,7 @@ export const AGENTS_SHOWN = /** @type {AgentsShown[]} */ (['running', 'all', 'no
 export function initialUi() {
   return {
     view: 'list', selected: undefined, index: 0, top: 0, logScroll: 0, helpTop: 0,
-    filter: '', editingFilter: false, sort: 'status', showEnded: true, showArchived: false, agents: 'running', bell: false,
+    filter: '', editingFilter: false, project: undefined, sort: 'status', showEnded: true, showArchived: false, agents: 'running', bell: false,
     panel: 'overview', moves: new Map(), message: '', messageUntil: 0,
   };
 }
@@ -193,6 +197,13 @@ const over = (state) => ORDER[state] === ORDER.ended;
 export const putAway = (a) => a.archived === true && over(a.state);
 
 /**
+ * A project as it is named: its folder's last part, or for the sessions whose folder is not
+ * known, '(no folder)'.
+ * @param {string} project
+ */
+export const projectName = (project) => project || '(no folder)';
+
+/**
  * Which of the sessions that ended are listed, as e steps through them: on, all but those put
  * away; off, none; all.
  * @param {Ui} ui
@@ -230,6 +241,7 @@ export function visibleRows(snap, ui, t) {
   const sessions = snap.rows.filter((a) => {
     if (!ui.showEnded && over(a.state)) return false;
     if (!ui.showArchived && putAway(a)) return false;
+    if (ui.project !== undefined && (a.project ?? '') !== ui.project) return false;
     return !needle || matches(a) || a.children.some((c) => matches(c) || c.children.some(matches));
   });
   sessions.sort(compare(ui.sort));
@@ -774,8 +786,8 @@ export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits 
   if (rows.length === 0) {
     const why = !snap.found
       ? `No Claude Code sessions found in ${snap.dir}.`
-      : ui.filter
-        ? `Nothing matches "${ui.filter}".`
+      : ui.filter || ui.project !== undefined
+        ? `${ui.filter ? `Nothing matches "${ui.filter}"` : 'No sessions listed'}${ui.project !== undefined ? ` in ${projectName(ui.project)}` : ''}.`
         : `No Claude agents running or active in the last ${durationLabel(snap.windowMs)}.`;
     for (let i = 0; i < listed; i++) lines.push(i === 1 ? t.pad(`   ${t.dim(why)}`, cols) : ' '.repeat(cols));
   }
@@ -1116,7 +1128,9 @@ function footer(ui, rows, t, cols, now, onHit) {
   }
   if (ui.message && now < ui.messageUntil) return t.pad(` ${t.yellow(ui.message)}`, cols);
   const pos = rows.length ? `${ui.index < 0 ? '-' : ui.index + 1}/${rows.length}` : '';
-  const filter = ui.filter ? `${t.yellow(`filter "${ui.filter}"`)} ${t.dim('esc clears')}  ` : '';
+  // The project listed alone and the filter, which esc clears.
+  const which = [ui.project !== undefined && `project ${projectName(ui.project)}`, ui.filter && `filter "${ui.filter}"`].filter(Boolean).join(t.sep);
+  const filter = which ? `${t.yellow(which)} ${t.dim('esc clears')}  ` : '';
   // Each key with what it is worth its room (on a narrow screen the least worth go first, and of
   // the last of them to go, as many come back as fit), and the key a click on it presses. A
   // phone has no keys but these, the filter and the views among them.

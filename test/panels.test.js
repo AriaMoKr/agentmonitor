@@ -195,7 +195,7 @@ test('cut: a styled line cut to a width keeps its styles, closes the one it cuts
 });
 
 test('the views, the overview first, as v steps through them; those that move of themselves', () => {
-  assert.deepEqual(VIEWS.map((v) => v.name), ['overview', 'floor', 'board', 'bands', 'lanes', 'ticker', 'pipeline', 'files', 'chart', 'share', 'today', 'tank', 'radar', 'spark']);
+  assert.deepEqual(VIEWS.map((v) => v.name), ['overview', 'floor', 'board', 'bands', 'lanes', 'ticker', 'pipeline', 'files', 'chart', 'share', 'projects', 'today', 'tank', 'radar', 'spark']);
   assert.deepEqual(VIEWS.filter((v) => v.animated).map((v) => v.name), ['floor', 'bands', 'pipeline', 'tank', 'radar', 'spark']);
   assert.equal(viewOf('radar').name, 'radar');
   assert.equal(viewOf('nope'), VIEWS[0]);
@@ -575,6 +575,103 @@ test("who used the limits, with the plan's price: the week's points in dollars t
   assert.match(heading(94), /^ ─ Who used the limits ─+ in points of each limit ─$/);
 });
 
+test("the projects: each one's points of the week as a bar against the most, when it was last active and its sessions, the most used first; then what the replies read leave out", () => {
+  const { view, hits, top } = draw('projects', { height: 20 });
+  const bar = (/** @type {number} */ n) => `${'█'.repeat(n)}${'░'.repeat(24 - n)}`;
+  assert.equal(view[1].match(/^ ─ Projects ─+ 5 projects · points of the week since (.+) ─$/)?.[1], clock(NOW - 5 * DAY, NOW));
+  // Against the 29 points elsewhere, the most; those that used none this week by when they were
+  // last active; each session's glyph, what needs you first.
+  assert.deepEqual(view.slice(2, 9), [
+    `   ${'monitor'.padEnd(22)} ${bar(18)}    22    2s  ●`,
+    `   ${'auth'.padEnd(22)} ${bar(10)}    12    3m  ◆`,
+    `   ${'site'.padEnd(22)} ${bar(0)}${' '.repeat(9)}20s  ◐`,
+    `   ${'docs'.padEnd(22)} ${bar(0)}${' '.repeat(10)}8m  •`,
+    `   ${'misc'.padEnd(22)} ${bar(0)}${' '.repeat(9)}40m  ○ ·`,
+    `   ${'elsewhere'.padEnd(22)} ${bar(24)}    29  not in the replies read here`,
+    '',
+  ]);
+  // A click on a project lists it alone; on a session's glyph, opens it.
+  assert.deepEqual(clickAt(hits, 10, top + 2), { project: 'monitor' });
+  assert.deepEqual(clickAt(hits, 64, top + 2), { open: 's:work' });
+  assert.deepEqual(clickAt(hits, 65, top + 6), { open: 's:idle' });
+  assert.deepEqual(clickAt(hits, 66, top + 6), { open: 's:end' });
+  assert.deepEqual(clickAt(hits, 70, top + 6), { project: 'misc' });
+  assert.deepEqual(clickAt(hits, 10, top + 7), { unselect: true }, 'elsewhere');
+  // A session not listed, by the folder its replies gave, made safe to draw; in the share too.
+  const week = { ...USAGE.split?.week, from: NOW - 5 * DAY, to: NOW, sessions: /** @type {[string, number][]} */ ([...(USAGE.split?.week?.sessions ?? []), ['zz', 2]]), models: [] };
+  const dirty = fullSnapshot({ cwds: new Map([['zz', '/work/\x1b[31mscripts\x07']]), usage: { ...USAGE, split: { ...USAGE.split, week } } });
+  const projects = draw('projects', { snap: dirty }).view;
+  assert.equal(projects[4], `   ${'scripts'.padEnd(22)} ${bar(2)}   2.0`, 'against the 27 points elsewhere now');
+  const share = draw('share', { snap: dirty, height: 26 }).view;
+  assert.match(share[5], /^ {3}scripts {18}/);
+  assert.doesNotMatch([...projects, ...share].join('\n'), /\x1b|\x07/);
+  // With e off, no glyph for the session that ended; its project stays, by the others.
+  assert.equal(draw('projects', { ui: { showEnded: false } }).view[6], `   ${'misc'.padEnd(22)} ${bar(0)}${' '.repeat(9)}40m  ○`);
+  // The week's use not known: no bars, no points.
+  const unknown = draw('projects', { snap: fullSnapshot({ usage: undefined }) }).view;
+  assert.match(unknown[1], /^ ─ Projects ─+ 5 projects · the week's use not known yet ─$/);
+  assert.deepEqual(unknown.slice(2, 4), [`   ${'monitor'.padEnd(22)}    2s  ●`, `   ${'site'.padEnd(22)}   20s  ◐`], 'by when they were last active');
+  assert.ok(draw('projects', { snap: fullSnapshot({ rows: [], usage: undefined }) }).view.includes('   No sessions listed.'));
+});
+
+test("the projects with the plan's price, at a phone's width, too many sessions to show, and the one listed alone", () => {
+  const priced = fullSnapshot({ planPrice: 200 });
+  const bar = (/** @type {number} */ n) => `${'█'.repeat(n)}${'░'.repeat(24 - n)}`;
+  const { view } = draw('projects', { snap: priced, height: 20 });
+  assert.match(view[1], /^ ─ Projects ─ 5 projects · points of the week since .+ · a point \$0\.46, at \$200 a month ─$/);
+  assert.deepEqual(view.slice(2, 8), [
+    `   ${'monitor'.padEnd(22)} ${bar(18)}    22  $10.12    2s  ●`,
+    `   ${'auth'.padEnd(22)} ${bar(10)}    12   $5.52    3m  ◆`,
+    `   ${'site'.padEnd(22)} ${bar(0)}${' '.repeat(17)}20s  ◐`,
+    `   ${'docs'.padEnd(22)} ${bar(0)}${' '.repeat(18)}8m  •`,
+    `   ${'misc'.padEnd(22)} ${bar(0)}${' '.repeat(17)}40m  ○ ·`,
+    `   ${'elsewhere'.padEnd(22)} ${bar(24)}    29  $13.34  not in the replies read here`,
+  ]);
+  // As wide as a phone: no bars, and in the heading only how many.
+  const phone = draw('projects', { snap: priced, width: 48, height: 20 }).view;
+  assert.match(phone[1], /^ ─ Projects ─+ 5 projects ─$/);
+  assert.deepEqual(phone.slice(2, 4), [`   ${'monitor'.padEnd(12)}    22  $10.12    2s  ●`, `   ${'auth'.padEnd(12)}    12   $5.52    3m  ◆`]);
+  assert.equal(phone[7], `   ${'elsewhere'.padEnd(12)}    29  $13.34  not in the repli…`);
+  // Thirty sessions in one: as many glyphs as fit, with how many more.
+  const many = snapshot(Array.from({ length: 30 }, (_, i) => agent({ key: `s:${i}`, title: `Session ${i}`, project: 'many', lastActive: NOW - i * MINUTE })));
+  assert.equal(draw('projects', { snap: many, width: 48 }).view[2], `   ${'many'.padEnd(12)}   now  ${Array(11).fill('○').join(' ')} +19`);
+  // Listed alone, and below the room: in place of the last that fits, marked.
+  const alone = draw('projects', { height: 11, ui: { project: 'misc' } });
+  assert.deepEqual(alone.lines.slice(2, alone.top).map((l) => /Old idea|Gone home/.exec(l)?.[0]), ['Old idea', 'Gone home'], 'the list: its sessions alone');
+  assert.deepEqual(alone.view.slice(2).map((l) => l.slice(0, 26).trimEnd()), ['   monitor', ' ▸ misc', '   and 3 more', '   elsewhere']);
+});
+
+test('a click on a project lists its sessions alone, and one on it again all of them; esc clears it with the filter', () => {
+  const viewer = new Viewer({ monitor: { dir: '/home/me/.claude', windowMs: DAY }, t: plain, agents: 'none', showEnded: true, view: 'projects' });
+  const snap = fullSnapshot();
+  const screen = { width: 100, height: 30, now: NOW };
+  /** Clicks the line of the view that `at` matches. @param {string[]} lines @param {RegExp} at */
+  const click = (lines, at) => viewer.mouse({ button: 'left', x: 10, y: lines.findIndex((l) => at.test(l)), release: false, motion: false });
+  const listed = () => viewer.rows.map((r) => r.agent.key);
+  click(viewer.lines(snap, screen), /^ {3}misc /);
+  assert.equal(viewer.ui.project, 'misc');
+  let lines = viewer.lines(snap, screen);
+  assert.deepEqual(listed(), ['s:idle', 's:end']);
+  assert.match(lines.at(-1) ?? '', /^ project misc esc clears {2}↑↓ move/);
+  // The other projects stay in the view, for another.
+  click(lines, /^ {3}auth /);
+  lines = viewer.lines(snap, screen);
+  assert.deepEqual(listed(), ['s:wait']);
+  click(lines, /^ ▸ auth /);
+  viewer.lines(snap, screen);
+  assert.deepEqual([viewer.ui.project, listed().length], [undefined, 6]);
+  // With a filter too, both in the footer, and esc clears both.
+  click(viewer.lines(snap, screen), /^ {3}docs /);
+  for (const name of ['/', 'x', 'enter']) viewer.key({ name, ...(name === 'x' ? { ch: 'x' } : {}) });
+  lines = viewer.lines(snap, screen);
+  assert.ok(lines.some((l) => l.includes('Nothing matches "x" in docs.')));
+  assert.match(lines.at(-1) ?? '', /^ project docs · filter "x" esc clears /);
+  viewer.key({ name: 'escape' });
+  assert.deepEqual([viewer.ui.project, viewer.ui.filter], [undefined, '']);
+  viewer.ui.project = 'gone';
+  assert.ok(viewer.lines(snap, screen).some((l) => l.includes('No sessions listed in gone.')));
+});
+
 test('today: the counts, the time waited on you, the tokens, the models, the replies hour by hour, and the tools', () => {
   const { view } = draw('today', { height: 26 });
   assert.match(view[1], /^ ─ Today ─+ since midnight ─$/);
@@ -635,6 +732,21 @@ test('the tank: as full as the session\'s percent, each reply falling in some se
   assert.equal(fallingIn(alone, 3), '·');
   assert.match(draw('tank', { snap: fullSnapshot({ usage: { ...USAGE, drops: [] } }) }).view[1], /each reply a drop ─$/);
   assert.match(draw('tank', { snap: fullSnapshot({ usage: undefined }) }).view[2], /No usage known/);
+});
+
+test("the tank with the plan's price: beside the week's, what its whole, its percent and its pace come to; the session's as it was", () => {
+  const without = draw('tank', { height: 30 }).view;
+  const { view } = draw('tank', { height: 30, snap: fullSnapshot({ planPrice: 200 }) });
+  // $200 a month is $46 a week: at 63%, $28.98; at 0.4 points an hour, $0.18 an hour.
+  assert.deepEqual([3, 7, 8, 9].map((y) => view[y].slice(71)), ['100%  $46', '~63%  $28.98', '+0.4%/h  $0.18/h', `resets ${weekday(NOW + 2 * DAY)}`]);
+  assert.deepEqual(view.map((l) => l.slice(0, 71)), without.map((l) => l.slice(0, 71)), "the session's tank and its labels the same");
+  // The week's alone, as after a change of plan: where the session's was.
+  const weekOnly = { ...USAGE, session: undefined, tracked: { at: NOW, week: 63, weekReset: USAGE.tracked?.weekReset, weekPace: 4.2 } };
+  const alone = draw('tank', { height: 30, snap: fullSnapshot({ usage: weekOnly, planPrice: 100 }) }).view;
+  assert.deepEqual([3, 7, 8].map((y) => alone[y].slice(29)), ['100%  $23', '~63%  $14.49', '+4%/h  $0.97/h']);
+  // Narrow: each where it fits, the rest as it was.
+  const narrow = draw('tank', { width: 48, height: 30, snap: fullSnapshot({ planPrice: 200 }) }).view;
+  assert.deepEqual([3, 7, 8].map((y) => narrow[y].slice(35)), ['100%  $46', '~63%  $28.98', '+0.4%/h']);
 });
 
 test('the radar: a blip for each session, nearer the middle the more lately it did something; the sweep goes round', () => {
@@ -756,7 +868,8 @@ test('the help lists the views below the list, which v and V step through, the o
   assert.ok(at > 0);
   const listed = text.slice(at + 1).filter((l) => /^ {3}\S/.test(l));
   assert.deepEqual(listed.map((l) => l.trim().split(' ')[0]), VIEWS.map((v) => v.name));
-  assert.match(text.slice(at).join('\n'), /tank {10}the session's limit as a tank the replies drip into, and the week's\s+\(shown\)/);
+  assert.match(text.slice(at).join('\n'), /tank {10}the session's limit as a tank the replies drip into, and the week's;/);
+  assert.match(text.slice(at).join(' ').replace(/\s+/g, ' '), /and the week's; with the plan's price, the week's in dollars \(shown\)/);
   // Given none, neither the key nor the list: what is below the list is the overview.
   const alone = helpLines(initialUi(), { width: 100, height: 200, now: NOW }, plain, '/home/me/.claude').map((l) => l.trimEnd());
   assert.doesNotMatch(alone.join('\n'), /v V|Views below/);

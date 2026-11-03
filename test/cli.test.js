@@ -76,7 +76,7 @@ test('a wrong option ends with status 2, saying why', async () => {
     [['--serve', '--port', '65536'], /--port takes a number from 0 to 65535, not '65536'/],
     [['--serve', '--token', 'too-short'], /--token takes 16 or more letters, digits, - and _/],
     [['--serve', '--token', 'sixteen chars ok'], /--token takes 16 or more letters, digits, - and _/],
-    [['--view', 'nope'], /--view takes overview, floor, board, bands, lanes, ticker, pipeline, files, chart, share, today, tank, radar, spark, not 'nope'/],
+    [['--view', 'nope'], /--view takes overview, floor, board, bands, lanes, ticker, pipeline, files, chart, share, projects, today, tank, radar, spark, not 'nope'/],
     [['--view', 'radar', '--once'], /--view does not go with --once or --json/],
     [['--view', 'radar', '--json'], /--view does not go with --once or --json/],
     [['--plan-price', 'lots'], /--plan-price takes the plan's price a month in dollars, as 200 or 17\.50, not 'lots'/],

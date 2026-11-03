@@ -246,8 +246,9 @@ export class Viewer {
   /**
    * A click on a row selects it, and a second one soon after opens it; one below the rows selects
    * none, but on an agent the panel there names, which it opens, as one on an agent in the details
-   * does; one on a column's title sorts by it, one on a key presses it, and one on the help goes
-   * back. The wheel moves the selection, or scrolls the activity in the details, or the help.
+   * does, and on a project the projects view names, whose sessions it lists alone (or all again);
+   * one on a column's title sorts by it, one on a key presses it, and one on the help goes back.
+   * The wheel moves the selection, or scrolls the activity in the details, or the help.
    * @param {Mouse} m
    * @returns {'quit' | undefined}
    */
@@ -278,6 +279,10 @@ export class Viewer {
       return;
     }
     if ('open' in action) return this.goTo(action.open);
+    if ('project' in action) {
+      Object.assign(ui, { project: ui.project === action.project ? undefined : action.project, top: 0 });
+      return;
+    }
     const now = Date.now();
     const again = m.double || (action.select === this.lastClick.key && now - this.lastClick.at < DOUBLE_CLICK);
     this.lastClick = again ? { key: '', at: 0 } : { key: action.select, at: now };
@@ -346,7 +351,7 @@ export class Viewer {
         ui.editingFilter = true;
         return;
       case 'escape':
-        ui.filter = '';
+        Object.assign(ui, { filter: '', project: undefined });
         return;
       case 's':
         return this.sortBy(SORTS[(SORTS.indexOf(ui.sort) + 1) % SORTS.length]);
