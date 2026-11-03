@@ -2,12 +2,13 @@
 // sessions as figures on a floor, as cards on a board, as figures in bands by the board's
 // columns, on lanes over the last half hour; their tool calls as they come, their workflows'
 // phases, the files they changed; the plan's usage as a chart, with what a point of the week came
-// to, who used it, what today came to, the session's limit as a tank the replies drip into; the
-// sessions on a radar, and one spark for them all. Pure functions of a snapshot and the
-// screen's state, as src/view.js's are: those that move do so with the time they are drawn for.
+// to, who used it, which projects, what today came to, the session's limit as a tank the replies
+// drip into; the sessions on a radar, and one spark for them all. Pure functions of a snapshot
+// and the screen's state, as src/view.js's are: those that move do so with the time they are
+// drawn for.
 import { Canvas } from './canvas.js';
-import { ago, clock, dollars, durationLabel, elapsed, fit, graphemes, lastPart, monthDay, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
-import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, pointPrice, rate, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
+import { ago, clean, clock, dollars, durationLabel, elapsed, fit, graphemes, lastPart, monthDay, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
+import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, pointPrice, projectName, putAway, rate, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -211,6 +212,22 @@ const since = (ms) => (ms < SECOND ? 'just now' : `${ago(ms)} ago`);
  * @param {number} now
  */
 const minute = (ts, now) => (new Date(ts).toDateString() === new Date(now).toDateString() ? timeOfDay(ts) : clock(ts, now));
+
+/**
+ * Points of a limit, as the share and the projects say them: '8.5', '22'.
+ * @param {number} v
+ */
+const pts = (v) => (v < 10 ? v.toFixed(1) : String(Math.round(v)));
+
+/**
+ * The project of a session the replies came from, by its ID: its folder's last part, as the list
+ * says it for a session in the snapshot, else as its transcripts said it (made safe first, as
+ * src/monitor.js makes a session's); '' when not known.
+ * @param {Snapshot} snap
+ * @param {Map<string, Agent>} bySession the sessions in the snapshot, by ID
+ * @param {string} id
+ */
+const folderOf = (snap, bySession, id) => bySession.get(id)?.project ?? lastPart(clean(snap.cwds?.get(id)));
 
 /**
  * `s` in at most `cols` columns, cut at its start: the end of a path says most.
@@ -1284,13 +1301,11 @@ function shareLines(snap, rows, ui, screen, t) {
   /** @param {string} id */
   const named = (id) => {
     const a = bySession.get(id);
-    return a ? nameOf(a) : lastPart(snap.cwds?.get(id) ?? '') || (id ? id.slice(0, 8) : 'other');
+    return a ? nameOf(a) : folderOf(snap, bySession, id) || (id ? id.slice(0, 8) : 'other');
   };
   // With the plan's price, the names give two columns to the week's dollars, for its rows to fit 100.
   const nw = cols >= 100 ? (perPoint ? 22 : 24) : cols >= 72 ? 16 : 12;
   const bw = cols >= 100 ? 30 : cols >= 72 ? 20 : 10;
-  /** @param {number} v */
-  const pts = (v) => (v < 10 ? v.toFixed(1) : String(Math.round(v)));
   const shares = /** @type {[string, Limit | undefined, import('./usage.js').Share | undefined][]} */ ([
     ['session', limits.session, u?.split?.session],
     ['week', limits.week, u?.split?.week],
@@ -1334,6 +1349,98 @@ function shareLines(snap, rows, ui, screen, t) {
   const note = 'in points of each limit';
   const priced = perPoint && snap.planPrice ? `${note}; a point of the week ${dollars(perPoint)}, at ${dollars(snap.planPrice)} a month` : note;
   return frame(title, t.dim(width(title) + width(priced) + 8 < cols ? priced : note), body, screen, t);
+}
+
+// The projects ------------------------------------------------------------------------------
+
+/**
+ * The projects: the sessions by their folder's last part, the most used of the week's limit
+ * first, then the latest active. Each with the points of the week its sessions on this computer
+ * used (since its reset, or the plan's change where later; those not listed too), as a bar against
+ * the most a line has, with the plan's price what they came to, how long ago one of them was last
+ * active, and its sessions as the list lists them but for its filter, each by its state, what
+ * needs you first; then what the rest of the week came to (other computers, or use before the
+ * replies read). A click on a project lists its sessions alone, and on the one so listed, all
+ * again; one on a session opens it.
+ * @type {Panel}
+ */
+function projectsLines(snap, rows, ui, screen, t) {
+  const { width: cols, height, now } = screen;
+  const room = Math.max(0, height - 2);
+  const u = snap.usage;
+  const week = u ? limitsOf(u, now).week : undefined;
+  const share = week ? u?.split?.week : undefined;
+  const priced = share && snap.planPrice ? pointPrice(snap.planPrice) : undefined;
+  /** @type {Map<string, { name: string, points: number, last: number, sessions: Agent[] }>} */
+  const projects = new Map();
+  /** @param {string} name */
+  const of = (name) => {
+    let p = projects.get(name);
+    if (!p) projects.set(name, (p = { name, points: 0, last: 0, sessions: [] }));
+    return p;
+  };
+  /** @type {Map<string, Agent>} */
+  const bySession = new Map();
+  for (const a of snap.rows) {
+    if (a.sessionId) bySession.set(a.sessionId, a);
+    if ((!ui.showEnded && OVER.has(a.state)) || (!ui.showArchived && putAway(a))) continue;
+    of(a.project ?? '').sessions.push(a);
+  }
+  for (const [id, v] of share?.sessions ?? []) of(folderOf(snap, bySession, id)).points += v;
+  // When one of its sessions was last active, those not listed too.
+  for (const a of snap.rows) {
+    const p = projects.get(a.project ?? '');
+    if (p) p.last = Math.max(p.last, a.lastActive);
+  }
+  const rank = (/** @type {Agent} */ a) => BOARD.findIndex((c) => c.states.includes(shown(a)));
+  for (const p of projects.values()) p.sessions.sort((a, b) => rank(a) - rank(b) || b.lastActive - a.lastActive);
+  const order = [...projects.values()].sort((a, b) => b.points - a.points || b.last - a.last || a.name.localeCompare(b.name));
+  const nw = cols >= 100 ? 22 : cols >= 72 ? 16 : cols >= 56 ? 14 : 12;
+  // No bar on a screen narrower than 56 columns, nor one for points not known.
+  const bw = !share ? 0 : cols >= 100 ? 24 : cols >= 72 ? 16 : cols >= 56 ? 8 : 0;
+  const mine = (share?.sessions ?? []).reduce((n, [, v]) => n + v, 0);
+  const rest = week && share ? week.v - mine : 0;
+  // The bars against the most a line has, the rest's too: they rank the projects.
+  const most = order.reduce((m, p) => Math.max(m, p.points), Math.max(0, rest));
+  /** @param {number} v @param {(s: string) => string} paint */
+  const scaled = (v, paint) => {
+    const used = most > 0 ? Math.round((Math.max(0, v) / most) * bw) : 0;
+    return ` ${paint(t.bar.full.repeat(used))}${t.dim(t.bar.empty.repeat(bw - used))}`;
+  };
+  /** The points, and with the plan's price the dollars, in their columns. @param {number} v */
+  const numbers = (v) => (share ? ` ${fit(v > 0 ? pts(v) : '', 5, 'right')}${priced ? ` ${fit(v > 0 ? dollars(v * priced) : '', 7, 'right')}` : ''}` : '');
+  const fits = Math.max(1, room - (rest >= 1 ? 1 : 0));
+  let listed = order.length > fits ? order.slice(0, fits - 1) : order;
+  // The project listed alone, where it is not among them, in place of the last.
+  const alone = order.find((p) => p.name === ui.project);
+  if (alone && listed.length && !listed.includes(alone)) listed = [...listed.slice(0, -1), alone];
+  /** @type {PanelLine[]} */
+  const body = [];
+  for (const p of listed) {
+    const chosen = ui.project === p.name;
+    const name = fit(projectName(p.name), nw, 'left', t.ellipsis);
+    const start = ` ${chosen ? t.yellow(t.ascii ? '>' : '▸') : ' '} ${chosen ? t.bold(name) : name}${bw ? scaled(p.points, (s) => s) : ''}${numbers(p.points)}  ${t.dim(fit(p.last ? ago(now - p.last) : '', 4, 'right'))}  `;
+    // Its sessions, a glyph each, as many as fit, with how many more.
+    const x = visibleWidth(start);
+    const n = p.sessions.length;
+    let k = n;
+    while (k > 0 && (k < n ? 2 * k + width(`+${n - k}`) : 2 * k - 1) > cols - x) k--;
+    /** @type {Spot[]} */
+    const cells = p.sessions.slice(0, k).map((a, i) => ({ x0: x + 2 * i, x1: x + 2 * i + 2, action: { open: a.key } }));
+    const glyphs = p.sessions.slice(0, k).map((a) => glyph(shown(a), t, now)).join(' ');
+    const more = k < n ? t.dim(`${k ? ' ' : ''}+${n - k}`) : '';
+    body.push(line(start + glyphs + more, cols, t, { project: p.name }, cells));
+  }
+  if (order.length > listed.length) body.push(line(t.dim(`   and ${order.length - listed.length} more`), cols, t));
+  if (rest >= 1) body.push(line(`   ${t.dim(fit('elsewhere', nw))}${bw ? scaled(rest, t.dim) : ''}${numbers(rest)}  ${t.dim('not in the replies read here')}`, cols, t));
+  if (!order.length) body.push(line(t.dim('   No sessions listed.'), cols, t));
+  // As much of what the numbers are as fits: the heading's rules and spaces take 8 columns.
+  const title = 'Projects';
+  const said = count(projects.size, 'project');
+  const what = share ? `points of the week since ${minute(share.from, now)}` : "the week's use not known yet";
+  const price = priced && snap.planPrice ? `a point ${dollars(priced)}, at ${dollars(snap.planPrice)} a month` : '';
+  const right = [[said, what, price], [said, what], [said]].map((ps) => ps.filter(Boolean).join(t.sep)).find((r) => width(title) + width(r) + 8 < cols) ?? '';
+  return frame(title, t.dim(right), body, screen, t);
 }
 
 // Today -------------------------------------------------------------------------------------
@@ -1456,7 +1563,8 @@ function tank(c, x, y, w, h, v, drops, now, t) {
  * reply a drop as big as its points, some seconds after it was written; with its pace and its
  * reset. The week's beside it, with its own; the replies drip into it instead where the session's
  * points for them are not known (its percent left out of the desktop app's samples, as after a
- * change of plan, or not carried on yet).
+ * change of plan, or not carried on yet). With the plan's price, the week's in dollars too: what
+ * its whole comes to, its percent and its pace.
  * @type {Panel}
  */
 function tankLines(snap, rows, ui, screen, t) {
@@ -1469,15 +1577,26 @@ function tankLines(snap, rows, ui, screen, t) {
   const h = Math.max(1, Math.min(14, room - 3));
   const w = Math.max(6, Math.min(24, Math.floor((cols - 40) / 2)));
   const drops = u?.drops ?? [];
+  const perPoint = snap.planPrice ? pointPrice(snap.planPrice) : undefined;
   let x = 2;
   /** @param {Drop['limit']} limit @param {Limit} l @param {string} [resets] */
   const draw = (limit, l, resets) => {
     tank(c, x, 0, w, h, l.v, drops.filter((d) => d.limit === limit), now, t);
     // Beside it, its percent at its surface (100% at its top, where there is room), and the rest.
+    const lx = x + w + 3;
+    // The week's in dollars too, at the plan's price, where they fit: it is the last tank.
+    const priced = limit === 'week' ? perPoint : undefined;
+    /** After a label, what so many points come to (an hour, with '/h'), where it fits. @param {string} label @param {number} v @param {string} [per] */
+    const usd = (label, v, per = '') => {
+      const s = priced === undefined ? '' : `  ${dollars(v * priced)}${per}`;
+      return lx + width(label) + width(s) <= cols ? s : '';
+    };
     const at = Math.max(1, h - Math.round((Math.max(0, Math.min(100, l.v)) / 100) * h));
-    if (at > 2) c.put(x + w + 3, 1, '100%', t.dim);
-    c.put(x + w + 3, at, `${l.near ? '~' : ''}${l.v}%`, levelStyle(l.v, t) ?? t.bold);
-    [l.pace === undefined ? '' : rate(l.pace, 'h'), resets ?? ''].filter(Boolean).forEach((s, i) => c.put(x + w + 3, at + 1 + i, s, t.dim));
+    if (at > 2) c.put(lx, 1, `100%${usd('100%', 100)}`, t.dim);
+    const percent = `${l.near ? '~' : ''}${l.v}%`;
+    c.put(c.put(lx, at, percent, levelStyle(l.v, t) ?? t.bold), at, usd(percent, l.v));
+    const pace = l.pace === undefined ? '' : rate(l.pace, 'h');
+    [pace && `${pace}${usd(pace, /** @type {number} */ (l.pace), '/h')}`, resets ?? ''].filter(Boolean).forEach((s, i) => c.put(lx, at + 1 + i, s, t.dim));
     c.put(x + 1, h + 2, limit, t.bold);
     x += w + 18;
   };
@@ -1651,8 +1770,9 @@ export const VIEWS = [
   { name: 'files', what: 'the files changed in the last hour, and those two sessions changed', animated: false, lines: filesLines },
   { name: 'chart', what: "the session's usage over its window and the week's, at its pace on to the reset; what a point of the week came to; when in the day it was used", animated: false, lines: chartLines },
   { name: 'share', what: "what each session and model on this computer used of the session's limit and the week's; with the plan's price, the week's in dollars", animated: false, lines: shareLines },
+  { name: 'projects', what: "the sessions by project: what each used of the week's limit (with the plan's price, in dollars), when it was last active, its sessions; a click on one lists it alone", animated: false, lines: projectsLines },
   { name: 'today', what: 'what today came to: sessions, agents, prompts, replies, tokens, models, hours, tools, the time waited on you', animated: false, lines: todayLines },
-  { name: 'tank', what: "the session's limit as a tank the replies drip into, and the week's", animated: true, lines: tankLines },
+  { name: 'tank', what: "the session's limit as a tank the replies drip into, and the week's; with the plan's price, the week's in dollars", animated: true, lines: tankLines },
   { name: 'radar', what: 'the sessions as blips, nearer the middle the more lately they did something; the sweep lights what just did', animated: true, lines: radarLines },
   { name: 'spark', what: 'one spark for them all: it turns faster the more work, waves when one needs you, sleeps when none works, reddens near a limit', animated: true, lines: sparkLines },
 ];
