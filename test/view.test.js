@@ -117,12 +117,12 @@ test('a session whose last turn ended blocked on you: its mark, counted, listed 
   assert.deepEqual(rows.map((r) => r.agent.title), [
     'Waiting session', 'Blocked session', 'Blocked and ended', 'Busy session', 'Active session', 'Idle session', 'Ended session',
   ]);
-  const lines = listLines(snap, rows, ui, { width: 160, height: 12, now: NOW }, plain);
+  const lines = listLines(snap, rows, ui, { width: 170, height: 12, now: NOW }, plain);
   assert.match(lines[0], /◆ 1 waiting {2}◇ 2 blocked {2}○ 1 idle/);
   assert.doesNotMatch(lines[0], /unread/, 'blocked shows before unread');
   assert.match(lines[3], /^ ◇ theta +Blocked session +blocked: say whether the stutter was picture or sound +30m/);
   const color = makeTheme({ color: true, ascii: false, animate: false });
-  const ended = listLines(snap, visibleRows(snap, ui, color), ui, { width: 160, height: 12, now: NOW }, color)[4];
+  const ended = listLines(snap, visibleRows(snap, ui, color), ui, { width: 170, height: 12, now: NOW }, color)[4];
   assert.ok(ended.includes('\x1b[1;33mblocked: say whether'), `a session that ended, blocked, still waits on you: ${JSON.stringify(ended)}`);
 });
 
@@ -265,18 +265,19 @@ test('the columns fill the width; a narrow screen drops the least needed', () =>
   }
   assert.deepEqual(columns(80).map((c) => c.key), ['state', 'project', 'title', 'activity', 'last']);
   assert.deepEqual(columns(109).map((c) => c.key), ['state', 'project', 'title', 'model', 'ctx', 'activity', 'last']);
-  assert.deepEqual(columns(110).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last']);
-  assert.deepEqual(columns(118).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'kind']);
-  assert.deepEqual(columns(160).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'pid', 'kind']);
+  assert.deepEqual(columns(111).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last']);
+  assert.deepEqual(columns(112).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'cache', 'activity', 'last']);
+  assert.deepEqual(columns(118).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'cache', 'activity', 'last', 'kind']);
+  assert.deepEqual(columns(160).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'cache', 'activity', 'last', 'pid', 'kind']);
   // With the plan's price, what the sessions' use came to, before the PID: this week's from 120
   // columns, in all from 128.
   for (const cols of [100, 119, 120, 127, 128, 160]) {
     assert.equal(columns(cols, true).reduce((n, c) => n + c.width + 1, 0), cols, `${cols} columns, priced`);
   }
   assert.deepEqual(columns(119, true), columns(119));
-  assert.deepEqual(columns(120, true).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'week', 'kind']);
-  assert.deepEqual(columns(128, true).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'week', 'total', 'kind']);
-  assert.deepEqual(columns(160, true).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'week', 'total', 'pid', 'kind']);
+  assert.deepEqual(columns(120, true).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'cache', 'activity', 'last', 'week', 'kind']);
+  assert.deepEqual(columns(128, true).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'cache', 'activity', 'last', 'week', 'total', 'kind']);
+  assert.deepEqual(columns(160, true).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'cache', 'activity', 'last', 'week', 'total', 'pid', 'kind']);
 });
 
 test("with the plan's price, what each session's use came to: this week, and in all the replies read", () => {
@@ -321,6 +322,53 @@ test("with the plan's price, what each session's use came to: this week, and in 
   assert.match(once.find((l) => l.includes('Busy session')) ?? '', / 5m {3}\$5\.06 {3}\$6\.90 {3}4242$/);
 });
 
+test("how long each session's prompt cache keeps its context yet, while it is not at work; and in its details, what a reply comes to once it does not", () => {
+  /** @param {number} ago @param {number} [ttl] */
+  const cache = (ago, ttl = HOUR) => ({ at: NOW - ago, ttl, rewrite: 80_000 });
+  const busy = busySession();
+  busy.cache = cache(5000);
+  const rows = [
+    busy,
+    agent({ key: 's:warm', title: 'Warm session', state: 'idle', ctx: 281_000, cache: cache(12 * MINUTE) }),
+    agent({ key: 's:soon', title: 'Soon cold', state: 'waiting', cache: cache(55 * MINUTE) }),
+    agent({ key: 's:cold', title: 'Cold session', state: 'idle', cache: cache(2 * HOUR) }),
+    agent({ key: 's:five', title: 'Five minutes', state: 'ended', live: false, cache: cache(2 * MINUTE, 5 * MINUTE) }),
+  ];
+  const [, warm, soon, cold, five] = rows;
+  const ui = { ...initialUi(), agents: /** @type {const} */ ('none'), index: -1 };
+  /** @param {import('../src/view.js').Theme} t */
+  const draw = (t) => listLines(snapshot(rows), visibleRows(snapshot(rows), ui, t), ui, { width: 120, height: 12, now: NOW }, t);
+  const lines = draw(plain);
+  const at = lines[1].indexOf(' CACHE ') + 1;
+  assert.ok(at > 0, lines[1]);
+  const cell = (/** @type {string} */ title) => (lines.find((l) => l.includes(title)) ?? '').slice(at, at + 5).trim();
+  // At work, each reply keeps it; once it ran out, nothing.
+  assert.deepEqual(['Busy session', 'Warm session', 'Soon cold', 'Cold session', 'Five minutes'].map(cell), ['', '48m', '5m', '', '3m']);
+  // In yellow when it is about to run out, but in a session that ended.
+  const color = draw(makeTheme({ color: true, ascii: false, animate: false }));
+  const colored = (/** @type {string} */ title) => color.find((l) => l.includes(title)) ?? '';
+  assert.ok(colored('Soon cold').includes('\x1b[33m   5m\x1b[0m'), colored('Soon cold'));
+  assert.ok(!colored('Warm session').includes('\x1b[33m'), colored('Warm session'));
+  assert.ok(colored('Five minutes').includes('\x1b[2m   3m\x1b[0m'), colored('Five minutes'));
+  // The details: till when, and what a reply after that comes to, writing its context again.
+  /** @param {import('../src/monitor.js').Agent} a @param {Partial<import('../src/monitor.js').Snapshot>} [o] */
+  const details = (a, o = {}) => detailLines(a, snapshot(rows, o), ui, { width: 100, height: 40, now: NOW }, plain).filter((l) => l.startsWith(' Cache')).map((l) => l.trimEnd());
+  const perUse = { session: 8e-6, week: 1e-6 };
+  assert.deepEqual(details(warm, { planPrice: 200, usage: { at: NOW, perUse } }), [
+    ` Cache      warm till ${clock(NOW + 48 * MINUTE, NOW)} (in 48m), an hour after its last request`,
+    ' Cache miss writes its 281k tokens again: 0.64 points of the session, 0.08 of the week, $0.04',
+  ]);
+  assert.deepEqual(details(warm, { usage: { at: NOW, perUse: { week: perUse.week } } })[1], ' Cache miss writes its 281k tokens again: 0.08 points of the week', 'the week alone, no price');
+  assert.deepEqual(details(warm)[1], ' Cache miss writes its 281k tokens again', 'what that comes to not known');
+  assert.deepEqual(details(soon), [` Cache      warm till ${clock(NOW + 5 * MINUTE, NOW)} (in 5m), an hour after its last request`]);
+  assert.deepEqual(details(cold), [` Cache      ran out at ${clock(NOW - HOUR, NOW)} (1h ago), an hour after its last request`]);
+  assert.deepEqual(details(five), [` Cache      warm till ${clock(NOW + 3 * MINUTE, NOW)} (in 3m), 5 minutes after its last request`]);
+  assert.deepEqual(details(busy), []);
+  // And in the table --once prints.
+  const once = table(snapshot(rows), { width: 120, now: NOW, agents: 'none', showEnded: true }, plain).split('\n');
+  assert.match(once.find((l) => l.includes('Warm session')) ?? '', / 281k {3}48m /);
+});
+
 test("the effort each one works at: a column after the model, and in an agent's details", () => {
   const busy = busySession();
   busy.effort = 'max';
@@ -330,7 +378,7 @@ test("the effort each one works at: a column after the model, and in an agent's 
   const snap = snapshot([busy, agent({ key: 's:old', title: 'Old session', state: 'idle', model: 'claude-sonnet-5-5' })]);
   const ui = initialUi();
   const lines = listLines(snap, visibleRows(snap, ui, plain), ui, { width: 120, height: 10, now: NOW }, plain);
-  assert.match(lines[1], /^ {3}PROJECT +NAME +MODEL +EFFORT +CTX +ACTIVITY +LAST +KIND +$/);
+  assert.match(lines[1], /^ {3}PROJECT +NAME +MODEL +EFFORT +CTX +CACHE +ACTIVITY +LAST +KIND +$/);
   assert.match(lines.find((l) => l.includes('Busy session')) ?? '', /opus 5\.5 +max +/);
   assert.match(lines.find((l) => l.includes('find the parser')) ?? '', /haiku 4\.5 +medium +/);
   assert.match(lines.find((l) => l.includes('Old session')) ?? '', /sonnet 5\.5 {8}/, 'none known: the cell is empty');
@@ -816,8 +864,8 @@ test('the activity log shows the newest events, and scrolls back', () => {
 });
 
 test('the help fills the screen, the keys that scroll it on its last line, one column short', () => {
-  const lines = helpLines(initialUi(), { width: 90, height: 64, now: NOW }, plain, '/home/me/.claude');
-  assert.equal(lines.length, 64);
+  const lines = helpLines(initialUi(), { width: 90, height: 67, now: NOW }, plain, '/home/me/.claude');
+  assert.equal(lines.length, 67);
   assert.match(lines.join('\n'), /Keys[\s\S]*States[\s\S]*Usage[\s\S]*Columns[\s\S]*Below the list[\s\S]*Reading \/home\/me\/\.claude/);
   // What a state means from the column a key's does.
   assert.match(lines.join('\n'), /◇ blocked {5}its turn ended on something only you can do/);
@@ -825,6 +873,7 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   assert.match(lines.join('\n'), /• unread {6}the desktop app's blue dot/);
   assert.match(lines.join('\n'), /◎ background {2}it waits on a command, an agent or a workflow it left running/);
   assert.match(lines.join('\n'), /EFFORT {8}the effort it works at, and a \+ when ultracode is on/);
+  assert.match(lines.join('\n'), /CACHE {9}while it is not at work, how long the prompt cache keeps that context *\n {17}yet: an hour after its last request, yellow its last ten minutes; a *\n {17}reply after that writes it all again/);
   assert.match(lines.join('\n'), /ACTIVITY {6}what it is doing, with how many of its tasks are done \(4\/8\) and how *\n {17}long the current step has taken/);
   assert.match(lines.join('\n'), /click {9}select a row, or none below the rows; double-click for its details/);
   assert.match(lines.join('\n'), /~34% {10}that sample carried on to now with what this computer's sessions used *\n {17}since: an estimate, blind to use elsewhere/);
@@ -838,7 +887,7 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   assert.match(off, /↑↓ pgup pgdn home end scroll; any other key goes back\./);
   lines.slice(0, -1).forEach((l) => assert.equal(visible(l), 90, l));
   // All of it fits: no telling how far down it is.
-  assert.equal(lines[63], ` esc back  ↑↓ scroll  home/end${' '.repeat(59)}`);
+  assert.equal(lines[66], ` esc back  ↑↓ scroll  home/end${' '.repeat(59)}`);
   assert.equal(helpLines(initialUi(), { width: 90, height: 10, now: NOW }, plain, '/x').length, 10);
 });
 

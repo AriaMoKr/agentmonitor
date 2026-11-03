@@ -317,6 +317,7 @@ export function columns(cols, priced = false) {
     { key: 'model', title: 'MODEL', width: 10, from: 104 },
     { key: 'effort', title: 'EFFORT', width: 7, from: 110 },
     { key: 'ctx', title: 'CTX', width: 5, align: 'right', from: 90 },
+    { key: 'cache', title: 'CACHE', width: 5, align: 'right', from: 112 },
     { key: 'activity', title: 'ACTIVITY', width: 0, flex: 58, min: 10 },
     { key: 'last', title: 'LAST', width: 4, align: 'right' },
     ...(priced ? costs : []),
@@ -390,6 +391,12 @@ function rowText(row, cols, t, now, plain, costs) {
       }
       case 'ctx':
         return soft(fit(tokens(a.ctx), c.width, 'right'));
+      case 'cache': {
+        // How long the prompt cache keeps that context yet, in yellow when it is about to run out.
+        const left = warmFor(a, now);
+        const text = fit(left ? till(left) : '', c.width, 'right');
+        return left && left <= SOON && !dim ? style(text, t.yellow) : soft(text);
+      }
       case 'activity':
         return activityCell(a, c.width, t, now, plain);
       case 'last':
@@ -575,6 +582,26 @@ const WEEKS_A_YEAR = 365.2425 / 7;
  * @param {number} monthly
  */
 export const pointPrice = (monthly) => (monthly * 12) / WEEKS_A_YEAR / 100;
+
+/** A session's prompt cache runs out soon with this long left: its CACHE in yellow. */
+const SOON = 10 * MINUTE;
+
+/**
+ * A session's prompt cache, while it is not at work: at work, each reply keeps it.
+ * @param {Agent} a
+ */
+const idleCache = (a) => (a.type === 'session' && a.state !== 'working' && a.state !== 'active' ? a.cache : undefined);
+
+/**
+ * How much longer a session's prompt cache keeps its context (ms), while it is not at work: 0 once
+ * it does not, or with nothing known.
+ * @param {Agent} a
+ * @param {number} now
+ */
+export function warmFor(a, now) {
+  const c = idleCache(a);
+  return c ? Math.max(0, c.at + c.ttl - now) : 0;
+}
 
 /**
  * Text about a limit used `n` percent: yellow from 75 and red from 90.
@@ -1361,6 +1388,7 @@ function* fieldLines(a, snap, now, t, cols) {
       field('Process', a.pid ? join([`pid ${a.pid}`, a.processStartedAt && `up ${elapsed(now - a.processStartedAt)}`, a.memKB && `${Math.round(a.memKB / 1024)} MB`]) : undefined),
       field('Model', join([a.model, a.effort && `effort ${a.effort}`, a.ultracode && 'ultracode', a.permissionMode && `permissions ${a.permissionMode}`])),
       field('Context', join([a.ctx && `${tokens(a.ctx)} tokens`, a.outTokens && `${tokens(a.outTokens)} output tokens in the part read`])),
+      ...cacheLines(a, snap, now).map(([label, value]) => field(label, value)),
       field('Totals', a.cost ? join([
         `$${a.cost.usd.toFixed(2)}`,
         a.cost.output && `${tokens(a.cost.output)} out`,
@@ -1414,6 +1442,37 @@ function planOf(a, split, price) {
   if (week >= 0.05 && !more) return `${dollars(week * point)} this week: ${pts(week)} points of its limit, ${month}`;
   if (week >= 0.05) return `${dollars(week * point)} this week, ${dollars(total * point)} ${since}: ${pts(week)} and ${pts(total)} points of its limit, ${month}`;
   return more ? `${dollars(total * point)} ${since}: ${pts(total)} points of its limit, ${month}` : undefined;
+}
+
+/**
+ * A session's prompt cache in its details, while it is not at work: till when it keeps its context
+ * (an hour or five minutes after its last request), and what a reply once it does not adds to the
+ * use, writing it all again where it would have read it: in points of each limit, and at the
+ * plan's price.
+ * @param {Agent} a
+ * @param {Snapshot} snap
+ * @param {number} now
+ * @returns {[string, string][]}
+ */
+function cacheLines(a, snap, now) {
+  const c = idleCache(a);
+  if (!c) return [];
+  const end = c.at + c.ttl;
+  const after = `${c.ttl >= HOUR ? 'an hour' : `${Math.round(c.ttl / MINUTE)} minutes`} after its last request`;
+  /** @type {[string, string][]} */
+  const out = [['Cache', end > now ? `warm till ${clock(end, now)} (in ${till(end - now)}), ${after}` : `ran out at ${clock(end, now)} (${ago(now - end)} ago), ${after}`]];
+  if (!a.ctx) return out;
+  const per = c.rewrite > 0 ? snap.usage?.perUse : undefined;
+  const pts = (/** @type {number} */ v) => (v < 0.01 ? '<0.01' : v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : String(Math.round(v)));
+  /** @type {string[]} */
+  const cost = [];
+  if (per?.session !== undefined) cost.push(`${pts(c.rewrite * per.session)} points of the session`);
+  if (per?.week !== undefined) {
+    cost.push(`${pts(c.rewrite * per.week)} ${cost.length ? '' : 'points '}of the week`);
+    if (snap.planPrice) cost.push(dollars(c.rewrite * per.week * pointPrice(snap.planPrice)));
+  }
+  out.push(['Cache miss', `writes its ${tokens(a.ctx)} tokens again${cost.length ? `: ${cost.join(', ')}` : ''}`]);
+  return out;
 }
 
 const EVENT_LABEL = { prompt: 'you', reply: 'claude', tool: 'tool', error: 'error', info: 'note' };
@@ -1501,6 +1560,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
     '',
     ` ${t.bold('Columns')}`,
     ...key('CTX', 'the context of the last reply, in tokens'),
+    ...key('CACHE', `while it is not at work, how long the prompt cache keeps that context yet: an hour after its last request, ${t.yellow('yellow')} its last ten minutes; a reply after that writes it all again`),
     ...key('EFFORT', `the effort it works at, and a${nb}${t.magenta('+')} when ultracode is on`),
     ...key('LAST', 'how long ago it last did anything'),
     ...key('ACTIVITY', 'what it is doing, with how many of its tasks are done (4/8) and how long the current step has taken'),

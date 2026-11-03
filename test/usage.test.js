@@ -361,6 +361,8 @@ test("what this computer's sessions and models used of each limit, as the sample
     all: week,
   });
   assert.deepEqual(round(u?.drops), [{ t: NOW - 20_000, seen: NOW - 5000, limit: 'session', v: 0.5, session: 'aaa' }]);
+  // The scales they are carried on with, for the cost of a reply.
+  assert.deepEqual(round({ session: (u?.perUse?.session ?? 0) * 1000, week: (u?.perUse?.week ?? 0) * 5000 }), { session: 1, week: 1 });
 });
 
 test("where the session is not carried on, the replies just written add to the week's: its percent left out of the samples, as after a change of plan", async (t) => {
@@ -370,6 +372,7 @@ test("where the session is not carried on, the replies just written add to the w
   const u = await usageWith(t, [...resets, ...weekAlone]);
   assert.deepEqual(round(u?.tracked), { at: NOW, week: 30, weekReset: { at: R, from: R - 9 * MINUTE, to: R + 5 * MINUTE }, weekPace: 0.1 });
   assert.deepEqual(Object.keys(u?.split ?? {}), ['week', 'all']);
+  assert.deepEqual(Object.keys(u?.perUse ?? {}), ['week']);
   assert.deepEqual(round(u?.drops), [{ t: NOW - 20_000, seen: NOW - 5000, limit: 'week', v: 0.1, session: 'aaa' }], 'a point for each 5,000');
   // Neither carried on: no drops.
   const none = await usageWith(t, [[NOW - 150 * MINUTE, undefined, 20], [NOW - 105 * MINUTE, undefined, 26]]);

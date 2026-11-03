@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { dayOf, Ledger, weightOf } from '../src/ledger.js';
+import { dayOf, Ledger, rewriteOf, weightOf } from '../src/ledger.js';
 import { HOUR, iso, makeConfig, MINUTE, NOW, rec, sessionId } from './helpers/fixture.js';
 
 /**
@@ -28,6 +28,10 @@ test('what a model\'s tokens weigh against Claude Opus 5.5\'s, as the API prices
     'claude-opus-5-5': 1, 'claude-opus-5': 1.25, 'claude-opus-4-8': 1.25, 'claude-fable-5-1': 2.5, 'claude-mythos-5-1': 2.5, 'claude-sonnet-5-5': 0.5,
     'claude-sonnet-4-6': 0.75, 'claude-haiku-5-5': 0.025, 'claude-haiku-4-5': 0.25, 'claude-next-1': 1, '<synthetic>': 0, 'qwen3-coder': 0,
   });
+});
+
+test('what a context adds to a reply once the prompt cache no longer holds it: written again where it would have been read, weighed', () => {
+  assert.deepEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'qwen3-coder'].map((m) => Math.round(rewriteOf(100_000, m))), [28_450, 14_225, 0]);
 });
 
 test('each reply once, in every transcript, at its first record\'s time, asked for before it thought, its tokens weighed', async (t) => {

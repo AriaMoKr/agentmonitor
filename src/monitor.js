@@ -13,7 +13,7 @@ import { DesktopSessions, desktopDataDirs } from './desktop.js';
 import { entries, JsonFiles, statOf } from './files.js';
 import { clean, kindLabel, lastPart } from './format.js';
 import { Jobs } from './jobs.js';
-import { dayOf, Ledger } from './ledger.js';
+import { dayOf, Ledger, rewriteOf } from './ledger.js';
 import { isRunning, looksLikeClaude, processTable, sameDomain } from './procs.js';
 import { Registry } from './registry.js';
 import { Transcript } from './transcript.js';
@@ -60,6 +60,10 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  *   of a session's last turn: its category ('completed', 'blocked', 'review_ready'...), what it
  *   came to, and what you are to do when it is blocked
  *
+ * @typedef {{ at: number, ttl: number, rewrite: number }} Cache a session's prompt cache: when its
+ *   last reply was asked for, how long the cache keeps its context after that (ms), and what its
+ *   next reply's use (as a reply's x) has added once it no longer does: the context written again
+ *
  * @typedef {object} Agent
  * @property {string} key the same on every refresh
  * @property {'session' | 'subagent' | 'workflow' | 'agent'} type agent: a workflow's
@@ -91,6 +95,7 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  *   read in the transcript (sent with some prompts only, so it can be missed)
  * @property {string} [permissionMode]
  * @property {number} [ctx] tokens of context in the last reply
+ * @property {Cache} [cache] a session's prompt cache, from its last reply
  * @property {number} [outTokens] output tokens in the part of the transcript read
  * @property {Cost} [cost]
  * @property {string} [waitingFor]
@@ -430,6 +435,7 @@ export class Monitor {
         ultracode: (d?.ultracode ?? info?.ultracode) || undefined,
         permissionMode: safe(info?.permissionMode ?? d?.permissionMode),
         ctx: info?.ctx || undefined,
+        cache: info?.cacheAt && info.cacheTtl ? { at: info.cacheAt, ttl: info.cacheTtl, rewrite: rewriteOf(info.ctx, info.model ?? '') } : undefined,
         outTokens: info?.outTokens || undefined,
         cost: info?.cost,
         waitingFor: safe(record?.waitingFor),

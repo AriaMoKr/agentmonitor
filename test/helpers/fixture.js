@@ -40,15 +40,21 @@ export const rec = {
     uuid: `u${at}`, timestamp: iso(at), cwd: 'C:\\work\\demo', sessionId: 's', version: '2.1.309', gitBranch: 'main', entrypoint: 'cli', ...extra,
   }),
   /**
+   * A reply; with `ttl`, how long the prompt cache keeps what it wrote there, as its usage says
+   * (`cache_creation`), and with `think`, how long it thought first, as a thinking block's record says.
    * @param {string} text @param {number} at
-   * @param {{ model?: string, id?: string, ctx?: number, out?: number, effort?: string, perTurnEffort?: string | null }} [o]
+   * @param {{ model?: string, id?: string, ctx?: number, out?: number, effort?: string, perTurnEffort?: string | null, ttl?: '1h' | '5m', think?: number }} [o]
    */
-  reply: (text, at, { model = 'claude-opus-5-5', id = `msg_${at}`, ctx = 50_000, out = 100, effort, perTurnEffort = effort } = {}) => ({
+  reply: (text, at, { model = 'claude-opus-5-5', id = `msg_${at}`, ctx = 50_000, out = 100, effort, perTurnEffort = effort, ttl, think } = {}) => ({
     parentUuid: 'x', isSidechain: false, type: 'assistant', uuid: `r${at}`, timestamp: iso(at), cwd: 'C:\\work\\demo',
     ...efforts(effort, perTurnEffort),
+    ...(think === undefined ? {} : { thinkingDurationMs: think }),
     message: {
       model, id, type: 'message', role: 'assistant', content: [{ type: 'text', text }], stop_reason: 'end_turn',
-      usage: { input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: ctx - 1010, output_tokens: out },
+      usage: {
+        input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: ctx - 1010, output_tokens: out,
+        ...(ttl ? { cache_creation: { ephemeral_1h_input_tokens: ttl === '1h' ? 1000 : 0, ephemeral_5m_input_tokens: ttl === '5m' ? 1000 : 0 } } : {}),
+      },
     },
   }),
   /**

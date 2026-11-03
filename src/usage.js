@@ -53,6 +53,8 @@ const PACE_LEAST = 15 * MINUTE;
  * @property {Point[]} [changes] the week's first sample after each time the plan seems to have
  *   changed, oldest first (changesOf), the last of them `changed`
  * @property {Tracked} [tracked] the percents carried on to a later time
+ * @property {{ session?: number, week?: number }} [perUse] the points of each limit for each of use
+ *   (a reply's x), as the replies carry them on
  * @property {Point[]} [perPoint] what this computer's replies used (their x) for a point of the
  *   week, at each of its samples they tell it for (perPointOf): read with `history`
  * @property {{ session?: Share, week?: Share, all?: Share }} [split] what this computer's replies
@@ -157,7 +159,10 @@ export class PlanUsage {
       const replies = await this.ledger.read(now, back, { wait });
       this.replies = replies;
       const f = latest && replies ? follow(latest.points, replies, now, latest.usage.weekReset, latest.usage.changed) : undefined;
-      if (latest && replies && f?.tracked) usage = { ...latest.usage, tracked: f.tracked, ...splitOf(f, replies, now) };
+      if (latest && replies && f?.tracked) {
+        const perUse = { ...(f.a !== undefined ? { session: f.a } : {}), ...(f.b !== undefined ? { week: f.b } : {}) };
+        usage = { ...latest.usage, tracked: f.tracked, perUse, ...splitOf(f, replies, now) };
+      }
       const perPoint = history && latest && replies ? this.perPointOf(latest, replies) : [];
       if (usage && perPoint.length) usage = { ...usage, perPoint };
     }

@@ -20,6 +20,8 @@ const MAX_TEXT = 400;
 const MAX_STEPS = 30;
 const MAX_CALLS = 200;
 const MAX_TURNS = 100;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 /** The tools that change a file: the file is the one they name. */
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 /** The tools that ask you something; the start of a session asks only when it is offered. */
@@ -81,6 +83,16 @@ export function emptyInfo() {
     model: undefined,
     /** the context the last reply was given, in tokens: input, cache reads and cache writes */
     ctx: 0,
+    /**
+     * when the last reply was asked for: its first record, less its thinking; the prompt cache
+     * keeps what it read and wrote for `cacheTtl` after (ms; 0 for none, or a compaction since)
+     */
+    cacheAt: 0,
+    /**
+     * how long the cache keeps it, as the last reply that wrote to it says: an hour or five
+     * minutes (ms; 0 till one says)
+     */
+    cacheTtl: 0,
     /** output tokens of the replies read */
     outTokens: 0,
     /** @type {string | undefined} */ lastMessageId: undefined,
@@ -296,7 +308,11 @@ export function readRecord(info, rec) {
       info.cost = costOf(rec);
       break;
     case 'system':
-      if (rec.subtype === 'compact_boundary') addEvent(info, ts, 'info', 'conversation compacted');
+      if (rec.subtype === 'compact_boundary') {
+        addEvent(info, ts, 'info', 'conversation compacted');
+        // The context cached before is not the conversation's any more.
+        info.cacheAt = 0;
+      }
       break;
     case 'attachment':
       // A message that came in while a turn went on, such as a background task's end.
@@ -506,16 +522,25 @@ function readAssistant(info, rec, ts) {
   if (real && u) {
     const ctx = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
     if (ctx) info.ctx = ctx;
+    // Asked for before its thinking, which a thinking block's record says as it ends.
+    const think = typeof rec.thinkingDurationMs === 'number' && rec.thinkingDurationMs > 0 ? rec.thinkingDurationMs : 0;
     // Each content block is a record of its own, with the message's usage so far.
     const out = u.output_tokens || 0;
     if (m.id && m.id === info.lastMessageId) {
       if (out > info.lastMessageOut) info.outTokens += out - info.lastMessageOut;
       info.lastMessageOut = Math.max(out, info.lastMessageOut);
+      if (ts && think && info.cacheAt) info.cacheAt = Math.min(info.cacheAt, ts - think);
     } else {
       info.outTokens += out;
       info.lastMessageId = m.id;
       info.lastMessageOut = out;
+      if (ts) info.cacheAt = ts - think;
     }
+    // How long the cache keeps what it wrote: its tokens written for an hour, or for five minutes.
+    const w = u.cache_creation && typeof u.cache_creation === 'object' ? u.cache_creation : {};
+    const hour = typeof w.ephemeral_1h_input_tokens === 'number' ? w.ephemeral_1h_input_tokens : 0;
+    const five = typeof w.ephemeral_5m_input_tokens === 'number' ? w.ephemeral_5m_input_tokens : 0;
+    if (hour > 0 || five > 0) info.cacheTtl = hour >= five ? HOUR : 5 * MINUTE;
   }
   if (rec.isApiErrorMessage) {
     const text = clean(textOf(m.content)) || clean(rec.error) || 'API error';
