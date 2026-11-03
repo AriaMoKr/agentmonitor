@@ -656,6 +656,43 @@ test("the desktop app's summary of a session's last turn: what it came to, or wh
   assert.deepEqual(seen('local_for'), ['idle', 'summary', 'Topics set; homepage unchanged', false]);
 });
 
+test("a session whose last turn ended asking you something is blocked on it till a turn begins, whatever the app's summary", async (t) => {
+  const cfg = makeConfig(t);
+  const input = { recap: 'The 15 were never published.', ask: 'Take out the 15?', actions: [{ label: 'Take out the 15' }, { label: 'Take out 20 instead' }] };
+  /** @param {number} at */
+  const asks = (at) => [rec.tool(`w${at}`, 'mcp__ccd_turn__wrap_up', input, at), rec.result(`w${at}`, at + 100, false, 'Shown in the next-step box.')];
+  /** @param {number} pid @param {object[]} records @param {string} [status] */
+  const session = (pid, records, status = 'idle') => {
+    const id = sessionId();
+    const last = NOW - 2 * MINUTE;
+    cfg.transcript(id, [rec.prompt('Check the picks', NOW - 10 * MINUTE), ...records], { mtime: last });
+    cfg.registry({ pid, sessionId: id, status, entrypoint: 'claude-desktop', hostSessionId: `local_${pid}`, statusUpdatedAt: last });
+    // The app sums up its last reply, not knowing what it asked.
+    const postTurnSummary = { status_category: 'completed', status_detail: 'Cutting 15 picks leaves 99', needs_action: '', summarizes_uuid: `r${last}` };
+    cfg.desktopSession({ sessionId: `local_${pid}`, cliSessionId: id, title: `local_${pid}`, postTurnSummary });
+    return id;
+  };
+  const asked = [...asks(NOW - 3 * MINUTE), rec.reply('They should come out.', NOW - 2 * MINUTE)];
+  const idle = session(1, asked);
+  const busy = session(2, asked, 'busy');
+  const ended = session(3, asked);
+  const answered = session(4, [...asks(NOW - 6 * MINUTE), rec.reply('They should come out.', NOW - 5 * MINUTE), rec.prompt('Take out the 15', NOW - 3 * MINUTE), rec.reply('Taken out.', NOW - 2 * MINUTE)]);
+  const rows = (await monitorOf(cfg, { running: { 1: 'claude.exe', 2: 'claude.exe', 4: 'claude.exe' } }).monitor.refresh(NOW)).rows;
+  const row = (/** @type {string} */ id) => rows.find((r) => r.sessionId === id);
+  const seen = (/** @type {string} */ id) => {
+    const r = row(id);
+    return [r?.state, r?.activityKind, r?.activity, r?.activityAt, r?.blocked];
+  };
+  assert.deepEqual(seen(idle), ['idle', 'blocked', 'blocked: Take out the 15?', NOW - 2 * MINUTE, true]);
+  assert.deepEqual(row(idle)?.nextStep, { text: 'Take out the 15?', answers: ['Take out the 15', 'Take out 20 instead'], ts: NOW - 3 * MINUTE + 100 });
+  assert.deepEqual(row(idle)?.turn, { category: 'completed', detail: 'Cutting 15 picks leaves 99', needs: undefined });
+  assert.deepEqual(seen(busy), ['working', 'thinking', 'thinking', NOW - 2 * MINUTE, undefined], 'at work, it asks nothing yet');
+  assert.equal(row(busy)?.nextStep, undefined);
+  assert.deepEqual(seen(ended), ['ended', 'blocked', 'blocked: Take out the 15?', NOW - 2 * MINUTE, true], 'ended, it still waits on you');
+  assert.deepEqual(seen(answered), ['idle', 'summary', 'Cutting 15 picks leaves 99', NOW - 2 * MINUTE, false]);
+  assert.equal(row(answered)?.nextStep, undefined);
+});
+
 test("a desktop app session's earlier runs, which it went on from in others: named after it, archived with it", async (t) => {
   const cfg = makeConfig(t);
   // Started over before its first reply (a setting changed), then rewound.
