@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { clock, fit, timeOfDay, weekday, width } from '../src/format.js';
+import { clock, fit, monthDay, timeOfDay, weekday, width } from '../src/format.js';
 import { columns, detailLines, helpLines, initialUi, listLines, makeTheme, putAway, rate, settleSelection, table, visibleRows, wrapStyled } from '../src/view.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE, NOW } from './helpers/fixture.js';
@@ -268,6 +268,57 @@ test('the columns fill the width; a narrow screen drops the least needed', () =>
   assert.deepEqual(columns(110).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last']);
   assert.deepEqual(columns(118).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'kind']);
   assert.deepEqual(columns(160).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'pid', 'kind']);
+  // With the plan's price, what the sessions' use came to, before the PID: this week's from 120
+  // columns, in all from 128.
+  for (const cols of [100, 119, 120, 127, 128, 160]) {
+    assert.equal(columns(cols, true).reduce((n, c) => n + c.width + 1, 0), cols, `${cols} columns, priced`);
+  }
+  assert.deepEqual(columns(119, true), columns(119));
+  assert.deepEqual(columns(120, true).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'week', 'kind']);
+  assert.deepEqual(columns(128, true).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'week', 'total', 'kind']);
+  assert.deepEqual(columns(160, true).map((c) => c.key), ['state', 'project', 'title', 'model', 'effort', 'ctx', 'activity', 'last', 'week', 'total', 'pid', 'kind']);
+});
+
+test("with the plan's price, what each session's use came to: this week, and in all the replies read", () => {
+  const busy = busySession();
+  Object.assign(busy, { sessionId: 'p1', pid: 4242 });
+  const split = {
+    week: { from: NOW - 48 * HOUR, to: NOW, sessions: /** @type {[string, number][]} */ ([['p1', 22], ['p2', 0.01]]), models: [] },
+    all: { from: NOW - 30 * 24 * HOUR, to: NOW, sessions: /** @type {[string, number][]} */ ([['p1', 30], ['p2', 3], ['p4', 2.1741], ['p3', 0.04]]), models: [] },
+  };
+  const rows = [
+    busy,
+    agent({ key: 's:last', title: 'Last week alone', state: 'idle', sessionId: 'p2' }),
+    agent({ key: 's:none', title: 'Next to none', state: 'idle', sessionId: 'p3' }),
+    agent({ key: 's:whole', title: 'A whole dollar', state: 'idle', sessionId: 'p4' }),
+  ];
+  const ui = { ...initialUi(), agents: /** @type {const} */ ('all') };
+  /** @param {number} width @param {Partial<import('../src/monitor.js').Snapshot>} o */
+  const draw = (width, o) => {
+    const snap = snapshot(rows, o);
+    return listLines(snap, visibleRows(snap, ui, plain), ui, { width, height: 14, now: NOW }, plain);
+  };
+  const lines = draw(160, { planPrice: 200, usage: { at: NOW, split } });
+  assert.match(lines[1], / LAST +WEEK +TOTAL +PID +KIND +$/);
+  const row = (/** @type {string} */ title) => lines.find((l) => l.includes(title)) ?? '';
+  // Each 7 columns, to the right: 22 and 30 points at $200 a month; nothing for an agent alone.
+  assert.match(row('Busy session'), / 5m  \$10\.12  \$13\.80   4242 /);
+  assert.match(row('Last week alone'), / 1m {11}\$1\.38 /, 'next to none this week');
+  assert.match(row('A whole dollar'), / 1m {11}\$1\.00 /, 'to the cent, as the others');
+  assert.doesNotMatch(row('Next to none'), /\$/);
+  assert.doesNotMatch(row('find the parser'), /\$/);
+  // The week's alone where there is room for one, none where there is not, nor with no price.
+  assert.match(draw(120, { planPrice: 200, usage: { at: NOW, split } })[1], / LAST +WEEK +KIND +$/);
+  assert.match(draw(119, { planPrice: 200, usage: { at: NOW, split } })[1], / LAST +KIND +$/);
+  assert.match(draw(160, { usage: { at: NOW, split } })[1], / LAST +PID +KIND +$/);
+  // Priced with the use not known yet: the columns, empty.
+  const unknown = draw(160, { planPrice: 200 });
+  assert.match(unknown[1], / LAST +WEEK +TOTAL +PID +KIND +$/);
+  assert.doesNotMatch(unknown.join('\n'), /\$/);
+  // And in the table --once prints.
+  const once = table(snapshot(rows, { planPrice: 100, usage: { at: NOW, split } }), { width: 160, now: NOW, agents: 'none', showEnded: true }, plain).split('\n');
+  assert.match(once[1], / LAST +WEEK +TOTAL +PID +KIND$/);
+  assert.match(once.find((l) => l.includes('Busy session')) ?? '', / 5m {3}\$5\.06 {3}\$6\.90 {3}4242$/);
 });
 
 test("the effort each one works at: a column after the model, and in an agent's details", () => {
@@ -659,17 +710,28 @@ test('the detail view of an unread session: the reply not read yet, and when it 
   assert.match(text, /Desktop {4}local_u · last opened .+ \(10m ago\)/);
 });
 
-test("a session's details with the plan's price: what it used of the week's limit, in dollars", () => {
+test("a session's details with the plan's price: what it used of the week's limit, in dollars, this week and in all the replies read", () => {
   const s = agent({ key: 's:p', title: 'Priced session', state: 'idle', sessionId: 'p1' });
-  /** @param {[string, number][]} sessions @param {number} [planPrice] */
-  const text = (sessions, planPrice) => {
-    const usage = { at: NOW, split: { week: { from: NOW - 48 * HOUR, to: NOW, sessions, models: [] } } };
-    return detailLines(s, snapshot([s], { usage, planPrice }), initialUi(), { width: 100, height: 20, now: NOW }, plain).join('\n');
+  const from = NOW - 30 * 24 * HOUR;
+  /**
+   * @param {[string, number][]} sessions this week's
+   * @param {number} [planPrice]
+   * @param {[string, number][]} [all] in all the replies read, from 30 days back
+   */
+  const text = (sessions, planPrice, all = sessions, a = s) => {
+    const usage = { at: NOW, split: { week: { from: NOW - 48 * HOUR, to: NOW, sessions, models: [] }, all: { from, to: NOW, sessions: all, models: [] } } };
+    return detailLines(a, snapshot([a], { usage, planPrice }), initialUi(), { width: 100, height: 20, now: NOW }, plain).join('\n');
   };
-  assert.match(text([['other', 30], ['p1', 22]], 200), /Plan {7}\$10\.12 this week: 22 points of its limit, at \$200 a month/);
-  assert.match(text([['p1', 8.5]], 100), /Plan {7}\$1\.95 this week: 8\.5 points of its limit, at \$100 a month/);
+  assert.match(text([['other', 30], ['p1', 22]], 200), /Plan {7}\$10\.12 this week: 22 points of its limit, at \$200 a month +\n/);
+  assert.match(text([['p1', 8.5]], 100), /Plan {7}\$1\.95 this week: 8\.5 points of its limit, at \$100 a month +\n/);
   assert.doesNotMatch(text([['p1', 22]]), / Plan /, 'no price told');
   assert.doesNotMatch(text([['other', 30], ['p1', 0.01]], 200), / Plan /, 'next to none of the week');
+  // More in all: since the first reply read, or in all for a session begun after it; whole at 100 columns.
+  assert.match(text([['p1', 22]], 200, [['p1', 30]]), new RegExp(`Plan {7}\\$10\\.12 this week, \\$13\\.80 since ${monthDay(from)}: 22 and 30 points of its limit, at \\$200 a month +\\n`));
+  const later = { ...s, startedAt: NOW - 9 * 24 * HOUR };
+  assert.match(text([['p1', 22]], 200, [['p1', 30]], later), /Plan {7}\$10\.12 this week, \$13\.80 in all: 22 and 30 points of its limit, at \$200 a month +\n/);
+  assert.match(text([['p1', 0.01]], 200, [['p1', 3]], later), /Plan {7}\$1\.38 in all: 3\.0 points of its limit, at \$200 a month +\n/, 'next to none this week');
+  assert.match(text([['p1', 22]], 200, [['p1', 22.04]]), /Plan {7}\$10\.12 this week: 22 points of its limit, at \$200 a month +\n/, 'next to none more');
 });
 
 test('an earlier run of a desktop app session: its details say so, and the title it had, which the filter knows', () => {

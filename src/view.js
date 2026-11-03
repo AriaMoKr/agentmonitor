@@ -2,7 +2,7 @@
 // in detail, and the help; and the plain table --once prints. Pure functions of a snapshot and
 // the screen's state, so the tests can draw them; the list and the details also say where a
 // click goes, as they draw it.
-import { ago, bytes, clock, dollars, durationLabel, elapsed, fit, graphemes, shortModel, timeOfDay, tokens, truncate, weekday, width } from './format.js';
+import { ago, bytes, clock, dollars, durationLabel, elapsed, fit, graphemes, monthDay, shortModel, timeOfDay, tokens, truncate, weekday, width } from './format.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -297,11 +297,18 @@ export function settleSelection(ui, rows, bodyHeight) {
 
 /**
  * @typedef {{ key: string, title: string, width: number, align?: 'left' | 'right', flex?: number, min?: number }} Column
- * The columns that fit `cols`: the name and the activity share what the others leave.
+ * The columns that fit `cols`: the name and the activity share what the others leave. With the
+ * plan's price, what each session's use came to, this week and in all the replies read.
  * @param {number} cols
+ * @param {boolean} [priced] whether the plan's price is known
  * @returns {Column[]}
  */
-export function columns(cols) {
+export function columns(cols, priced = false) {
+  /** @type {(Column & { from?: number })[]} */
+  const costs = [
+    { key: 'week', title: 'WEEK', width: 7, align: 'right', from: 120 },
+    { key: 'total', title: 'TOTAL', width: 7, align: 'right', from: 128 },
+  ];
   /** @type {(Column & { from?: number })[]} */
   const all = [
     { key: 'state', title: '', width: 1 },
@@ -312,6 +319,7 @@ export function columns(cols) {
     { key: 'ctx', title: 'CTX', width: 5, align: 'right', from: 90 },
     { key: 'activity', title: 'ACTIVITY', width: 0, flex: 58, min: 10 },
     { key: 'last', title: 'LAST', width: 4, align: 'right' },
+    ...(priced ? costs : []),
     { key: 'pid', title: 'PID', width: 6, align: 'right', from: 140 },
     { key: 'kind', title: 'KIND', width: 8, from: 118 },
   ];
@@ -327,14 +335,34 @@ export function columns(cols) {
 }
 
 /**
+ * @typedef {object} Costs what the sessions' use came to, for the WEEK and TOTAL columns
+ * @property {Map<string, number>} week each session's points of the week's limit since it reset or
+ *   the plan changed, by its ID
+ * @property {Map<string, number>} total its points in all the replies read, as the plan counts them now
+ * @property {number} point what a point comes to at the plan's price
+ */
+
+/**
+ * What the sessions' use came to at the plan's price, by session; undefined with no price told.
+ * @param {Snapshot} snap
+ * @returns {Costs | undefined}
+ */
+function costsOf(snap) {
+  if (!snap.planPrice) return undefined;
+  const split = snap.usage?.split;
+  return { week: new Map(split?.week?.sessions), total: new Map(split?.all?.sessions), point: pointPrice(snap.planPrice) };
+}
+
+/**
  * One row's cells, styled unless `plain`.
  * @param {Row} row
  * @param {Column[]} cols
  * @param {Theme} t
  * @param {number} now
  * @param {boolean} plain
+ * @param {Costs} [costs] for the WEEK and TOTAL columns
  */
-function rowText(row, cols, t, now, plain) {
+function rowText(row, cols, t, now, plain, costs) {
   const a = row.agent;
   const dim = over(a.state);
   const style = (/** @type {string} */ s, /** @type {(s: string) => string} */ f) => (plain ? s : f(s));
@@ -366,6 +394,12 @@ function rowText(row, cols, t, now, plain) {
         return activityCell(a, c.width, t, now, plain);
       case 'last':
         return soft(fit(a.lastActive ? ago(now - a.lastActive) : '', c.width, 'right'));
+      case 'week':
+      case 'total': {
+        // A session's, with its agents' in it; next to none, as in its details, says nothing.
+        const v = costs && a.type === 'session' && a.sessionId ? (c.key === 'week' ? costs.week : costs.total).get(a.sessionId) : undefined;
+        return soft(fit(costs && v !== undefined && v >= 0.05 ? dollars(v * costs.point, true) : '', c.width, 'right'));
+      }
       case 'pid':
         return soft(fit(a.pid ? String(a.pid) : '', c.width, 'right', t.ellipsis));
       default:
@@ -772,7 +806,8 @@ export function wrapStyled(s, cols, indent = 0) {
  */
 export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits = [], panel = panelLines) {
   const lines = [header(snap, cols, now, t)];
-  const cs = columns(cols);
+  const costs = costsOf(snap);
+  const cs = columns(cols, Boolean(costs));
   lines.push(t.dim(t.pad(' ' + cs.map((c) => fit(c.title, c.width, c.align, t.ellipsis)).join(' '), cols)));
   let x = 1;
   for (const c of cs) {
@@ -794,7 +829,7 @@ export function listLines(snap, rows, ui, { width: cols, height, now }, t, hits 
   for (let i = 0; i < listed && rows.length; i++) {
     const row = rows[ui.top + i];
     const selected = ui.index === ui.top + i;
-    const text = rowText(row, cs, t, now, selected && t.color);
+    const text = rowText(row, cs, t, now, selected && t.color, costs);
     lines.push(selected && t.color ? t.inverse(t.pad(text, cols)) : t.pad(selected ? `>${text.slice(1)}` : text, cols));
     hits.push({ y: lines.length - 1, x0: 0, x1: cols, action: { select: row.agent.key } });
   }
@@ -1319,9 +1354,6 @@ function* fieldLines(a, snap, now, t, cols) {
   }
   (a.commands ?? []).slice(-5).forEach((c, i) => lines.push(field(i ? '' : 'Background', `${c.summary}  (${elapsed(now - c.ts)})`)));
   if (a.type === 'session') {
-    // What it used of the week's limit since it reset or the plan changed, at the plan's price.
-    const price = snap.planPrice;
-    const week = price ? snap.usage?.split?.week?.sessions.find(([id]) => id === a.sessionId)?.[1] : undefined;
     lines.push(
       field('Session', join([a.sessionId, a.kind, a.version && `Claude Code ${a.version}`])),
       field('Resume', a.sessionId && a.state === 'ended' ? `claude --resume ${a.sessionId}, in its folder` : undefined),
@@ -1336,9 +1368,7 @@ function* fieldLines(a, snap, now, t, cols) {
         (a.cost.linesAdded || a.cost.linesRemoved) && `+${a.cost.linesAdded} -${a.cost.linesRemoved} lines`,
         'as Claude Code last saved them',
       ]) : undefined),
-      field('Plan', price && week && week >= 0.05
-        ? `${dollars(week * pointPrice(price))} this week: ${week < 10 ? week.toFixed(1) : Math.round(week)} points of its limit, at ${dollars(price)} a month`
-        : undefined),
+      field('Plan', snap.planPrice ? planOf(a, snap.usage?.split, snap.planPrice) : undefined),
       field('Started', when(a.startedAt)),
       field('Last', when(a.lastActive)),
       field('Desktop', join([
@@ -1361,6 +1391,29 @@ function* fieldLines(a, snap, now, t, cols) {
   }
   lines.push(field('Transcript', a.transcript && `${a.transcript}${a.transcriptSize ? ` · ${bytes(a.transcriptSize)}` : ''}`));
   for (const l of lines) if (l) yield l;
+}
+
+/**
+ * What a session's use came to at the plan's price, as its WEEK and TOTAL columns say: its points
+ * of the week's limit since it reset or the plan changed, and in all the replies read where that
+ * is more (in all, when it began after the first of them); undefined for next to none.
+ * @param {Agent} a
+ * @param {import('./usage.js').Usage['split']} split
+ * @param {number} price the plan's price a month
+ */
+function planOf(a, split, price) {
+  const of = (/** @type {import('./usage.js').Share | undefined} */ s) => s?.sessions.find(([id]) => id === a.sessionId)?.[1] ?? 0;
+  const week = of(split?.week);
+  const total = of(split?.all);
+  const point = pointPrice(price);
+  const pts = (/** @type {number} */ v) => (v < 10 ? v.toFixed(1) : String(Math.round(v)));
+  const from = split?.all?.from ?? 0;
+  const since = a.startedAt && a.startedAt >= from ? 'in all' : `since ${monthDay(from)}`;
+  const more = total - week >= 0.05;
+  const month = `at ${dollars(price)} a month`;
+  if (week >= 0.05 && !more) return `${dollars(week * point)} this week: ${pts(week)} points of its limit, ${month}`;
+  if (week >= 0.05) return `${dollars(week * point)} this week, ${dollars(total * point)} ${since}: ${pts(week)} and ${pts(total)} points of its limit, ${month}`;
+  return more ? `${dollars(total * point)} ${since}: ${pts(total)} points of its limit, ${month}` : undefined;
 }
 
 const EVENT_LABEL = { prompt: 'you', reply: 'claude', tool: 'tool', error: 'error', info: 'note' };
@@ -1451,6 +1504,8 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
     ...key('EFFORT', `the effort it works at, and a${nb}${t.magenta('+')} when ultracode is on`),
     ...key('LAST', 'how long ago it last did anything'),
     ...key('ACTIVITY', 'what it is doing, with how many of its tasks are done (4/8) and how long the current step has taken'),
+    ...key('WEEK', "with the plan's price: what its use of the week's limit came to since that reset or the plan changed"),
+    ...key('TOTAL', "and in all its replies read here, back to the desktop app's first sample of the usage (about 30 days), as the plan counts use now"),
     '',
     views.length > 1 ? ` ${t.bold('The overview')}${t.dim(', one of the views below the list, where there is room')}` : ` ${t.bold('Below the list')}${t.dim(', where there is room')}`,
     ...key('selected', 'what the selected session or agent is doing, waits for or did last, its tasks, its latest messages'),
@@ -1488,12 +1543,13 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
 export function table(snap, { width: cols, now, agents, showEnded, showArchived = false }, t) {
   const ui = { ...initialUi(), agents, showEnded, showArchived };
   const rows = visibleRows(snap, ui, t);
-  const cs = columns(cols);
+  const costs = costsOf(snap);
+  const cs = columns(cols, Boolean(costs));
   const lines = [
     header(snap, cols, now, t, false).trimEnd(),
     t.dim((' ' + cs.map((c) => fit(c.title, c.width, c.align, t.ellipsis)).join(' ')).trimEnd()),
   ];
-  for (const row of rows) lines.push(rowText(row, cs, t, now, false).trimEnd());
+  for (const row of rows) lines.push(rowText(row, cs, t, now, false, costs).trimEnd());
   if (!rows.length) {
     lines.push(snap.found
       ? `   No Claude agents running or active in the last ${durationLabel(snap.windowMs)}.`

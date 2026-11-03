@@ -107,8 +107,9 @@ test('tokens and bytes', () => {
   assert.equal(bytes(3 * 1024 ** 3), '3 GB');
 });
 
-test('dollars: whole ones as they are, else to the cent', () => {
-  assert.deepEqual([200, 45.9968, 17.5, 10.1193, 0.46, 0.005, 0.004, 0].map(dollars), ['$200', '$46', '$17.50', '$10.12', '$0.46', '$0.01', '<$0.01', '$0']);
+test('dollars: whole ones as they are, else to the cent; in a column, to the cent always', () => {
+  assert.deepEqual([200, 45.9968, 17.5, 10.1193, 0.46, 0.005, 0.004, 0].map((v) => dollars(v)), ['$200', '$46', '$17.50', '$10.12', '$0.46', '$0.01', '<$0.01', '$0']);
+  assert.deepEqual([200, 45.9968, 10.1193, 0.004, 0].map((v) => dollars(v, true)), ['$200.00', '$46.00', '$10.12', '<$0.01', '$0.00']);
 });
 
 test('shortModel', () => {
