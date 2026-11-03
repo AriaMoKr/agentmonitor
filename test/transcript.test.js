@@ -351,6 +351,47 @@ test("a task list: the desktop app's, step by step and checked off at the end, a
   assert.deepEqual(tx.info.plan?.steps, [{ text: 'Write it', status: 'completed' }, { text: 'Ship it', status: 'in_progress' }, { text: 'Tell', status: 'pending' }]);
 });
 
+test("what a turn's wrap_up asks you as it ends, in the desktop app's next-step box, till another turn begins", async (t) => {
+  const path = tempFile(t);
+  const wrap = (/** @type {string} */ id, /** @type {object} */ input, /** @type {number} */ at, ok = true) => [
+    rec.tool(id, 'mcp__ccd_turn__wrap_up', input, at),
+    rec.result(id, at + 100, !ok, ok ? 'Shown in the next-step box.' : 'wrap_up was already called this turn.'),
+  ];
+  const actions = [{ label: 'Take out the \x1b[1m15' }, { label: 'Take out 20 instead' }];
+  writeFileSync(path, jsonl([
+    rec.prompt('Check the picks', NOW - 60_000),
+    ...wrap('w1', { recap: 'The 15 were never published.', ask: 'Take out the 15?', actions }, NOW - 50_000),
+    ...wrap('w2', { recap: 'Nothing.' }, NOW - 49_000, false),
+    rec.reply('They should come out.', NOW - 48_000),
+  ]));
+  const tx = new Transcript(path);
+  await update(tx);
+  // A second call that failed changes nothing.
+  assert.deepEqual(tx.info.nextStep, { text: 'Take out the 15?', answers: ['Take out the 15', 'Take out 20 instead'], ts: NOW - 49_900 });
+
+  // Answered: a turn begins, and asks nothing as it ends.
+  appendFileSync(path, jsonl([rec.prompt('Take out the 15', NOW - 40_000)]));
+  await update(tx);
+  assert.equal(tx.info.nextStep, undefined);
+  appendFileSync(path, jsonl([...wrap('w3', { recap: 'Taken out.' }, NOW - 35_000), rec.reply('Done.', NOW - 34_000)]));
+  await update(tx);
+  assert.equal(tx.info.nextStep, undefined, 'a box that asks nothing');
+
+  // Blocked with no question: its recap, and an app action's answer by its name where it has no label.
+  appendFileSync(path, jsonl([
+    rec.prompt('Open a PR', NOW - 30_000),
+    ...wrap('w4', { recap: 'The PR waits on your sign-off.', blocked: true, actions: [{ action: 'create_pr' }, { label: '', action: 'commit' }, 'junk'] }, NOW - 25_000),
+    rec.reply('Sign it off.', NOW - 24_000),
+  ]));
+  await update(tx);
+  assert.deepEqual(tx.info.nextStep, { text: 'The PR waits on your sign-off.', answers: ['create pr', 'commit'], ts: NOW - 24_900 });
+
+  // A background task's end begins a turn too.
+  appendFileSync(path, jsonl([rec.taskEnd('toolu_x', 'bx', 'completed', NOW - 20_000)]));
+  await update(tx);
+  assert.equal(tx.info.nextStep, undefined);
+});
+
 test('a task list made before the tail: the tail widens to take it in', async (t) => {
   const path = tempFile(t);
   const filler = 'x'.repeat(10_000);

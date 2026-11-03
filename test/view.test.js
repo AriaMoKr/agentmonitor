@@ -818,6 +818,20 @@ test("the detail view of a blocked session: what you are to do, the app's summar
   assert.doesNotMatch(r.join('\n'), /Summary/);
 });
 
+test("the detail view of a session whose last turn ended asking you something: the question, the box's answers, the app's summary", () => {
+  const s = blockedSession({
+    key: 's:q', title: 'Asks you', kind: 'desktop', sessionId: 'q1', activity: 'blocked: Take out the 15?',
+    nextStep: { text: 'Take out the 15?', answers: ['Take out the 15', 'Take out 20 instead'], ts: NOW - 30 * MINUTE },
+    turn: { category: 'completed', detail: 'Cutting 15 picks leaves 99' },
+  });
+  const lines = detailLines(s, snapshot([s]), initialUi(), { width: 100, height: 20, now: NOW }, plain);
+  assert.match(lines[0], /^ ◇ Asks you +idle · blocked $/);
+  const text = lines.join('\n');
+  assert.match(text, /Blocked {4}Take out the 15\? *\n Answers {4}Take out the 15 · Take out 20 instead *\n Summary {4}Cutting 15 picks leaves 99/);
+  const ascii = makeTheme({ color: false, ascii: true, animate: false });
+  assert.match(detailLines(s, snapshot([s]), initialUi(), { width: 100, height: 20, now: NOW }, ascii).join('\n'), /Answers {4}Take out the 15, Take out 20 instead/);
+});
+
 test('the detail view of an agent at work: how long it has been at it', () => {
   const a = agent({
     key: 'a:w', type: 'subagent', title: 'find the parser', state: 'running', agentId: 'a1', agentType: 'Explore',
@@ -868,7 +882,7 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   assert.equal(lines.length, 67);
   assert.match(lines.join('\n'), /Keys[\s\S]*States[\s\S]*Usage[\s\S]*Columns[\s\S]*Below the list[\s\S]*Reading \/home\/me\/\.claude/);
   // What a state means from the column a key's does.
-  assert.match(lines.join('\n'), /◇ blocked {5}its turn ended on something only you can do/);
+  assert.match(lines.join('\n'), /◇ blocked {5}its turn ended asking you something, or on what only you can do/);
   assert.match(lines.join('\n'), /◐ tool {8}it waits on a tool call it made/);
   assert.match(lines.join('\n'), /• unread {6}the desktop app's blue dot/);
   assert.match(lines.join('\n'), /◎ background {2}it waits on a command, an agent or a workflow it left running/);

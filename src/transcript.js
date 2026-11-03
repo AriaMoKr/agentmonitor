@@ -3,8 +3,9 @@
 // reads the tail on first sight and after that only what was appended, and keeps what the
 // monitor shows: when the agent last did something, its model, effort and context, whether it
 // was reminded that ultracode is on, the tool calls still waiting for a result, the commands it
-// runs in the background, its task list, the last prompt and reply, the titles, the latest
-// events, and its latest tool calls and turns, each from its start to its end.
+// runs in the background, its task list, what its last turn asked you at its end, the last
+// prompt and reply, the titles, the latest events, and its latest tool calls and turns, each
+// from its start to its end.
 import { open } from 'node:fs/promises';
 import { readRange } from './files.js';
 import { clean, toolSummary } from './format.js';
@@ -58,6 +59,10 @@ const SKIP = /^\{"type":"(?:api-request|file-history|atis-latch|frame-link|artif
  *   approve, a session offered
  * @typedef {{ start: number, end: number }} Span a turn: from the prompt (or the message) that
  *   began it to the reply that ended it; end 0 while it goes on
+ * @typedef {{ text: string, answers: string[], ts: number }} NextStep what the desktop app's
+ *   next-step box asks you at the end of a turn, as the turn's wrap_up call filled it: its
+ *   question, or its recap where it says only that the session is blocked; the answers its
+ *   buttons give; and when
  * @typedef {ReturnType<typeof emptyInfo>} Info
  */
 
@@ -106,6 +111,8 @@ export function emptyInfo() {
     /** @type {Plan | undefined} */ plan: undefined,
     /** a change to a task list made before the part read, and none made since */
     planMissed: false,
+    /** @type {NextStep | undefined} what the last turn asked you as it ended, till a turn begins */
+    nextStep: undefined,
     /** @type {{ text: string, ts: number } | undefined} */ lastPrompt: undefined,
     /** @type {{ text: string, ts: number } | undefined} */ lastReply: undefined,
     /** @type {{ text: string, ts: number } | undefined} the last API error, such as a usage limit */
@@ -381,6 +388,8 @@ function startTurn(info, ts) {
   if (!ts || (last && !last.end)) return;
   info.turns.push({ start: ts, end: 0 });
   if (info.turns.length > MAX_TURNS) info.turns.shift();
+  // What the last one asked was answered, or put aside.
+  info.nextStep = undefined;
 }
 
 /**
@@ -428,8 +437,29 @@ function readResult(info, id, call, text, ts) {
         const steps = info.plan.steps.map((s) => (s.status === 'in_progress' ? { ...s, status: /** @type {StepStatus} */ ('completed') } : s));
         info.plan = { steps, ts };
       }
+      // And fills the next-step box, which asks you its question till the next turn.
+      info.nextStep = nextStepOf(input, ts);
       break;
   }
+}
+
+/**
+ * What a wrap_up call asks you in the desktop app's next-step box: its question, or where it has
+ * none but says the session is blocked, its recap; with the answers its buttons give, an app
+ * action's by its own label or else its name. A box that asks nothing waits on no one. Where the
+ * app draws no box (it drops a button whose label it does not take), the reply asks it instead.
+ * @param {Record<string, any>} input
+ * @param {number} ts
+ * @returns {NextStep | undefined}
+ */
+function nextStepOf(input, ts) {
+  const text = clean(input.ask) || (input.blocked === true ? clean(input.recap) : '');
+  if (!text) return undefined;
+  const answers = (Array.isArray(input.actions) ? input.actions : []).slice(0, 4).map((a) => {
+    const o = a && typeof a === 'object' ? a : {};
+    return (clean(o.label) || clean(typeof o.action === 'string' ? o.action.replace(/_/g, ' ') : '')).slice(0, 80);
+  });
+  return { text: text.slice(0, MAX_TEXT), answers: answers.filter(Boolean), ts };
 }
 
 /**

@@ -50,8 +50,9 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  *   process not in the registry; running: an agent or workflow at work; the rest: over
  *
  * @typedef {'tool' | 'thinking' | 'agents' | 'waiting' | 'blocked' | 'background' | 'error' | 'summary' | 'reply' | 'prompt' | 'job' | ''} ActivityKind
- *   blocked and summary: from the desktop app's summary of the last turn; background: a
- *   command, an agent or a workflow that goes on in the background of a session not at work
+ *   blocked: what the last turn asked you as it ended, or the desktop app's summary of it says
+ *   only you can do; summary: that summary; background: a command, an agent or a workflow that
+ *   goes on in the background of a session not at work
  *
  * @typedef {{ steps: import('./transcript.js').Step[], at: number, current: boolean }} Plan a
  *   task list as of its last change; current: changed since the last prompt, in this turn
@@ -113,7 +114,10 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  *   at work whose last turn ended while another one was open there
  * @property {number} [openedAt] when it was last opened in the desktop app
  * @property {Turn} [turn] of a session not at work, when it sums up the transcript's last reply
- * @property {boolean} [blocked] its turn ended on something only you can do, as `turn` says
+ * @property {import('./transcript.js').NextStep} [nextStep] of a session not at work: what its
+ *   last turn asked you as it ended, in the desktop app's next-step box
+ * @property {boolean} [blocked] its turn ended on something only you can do: what `nextStep`
+ *   asks, or what `turn` says
  * @property {string} [hostSessionId] the desktop app's ID for the session
  * @property {{ of: string, title: string, rewoundAt?: number }} [earlier] a Claude Code session
  *   that a desktop app session ran before its current one, titled after it ("reviews (earlier
@@ -401,8 +405,11 @@ export class Monitor {
       else state = !this.seenLive.has(s.id) && now - (info?.lastTs ?? 0) < RECENT_WRITE ? 'active' : 'ended';
       // At work for the registry, but the call it made asks you something.
       if (state === 'working' && askingOf(info)) state = 'waiting';
-      const turn = state === 'idle' || state === 'ended' ? turnOf(d, info) : undefined;
-      const act = activityOf(state, info, record, i === 0 ? children : [], turn, now);
+      const over = state === 'idle' || state === 'ended';
+      const turn = over ? turnOf(d, info) : undefined;
+      // A question its last turn ended on waits for your answer: it is blocked on it.
+      const nextStep = over ? info?.nextStep : undefined;
+      const act = activityOf(state, info, record, i === 0 ? children : [], turn, now, nextStep);
       if (!record && s.job?.state && !act.text) {
         Object.assign(act, { kind: 'job', text: clean(`${s.job.state}: ${s.job.needs ?? s.job.detail ?? ''}`).replace(/:$/, ''), at: s.job.updatedAt ?? 0 });
       }
@@ -445,7 +452,8 @@ export class Monitor {
         unread: d ? (state === 'idle' || state === 'ended') && this.desktop.unread(d) : undefined,
         openedAt: d?.openedAt,
         turn,
-        blocked: turn ? turn.category === 'blocked' : undefined,
+        nextStep,
+        blocked: nextStep ? true : turn ? turn.category === 'blocked' : undefined,
         hostSessionId: safe(record?.hostSessionId ?? d?.id ?? prior?.session.id),
         earlier: of ? { of, title, rewoundAt: prior?.rewoundAt } : undefined,
         job: s.job,
@@ -714,9 +722,10 @@ function askingOf(info) {
  * @param {Agent[]} children
  * @param {Turn} [turn] the desktop app's summary of the last turn
  * @param {number} [now]
+ * @param {import('./transcript.js').NextStep} [nextStep] what the last turn asked you as it ended
  * @returns {{ kind: ActivityKind, text: string, at: number, inTool?: boolean }}
  */
-export function activityOf(state, info, record, children, turn, now = 0) {
+export function activityOf(state, info, record, children, turn, now = 0, nextStep) {
   if (state === 'waiting') {
     const ask = askingOf(info);
     if (ask) return { kind: 'waiting', text: `waiting: ${ask.text}`, at: ask.ts };
@@ -740,6 +749,7 @@ export function activityOf(state, info, record, children, turn, now = 0) {
     return { kind: 'error', text: info.apiError.text, at: info.apiError.ts };
   }
   const at = info?.lastReply?.ts || info?.lastTs || 0;
+  if (nextStep) return { kind: 'blocked', text: `blocked: ${nextStep.text}`, at };
   if (turn?.category === 'blocked') return { kind: 'blocked', text: `blocked: ${turn.needs || turn.detail}`, at };
   // A session that runs, its turn over, with a command still going on in the background.
   const commands = record ? commandsOf(info) : [];

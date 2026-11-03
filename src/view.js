@@ -9,10 +9,11 @@ import { ago, bytes, clock, dollars, durationLabel, elapsed, fit, graphemes, mon
  * @typedef {import('./monitor.js').Snapshot} Snapshot
  * @typedef {import('./monitor.js').State} State
  * @typedef {State | 'unread' | 'blocked' | 'tool' | 'background'} Shown the state a row shows: in
- *   place of idle or ended, blocked when the desktop app's summary of the last turn says it waits
- *   on you, or unread, the app's blue dot; in place of idle, background while it waits on what it
- *   left running (a command, an agent, a workflow); in place of working or running, tool while it
- *   waits on a tool call that has run a while
+ *   place of idle or ended, blocked when the last turn ended asking you something (the desktop
+ *   app's next-step box) or the app's summary of it says it waits on you, or unread, the app's
+ *   blue dot; in place of idle, background while it waits on what it left running (a command, an
+ *   agent, a workflow); in place of working or running, tool while it waits on a tool call that
+ *   has run a while
  * @typedef {'status' | 'recent' | 'name' | 'project'} Sort
  * @typedef {'running' | 'all' | 'none'} AgentsShown
  *
@@ -1077,7 +1078,7 @@ function previewLines(a, room, cols, now, t) {
   const head = heading(`${glyph(shown(a), t, now)} ${place ? t.dim(`${place}${t.sep}`) : ''}${t.bold(title)}`, t.dim(status), cols, t);
   /** @type {string[]} */
   const body = [];
-  doing(a, now).forEach(([label, value], i) => body.push(...wrapped(` ${t.dim(fit(label, 10))} ${value}`, cols, 12, i ? 2 : 3, t)));
+  doing(a, now, t).forEach(([label, value], i) => body.push(...wrapped(` ${t.dim(fit(label, 10))} ${value}`, cols, 12, i ? 2 : 3, t)));
   const commands = a.commands ?? [];
   const last = commands.at(-1);
   if (last) {
@@ -1297,20 +1298,22 @@ export function detailLines(a, snap, ui, { width: cols, height, now }, t, hits =
  * @param {Theme} t
  */
 export function statusOf(a, now, t) {
-  const turn = a.turn && a.turn.category !== 'completed' && a.turn.category.replace(/_/g, ' ');
+  const turn = a.nextStep ? 'blocked' : a.turn && a.turn.category !== 'completed' && a.turn.category.replace(/_/g, ' ');
   const word = a.inTool ? 'in a tool' : waitsInBackground(a) ? 'background' : a.state;
   return [word, turn, a.unread && 'unread', ongoing(a) && elapsed(now - a.activityAt)].filter(Boolean).join(t.sep);
 }
 
 /**
  * What an agent is doing, waits for or did last, as [label, value]; and when its turn ended
- * blocked on you, the desktop app's summary of it. An activity of the commands it left running is
- * said where they are listed.
+ * blocked on you, the answers the desktop app's next-step box gives to what it asks, and the
+ * app's summary of the turn. An activity of the commands it left running is said where they are
+ * listed.
  * @param {Agent} a
  * @param {number} now
+ * @param {Theme} t
  * @returns {[string, string][]}
  */
-function doing(a, now) {
+function doing(a, now, t) {
   const waiting = a.state === 'waiting';
   const blocked = a.activityKind === 'blocked';
   /** @type {[string, string][]} */
@@ -1320,7 +1323,8 @@ function doing(a, now) {
     const text = waiting || blocked ? a.activity.replace(/^(?:waiting|blocked): /, '') : a.activity;
     out.push([label, text + (ongoing(a) ? `  (${elapsed(now - a.activityAt)})` : '')]);
   }
-  if (blocked && a.turn?.needs && a.turn.detail) out.push(['Summary', a.turn.detail]);
+  if (blocked && a.nextStep?.answers.length) out.push(['Answers', a.nextStep.answers.join(t.sep)]);
+  if (blocked && (a.turn?.needs || a.nextStep) && a.turn?.detail) out.push(['Summary', a.turn.detail]);
   return out;
 }
 
@@ -1375,7 +1379,7 @@ function* fieldLines(a, snap, now, t, cols) {
     value ? t.pad(` ${t.dim(fit(label, 10))} ${truncate(value, Math.max(0, cols - 13), t.ellipsis)}`, cols) : null;
   const when = (/** @type {number | undefined} */ ts) => (ts ? `${clock(ts, now)} (${ago(now - ts)} ago)` : undefined);
   const join = (/** @type {(string | false | undefined)[]} */ parts) => parts.filter(Boolean).join(t.sep) || undefined;
-  const lines = doing(a, now).map(([label, value]) => field(label, value));
+  const lines = doing(a, now, t).map(([label, value]) => field(label, value));
   if (a.pending.length > 1) {
     for (const p of a.pending.slice(-5)) lines.push(field('', `${p.summary}  (${elapsed(now - p.ts)})`));
   }
@@ -1545,7 +1549,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
     ...state(t.green(g.working), 'working', `the session is at work, or ${t.green(g.running)}${nb}an agent runs`),
     ...state(t.green(g.tool), 'tool', 'it waits on a tool call it made: a command, a build, a download'),
     ...state(t.yellowBold(g.waiting), 'waiting', 'it needs you: a permission, a question, a plan to approve'),
-    ...state(t.yellowBold(g.blocked), 'blocked', 'its turn ended on something only you can do, the desktop app says'),
+    ...state(t.yellowBold(g.blocked), 'blocked', 'its turn ended asking you something, or on what only you can do'),
     ...state(t.blueBold(g.unread), 'unread', "the desktop app's blue dot: it finished a turn you have not opened"),
     ...state(t.cyan(g.background), 'background', 'it waits on a command, an agent or a workflow it left running'),
     ...state(t.cyan(g.idle), 'idle', 'it runs, and waits for your next message'),
