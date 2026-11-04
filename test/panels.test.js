@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Canvas } from '../src/canvas.js';
 import { clock, monthDay, timeOfDay, weekday, width } from '../src/format.js';
-import { boardColumn, cut, laneOf, MOVED, VIEWS, viewOf } from '../src/panels.js';
+import { boardColumn, cut, laneOf, MOVED, pathParts, VIEWS, viewOf } from '../src/panels.js';
 import { helpLines, initialUi, listLines, makeTheme, settleSelection, visibleRows } from '../src/view.js';
 import { Viewer } from '../src/viewer.js';
 import { agent, snapshot } from './helpers/agents.js';
@@ -672,6 +672,104 @@ test('a click on a project lists its sessions alone, and one on it again all of 
   assert.ok(viewer.lines(snap, screen).some((l) => l.includes('No sessions listed in gone.')));
 });
 
+/**
+ * Sessions in folders on Windows: two in one folder written two ways, one in a folder with others
+ * in it, one at the end of a chain of folders, one far from the rest, one with no folder; and the
+ * week's use of one not listed, by the folder its replies gave.
+ */
+function inFolders() {
+  const week = { from: NOW - 5 * DAY, to: NOW, sessions: /** @type {[string, number][]} */ ([['w1', 20], ['w2', 6], ['w3', 3.5], ['gone', 1.2]]), models: [] };
+  return snapshot([
+    agent({ key: 's:1', title: 'one', project: 'agentmonitor', cwd: 'C:\\git\\work\\tools\\agentmonitor', sessionId: 'w1', state: 'working', lastActive: NOW - 2 * SECOND }),
+    agent({ key: 's:2', title: 'two', project: 'video', cwd: 'c:/git/work/tools/video', sessionId: 'w2', state: 'idle', lastActive: NOW - 5 * MINUTE }),
+    agent({ key: 's:3', title: 'three', project: 'paddle', cwd: 'C:\\git\\work\\games\\paddle\\paddle', sessionId: 'w3', state: 'idle', lastActive: NOW - HOUR }),
+    agent({ key: 's:4', title: 'four', project: 'Experiments with long names', cwd: 'C:\\Users\\me\\Documents\\notes\\new\\Experiments with long names', state: 'idle', lastActive: NOW - 2 * HOUR }),
+    agent({ key: 's:5', title: 'five', project: 'tools', cwd: 'C:\\GIT\\work\\tools', state: 'idle', lastActive: NOW - 3 * HOUR }),
+    agent({ key: 's:6', title: 'six', state: 'idle', lastActive: NOW - 4 * HOUR }),
+  ], { usage: { ...USAGE, split: { ...USAGE.split, week } }, cwds: new Map([['gone', 'C:\\git\\work\\old']]) });
+}
+
+test('the projects by folder: a project under the folders it is in, each folder with what those in it came to, and a chain of folders on one line', () => {
+  const { view, hits, top } = draw('projects', { snap: inFolders(), ui: { paths: true } });
+  assert.match(view[1], /^ ─ Projects by folder ─+ 7 projects · points of the week since .+ ─$/);
+  // Six columns of the bar go to the names; the bars against the 32 points elsewhere, the most.
+  const bar = (/** @type {number} */ n) => `${'█'.repeat(n)}${'░'.repeat(18 - n)}`;
+  assert.deepEqual(view.slice(2, 13), [
+    `   ${'C:\\git\\work\\'.padEnd(28)} ${bar(17)}    31    2s`,
+    `     ${'tools\\'.padEnd(26)} ${bar(14)}    26    2s  ○`,
+    `       ${'agentmonitor'.padEnd(24)} ${bar(11)}    20    2s  ●`,
+    `       ${'video'.padEnd(24)} ${bar(3)}   6.0    5m  ○`,
+    `     ${'games\\paddle\\'.padEnd(26)} ${bar(2)}   3.5    1h`,
+    `       ${'paddle'.padEnd(24)} ${bar(2)}   3.5    1h  ○`,
+    `     ${'old'.padEnd(26)} ${bar(1)}   1.2`,
+    `   ${'…ers\\me\\Documents\\notes\\new\\'.padEnd(28)} ${bar(0)}${' '.repeat(10)}2h`,
+    `     ${'Experiments with long nam…'.padEnd(26)} ${bar(0)}${' '.repeat(10)}2h  ○`,
+    `   ${'(no folder)'.padEnd(28)} ${bar(0)}${' '.repeat(10)}4h  ○`,
+    `   ${'elsewhere'.padEnd(28)} ${bar(18)}    32  not in the replies read here`,
+  ]);
+  // A click on a project lists it alone, and on its sessions opens one; on a folder of none,
+  // selects none; on the heading, shows them by name again, as p does.
+  assert.deepEqual(clickAt(hits, 10, top + 4), { project: 'agentmonitor' });
+  assert.deepEqual(clickAt(hits, 64, top + 4), { open: 's:1' });
+  assert.deepEqual(clickAt(hits, 10, top + 3), { project: 'tools' });
+  assert.deepEqual(clickAt(hits, 64, top + 3), { open: 's:5' });
+  assert.deepEqual(clickAt(hits, 10, top + 2), { unselect: true });
+  assert.deepEqual(clickAt(hits, 10, top + 1), { key: 'p' });
+  assert.deepEqual(clickAt(hits, 10, draw('projects', { snap: inFolders() }).top + 1), { key: 'p' }, 'by name too');
+  // Listed alone and below the room: with the folders it is in, in place of the last that fit.
+  const alone = draw('projects', { snap: inFolders(), height: 12, ui: { paths: true, project: 'paddle' } }).view;
+  assert.deepEqual(alone.slice(2).map((l) => l.slice(0, 32).trimEnd()), [
+    '   C:\\git\\work\\', '     tools\\', '     games\\paddle\\', '     ▸ paddle', '   and 5 more', '   elsewhere',
+  ]);
+  // Paths of another system, and sessions of no folder by the name they have.
+  assert.deepEqual(draw('projects', { ui: { paths: true } }).view.slice(2, 9).map((l) => l.slice(0, 32).trimEnd()), [
+    '   /work/', '     monitor', '     auth', '     site', '   docs', '   misc', '   elsewhere',
+  ]);
+  // As wide as a phone: no bars, the names under their folders as they fit.
+  assert.deepEqual(draw('projects', { snap: inFolders(), width: 48, ui: { paths: true } }).view.slice(2, 6), [
+    `   ${'C:\\git\\work\\'.padEnd(12)}    31    2s`,
+    `     ${'tools\\'.padEnd(10)}    26    2s  ○`,
+    `       ${'agentmo…'.padEnd(8)}    20    2s  ●`,
+    `       ${'video'.padEnd(8)}   6.0    5m  ○`,
+  ]);
+});
+
+test("a path in its parts: its root, as roots are compared, and its folders; a drive's and a share's in one case", () => {
+  assert.deepEqual(pathParts('C:\\git\\work'), { root: 'C:\\', sep: '\\', fold: true, parts: ['git', 'work'], key: 'c:/' });
+  assert.deepEqual(pathParts('c:/git//work/'), { root: 'c:/', sep: '/', fold: true, parts: ['git', 'work'], key: 'c:/' });
+  assert.deepEqual(pathParts('\\\\server\\share\\x'), { root: '\\\\', sep: '\\', fold: true, parts: ['server', 'share', 'x'], key: '//' });
+  assert.deepEqual(pathParts('/home/me'), { root: '/', sep: '/', fold: false, parts: ['home', 'me'], key: '/' });
+  assert.deepEqual(pathParts('work/x'), { root: '', sep: '/', fold: false, parts: ['work', 'x'], key: '' });
+});
+
+test('p shows the projects by folder, and by name again; from another view, the projects by folder; the footer says which', () => {
+  const viewer = new Viewer({ monitor: { dir: '/home/me/.claude', windowMs: DAY }, t: plain, agents: 'none', showEnded: true, view: 'board' });
+  const snap = inFolders();
+  const screen = { width: 100, height: 30, now: NOW };
+  viewer.key({ name: 'p' });
+  assert.deepEqual([viewer.ui.panel, viewer.ui.paths, viewer.ui.message], ['projects', true, 'projects by folder: the paths their sessions ran in']);
+  viewer.ui.messageUntil = 0;
+  let lines = viewer.lines(snap, screen);
+  assert.ok(lines.some((l) => /^ ─ Projects by folder ─/.test(l)));
+  assert.match(lines.at(-1) ?? '', /^ ↑↓ move {2}⏎ details {2}\/ filter {2}v view {2}p paths:on {2}s sort/);
+  // A click on the heading does as p.
+  viewer.mouse({ button: 'left', x: 10, y: lines.findIndex((l) => /^ ─ Projects by folder/.test(l)), release: false, motion: false });
+  assert.deepEqual([viewer.ui.panel, viewer.ui.paths], ['projects', false]);
+  viewer.ui.messageUntil = 0;
+  lines = viewer.lines(snap, screen);
+  assert.ok(lines.some((l) => /^ ─ Projects ─/.test(l)));
+  assert.match(lines.at(-1) ?? '', / p paths:off /);
+  viewer.key({ name: 'p' });
+  assert.equal(viewer.ui.paths, true);
+  // In another view, no p in the footer; in the filter, p is typed.
+  viewer.key({ name: 'v' });
+  viewer.ui.messageUntil = 0;
+  assert.doesNotMatch(viewer.lines(snap, screen).at(-1) ?? '', /paths/);
+  viewer.key({ name: '/' });
+  viewer.key({ name: 'p', ch: 'p' });
+  assert.deepEqual([viewer.ui.panel, viewer.ui.filter], ['today', 'p']);
+});
+
 test('today: the counts, the time waited on you, the tokens, the models, the replies hour by hour, and the tools', () => {
   const { view } = draw('today', { height: 26 });
   assert.match(view[1], /^ ─ Today ─+ since midnight ─$/);
@@ -863,6 +961,7 @@ test('the help lists the views below the list, which v and V step through, the o
   const ui = { ...initialUi(), panel: 'tank' };
   const text = helpLines(ui, { width: 100, height: 200, now: NOW }, plain, '/home/me/.claude', true, VIEWS).map((l) => l.trimEnd());
   assert.ok(text.includes('   v V           the next view below the list, or the one before'));
+  assert.ok(text.includes('   p             the projects view by folder, or by name again'));
   assert.ok(text.includes(' The overview, one of the views below the list, where there is room'));
   const at = text.indexOf(' Views below the list, which v and V step through');
   assert.ok(at > 0);
@@ -872,6 +971,6 @@ test('the help lists the views below the list, which v and V step through, the o
   assert.match(text.slice(at).join(' ').replace(/\s+/g, ' '), /and the week's; with the plan's price, the week's in dollars \(shown\)/);
   // Given none, neither the key nor the list: what is below the list is the overview.
   const alone = helpLines(initialUi(), { width: 100, height: 200, now: NOW }, plain, '/home/me/.claude').map((l) => l.trimEnd());
-  assert.doesNotMatch(alone.join('\n'), /v V|Views below/);
+  assert.doesNotMatch(alone.join('\n'), /v V|Views below|by folder/);
   assert.ok(alone.includes(' Below the list, where there is room'));
 });

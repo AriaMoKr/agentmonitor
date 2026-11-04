@@ -329,7 +329,7 @@ test("the mouse in the details: a click on an agent opens its details; and --no-
   const off = start(t, fakeMonitor([() => sessions()]), { mouse: false });
   await off.until((s) => s.includes('Old work'));
   off.type('?');
-  await off.until((s) => s.includes('States'));
+  await off.until((s) => s.includes('read again'));
   assert.doesNotMatch(off.text(), /click/);
   off.type('xq');
   await off.done;
