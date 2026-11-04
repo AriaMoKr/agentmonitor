@@ -388,6 +388,12 @@ export class Viewer {
         this.say(`${next.name}: ${next.what}`);
         return;
       }
+      case 'p':
+        // The projects view by folder, or by name again; from another view, by folder.
+        if (ui.panel === 'projects') ui.paths = !ui.paths;
+        else Object.assign(ui, { panel: 'projects', paths: true });
+        this.say(ui.paths ? 'projects by folder: the paths their sessions ran in' : 'projects by name');
+        return;
       case '?':
         Object.assign(ui, { view: 'help', helpTop: 0 });
         return;

@@ -30,6 +30,8 @@ import { ago, bytes, clock, dollars, durationLabel, elapsed, fit, graphemes, mon
  * @property {string | undefined} project the project whose sessions alone are listed, by its
  *   folder's last part ('' for those with no folder known): a click on it in the projects view;
  *   undefined for all of them
+ * @property {boolean} paths whether the projects view shows the projects under their folders, by
+ *   the paths their sessions ran in (p), rather than by name
  * @property {Sort} sort
  * @property {boolean} showEnded
  * @property {boolean} showArchived whether the sessions that ended are listed with those put
@@ -69,7 +71,7 @@ export const AGENTS_SHOWN = /** @type {AgentsShown[]} */ (['running', 'all', 'no
 export function initialUi() {
   return {
     view: 'list', selected: undefined, index: 0, top: 0, logScroll: 0, helpTop: 0,
-    filter: '', editingFilter: false, project: undefined, sort: 'status', showEnded: true, showArchived: false, agents: 'running', bell: false,
+    filter: '', editingFilter: false, project: undefined, paths: false, sort: 'status', showEnded: true, showArchived: false, agents: 'running', bell: false,
     panel: 'overview', moves: new Map(), message: '', messageUntil: 0,
   };
 }
@@ -1203,6 +1205,8 @@ function footer(ui, rows, t, cols, now, onHit) {
     [`e ended:${endedShown(ui)}`, 2, 'e'], [`a agents:${ui.agents}`, 2, 'a'], ['w window', 1, 'w'],
     [`b bell:${ui.bell ? 'on' : 'off'}`, 1, 'b'], ['? help', 5, '?'],
   ];
+  // The projects view's own key, while it is the view below the list.
+  if (ui.panel === 'projects') all.splice(4, 0, [`p paths:${ui.paths ? 'on' : 'off'}`, 2, 'p']);
   // A web page is closed, not quit; the agentmonitor app's window quits as a terminal does.
   if (t.quit) all.push(['q quit', 5, 'q']);
   // A space before, two between the keys and the position, and one after it.
@@ -1538,6 +1542,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
     ...key('w', 'window for "recently active": 1h, 6h, 24h, 3d, 7d'),
     ...key('b', 'bell on or off: it rings when a session needs you or ends its turn'),
     ...(views.length ? key('v V', 'the next view below the list, or the one before') : []),
+    ...(views.length ? key('p', 'the projects view by folder, or by name again') : []),
     ...(t.quit ? pair('r', 'read again', t.quit, 'quit (q in the details goes back)') : key('r', 'read again')),
     ...(mouse ? [
       ...key('click', 'select a row, or none below the rows; double-click for its details'),

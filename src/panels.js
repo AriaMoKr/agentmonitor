@@ -2,10 +2,10 @@
 // sessions as figures on a floor, as cards on a board, as figures in bands by the board's
 // columns, on lanes over the last half hour; their tool calls as they come, their workflows'
 // phases, the files they changed; the plan's usage as a chart, with what a point of the week came
-// to, who used it, which projects, what today came to, the session's limit as a tank the replies
-// drip into; the sessions on a radar, and one spark for them all. Pure functions of a snapshot
-// and the screen's state, as src/view.js's are: those that move do so with the time they are
-// drawn for.
+// to, who used it, which projects (by name, or under their folders), what today came to, the
+// session's limit as a tank the replies drip into; the sessions on a radar, and one spark for
+// them all. Pure functions of a snapshot and the screen's state, as src/view.js's are: those
+// that move do so with the time they are drawn for.
 import { Canvas } from './canvas.js';
 import { ago, clean, clock, dollars, durationLabel, elapsed, fit, graphemes, lastPart, monthDay, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
 import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, pointPrice, projectName, putAway, rate, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
@@ -63,14 +63,15 @@ const RESET = '\x1b[0m';
  * @param {PanelLine[]} body
  * @param {Screen} screen
  * @param {Theme} t
+ * @param {Action} [head] what a click on the heading does: selects none, unless told
  * @returns {PanelLine[]}
  */
-function frame(title, right, body, { width: cols, height }, t) {
+function frame(title, right, body, { width: cols, height }, t, head = NONE) {
   if (height <= 0) return [];
   const blank = { text: ' '.repeat(cols), action: NONE };
   /** @type {PanelLine[]} */
   const out = [blank];
-  if (height > 1) out.push({ text: heading(t.bold(title), right, cols, t), action: NONE });
+  if (height > 1) out.push({ text: heading(t.bold(title), right, cols, t), action: head });
   out.push(...body.slice(0, height - out.length));
   while (out.length < height) out.push(blank);
   return out;
@@ -1354,14 +1355,156 @@ function shareLines(snap, rows, ui, screen, t) {
 // The projects ------------------------------------------------------------------------------
 
 /**
+ * @typedef {object} Project the sessions of a project: by name, of the folders with one last
+ *   part; by folder, of one folder
+ * @property {string} name the folder's last part ('' where it is not known)
+ * @property {string} path the folder, as first seen ('' where it is not known)
+ * @property {number} points what its sessions on this computer used of the week
+ * @property {number} last when one of them was last active
+ * @property {Agent[]} sessions those the list would list but for its filter
+ *
+ * @typedef {object} Folder a folder of the projects by folder
+ * @property {string} label its part of the path, as first seen; a root's as a path begins with
+ *   it ('C:\', '/', '\\' a share's, '' where a path does not), or a project's name where its
+ *   folder is not known
+ * @property {string} sep the separator its path is written with
+ * @property {Project} [own] the project of the sessions that ran in it
+ * @property {Map<string, Folder>} folders those in it on the way to a project, by their part as
+ *   compared
+ * @property {number} points what its project and those in it used of the week
+ * @property {number} last when one of their sessions was last active
+ *
+ * @typedef {object} Branch a line of the projects by folder
+ * @property {string} label what it says: a folder's path from the one above it, ending in its
+ *   separator where there are folders in it
+ * @property {Folder} folder
+ * @property {number} depth how many lines above it are of folders it is in (0 at the top)
+ * @property {number} up the line of the folder it is in, -1 at the top
+ */
+
+/**
+ * The folder of a session the replies came from, by its ID: as the list says it for a session in
+ * the snapshot, else as its transcripts said it (made safe first); '' when not known.
+ * @param {Snapshot} snap
+ * @param {Map<string, Agent>} bySession the sessions in the snapshot, by ID
+ * @param {string} id
+ */
+function pathOf(snap, bySession, id) {
+  const a = bySession.get(id);
+  return a ? a.cwd ?? '' : clean(snap.cwds?.get(id));
+}
+
+/**
+ * A path in its parts: its root ('C:\', '\\' a share's, '/', or '' for a path not from one), the
+ * folders down from it, the separator it is written with, and whether its parts are compared in
+ * one case, as Windows compares them; with the root as roots are compared.
+ * @param {string} path
+ */
+export function pathParts(path) {
+  const sep = /[\\/]/.exec(path)?.[0] ?? '/';
+  const drive = /^[a-z]:/i.exec(path)?.[0];
+  const share = !drive && /^[\\/]{2}[^\\/]/.test(path);
+  const root = drive ? drive + sep : share ? sep + sep : /^[\\/]/.test(path) ? sep : '';
+  const fold = Boolean(drive || share);
+  const parts = path.slice(drive ? 2 : 0).split(/[\\/]+/).filter(Boolean);
+  return { root, sep, fold, parts, key: fold ? root.toLowerCase().replace(/\\/g, '/') : root };
+}
+
+/**
+ * A folder as folders are compared: 'C:\Work\' and 'c:/work' are one.
+ * @param {string} path
+ */
+function folderKey(path) {
+  const { key, fold, parts } = pathParts(path);
+  return [key, ...parts.map((p) => (fold ? p.toLowerCase() : p))].join('/');
+}
+
+/**
+ * The projects under their folders: for each root their paths begin with, the folders down to
+ * each project's, each with what its project and those in it used of the week, and when one of
+ * their sessions was last active. A project whose folder is not known is a root of its own.
+ * @param {Iterable<Project>} projects one for each folder
+ * @returns {Folder[]} the roots
+ */
+function foldersOf(projects) {
+  /** @type {Map<string, Folder>} */
+  const roots = new Map();
+  /** @param {string} label @param {string} sep @returns {Folder} */
+  const folder = (label, sep) => ({ label, sep, folders: new Map(), points: 0, last: 0 });
+  for (const p of projects) {
+    if (!p.path) {
+      roots.set(`\0${p.name}`, { ...folder(projectName(p.name), '/'), own: p });
+      continue;
+    }
+    const { root, sep, fold, parts, key } = pathParts(p.path);
+    let f = roots.get(key);
+    if (!f) roots.set(key, (f = folder(root, sep)));
+    for (const part of parts) {
+      const k = fold ? part.toLowerCase() : part;
+      let g = f.folders.get(k);
+      if (!g) f.folders.set(k, (g = folder(part, sep)));
+      f = g;
+    }
+    f.own = p;
+  }
+  /** @param {Folder} f */
+  const sum = (f) => {
+    f.points = f.own?.points ?? 0;
+    f.last = f.own?.last ?? 0;
+    for (const g of f.folders.values()) {
+      sum(g);
+      f.points += g.points;
+      f.last = Math.max(f.last, g.last);
+    }
+  };
+  for (const f of roots.values()) sum(f);
+  return [...roots.values()];
+}
+
+/**
+ * The lines of the projects by folder, each folder before those in it: at the top the folders in
+ * the roots, each with its root ('C:\git\'), or a root itself where a session ran in it; in a
+ * folder, those in it, the most used of the week first, then the latest active. A folder with no
+ * project of its own and one folder in it, which has none either, shares its line with that one
+ * ('git\my\').
+ * @param {Folder[]} roots
+ * @returns {Branch[]}
+ */
+function branchesOf(roots) {
+  /** @param {[Folder, string]} a @param {[Folder, string]} b */
+  const order = ([a, al], [b, bl]) => b.points - a.points || b.last - a.last || al.localeCompare(bl);
+  /** @type {Branch[]} */
+  const out = [];
+  /** @param {Folder} f @param {string} label @param {number} depth @param {number} up */
+  const add = (f, label, depth, up) => {
+    while (!f.own && f.folders.size === 1) {
+      const [next] = f.folders.values();
+      if (next.own) break;
+      label += f.sep + next.label;
+      f = next;
+    }
+    const at = out.length;
+    // With folders in it, it ends in its separator, as a root does already.
+    out.push({ label: f.folders.size && !label.endsWith(f.sep) ? label + f.sep : label, folder: f, depth, up });
+    const inside = [...f.folders.values()].map((g) => /** @type {[Folder, string]} */ ([g, g.label]));
+    for (const [g, l] of inside.sort(order)) add(g, l, depth + 1, at);
+  };
+  /** @type {[Folder, string][]} */
+  const tops = roots.flatMap((r) => (r.own ? [[r, r.label]] : [...r.folders.values()].map((f) => /** @type {[Folder, string]} */ ([f, r.label + f.label]))));
+  for (const [f, label] of tops.sort(order)) add(f, label, 0, -1);
+  return out;
+}
+
+/**
  * The projects: the sessions by their folder's last part, the most used of the week's limit
  * first, then the latest active. Each with the points of the week its sessions on this computer
  * used (since its reset, or the plan's change where later; those not listed too), as a bar against
  * the most a line has, with the plan's price what they came to, how long ago one of them was last
  * active, and its sessions as the list lists them but for its filter, each by its state, what
  * needs you first; then what the rest of the week came to (other computers, or use before the
- * replies read). A click on a project lists its sessions alone, and on the one so listed, all
- * again; one on a session opens it.
+ * replies read). By folder (p, or a click on the heading), the folders their sessions ran in, a
+ * project under the folders it is in, and each folder with what those in it came to. A click on a
+ * project lists its sessions alone, and on the one so listed, all again; one on a session opens it.
  * @type {Panel}
  */
 function projectsLines(snap, rows, ui, screen, t) {
@@ -1371,12 +1514,16 @@ function projectsLines(snap, rows, ui, screen, t) {
   const week = u ? limitsOf(u, now).week : undefined;
   const share = week ? u?.split?.week : undefined;
   const priced = share && snap.planPrice ? pointPrice(snap.planPrice) : undefined;
-  /** @type {Map<string, { name: string, points: number, last: number, sessions: Agent[] }>} */
+  // By name, a project is the folders with one last part; by folder, a folder.
+  /** @param {string} name @param {string} path */
+  const keyOf = (name, path) => (!ui.paths ? name : path ? folderKey(path) : `\0${name}`);
+  /** @type {Map<string, Project>} */
   const projects = new Map();
-  /** @param {string} name */
-  const of = (name) => {
-    let p = projects.get(name);
-    if (!p) projects.set(name, (p = { name, points: 0, last: 0, sessions: [] }));
+  /** @param {string} name @param {string} path */
+  const of = (name, path) => {
+    const key = keyOf(name, path);
+    let p = projects.get(key);
+    if (!p) projects.set(key, (p = { name, path, points: 0, last: 0, sessions: [] }));
     return p;
   };
   /** @type {Map<string, Agent>} */
@@ -1384,24 +1531,35 @@ function projectsLines(snap, rows, ui, screen, t) {
   for (const a of snap.rows) {
     if (a.sessionId) bySession.set(a.sessionId, a);
     if ((!ui.showEnded && OVER.has(a.state)) || (!ui.showArchived && putAway(a))) continue;
-    of(a.project ?? '').sessions.push(a);
+    of(a.project ?? '', a.cwd ?? '').sessions.push(a);
   }
-  for (const [id, v] of share?.sessions ?? []) of(folderOf(snap, bySession, id)).points += v;
+  for (const [id, v] of share?.sessions ?? []) of(folderOf(snap, bySession, id), pathOf(snap, bySession, id)).points += v;
   // When one of its sessions was last active, those not listed too.
   for (const a of snap.rows) {
-    const p = projects.get(a.project ?? '');
+    const p = projects.get(keyOf(a.project ?? '', a.cwd ?? ''));
     if (p) p.last = Math.max(p.last, a.lastActive);
   }
   const rank = (/** @type {Agent} */ a) => BOARD.findIndex((c) => c.states.includes(shown(a)));
   for (const p of projects.values()) p.sessions.sort((a, b) => rank(a) - rank(b) || b.lastActive - a.lastActive);
-  const order = [...projects.values()].sort((a, b) => b.points - a.points || b.last - a.last || a.name.localeCompare(b.name));
-  const nw = cols >= 100 ? 22 : cols >= 72 ? 16 : cols >= 56 ? 14 : 12;
+  /**
+   * The lines, a project's or a folder's each: what it says, how many folders it is under, what
+   * it used and when it was last active, its project, and the line of the folder it is in.
+   * @type {{ label: string, depth: number, points: number, last: number, p?: Project, up: number }[]}
+   */
+  const items = ui.paths
+    ? branchesOf(foldersOf(projects.values())).map((b) => ({ label: b.label, depth: b.depth, points: b.folder.points, last: b.folder.last, p: b.folder.own, up: b.up }))
+    : [...projects.values()]
+      .sort((a, b) => b.points - a.points || b.last - a.last || a.name.localeCompare(b.name))
+      .map((p) => ({ label: projectName(p.name), depth: 0, points: p.points, last: p.last, p, up: -1 }));
+  // By folder, six columns of a long bar go to the names, for the folders they are under.
+  const wider = ui.paths && cols >= 72 ? 6 : 0;
+  const nw = (cols >= 100 ? 22 : cols >= 72 ? 16 : cols >= 56 ? 14 : 12) + wider;
   // No bar on a screen narrower than 56 columns, nor one for points not known.
-  const bw = !share ? 0 : cols >= 100 ? 24 : cols >= 72 ? 16 : cols >= 56 ? 8 : 0;
+  const bw = !share ? 0 : (cols >= 100 ? 24 : cols >= 72 ? 16 : cols >= 56 ? 8 : 0) - wider;
   const mine = (share?.sessions ?? []).reduce((n, [, v]) => n + v, 0);
   const rest = week && share ? week.v - mine : 0;
   // The bars against the most a line has, the rest's too: they rank the projects.
-  const most = order.reduce((m, p) => Math.max(m, p.points), Math.max(0, rest));
+  const most = items.reduce((m, x) => Math.max(m, x.points), Math.max(0, rest));
   /** @param {number} v @param {(s: string) => string} paint */
   const scaled = (v, paint) => {
     const used = most > 0 ? Math.round((Math.max(0, v) / most) * bw) : 0;
@@ -1410,37 +1568,54 @@ function projectsLines(snap, rows, ui, screen, t) {
   /** The points, and with the plan's price the dollars, in their columns. @param {number} v */
   const numbers = (v) => (share ? ` ${fit(v > 0 ? pts(v) : '', 5, 'right')}${priced ? ` ${fit(v > 0 ? dollars(v * priced, true) : '', 7, 'right')}` : ''}` : '');
   const fits = Math.max(1, room - (rest >= 1 ? 1 : 0));
-  let listed = order.length > fits ? order.slice(0, fits - 1) : order;
-  // The project listed alone, where it is not among them, in place of the last.
-  const alone = order.find((p) => p.name === ui.project);
-  if (alone && listed.length && !listed.includes(alone)) listed = [...listed.slice(0, -1), alone];
+  // As many as fit, the first first, and a line for how many more; but the project listed alone,
+  // where it is not among them, in place of the last, with the folders it is in.
+  let drawn = [...items.keys()];
+  if (items.length > fits) {
+    const budget = fits - 1;
+    /** @type {number[]} */
+    const keep = [];
+    for (let i = items.findIndex((x) => ui.project !== undefined && x.p?.name === ui.project); i >= 0; i = items[i].up) keep.unshift(i);
+    let k = budget;
+    while (k > 0 && k + keep.filter((i) => i >= k).length > budget) k--;
+    drawn = budget > 0 ? [...new Set([...drawn.slice(0, k), ...keep])].sort((a, b) => a - b).slice(-budget) : [];
+  }
   /** @type {PanelLine[]} */
   const body = [];
-  for (const p of listed) {
-    const chosen = ui.project === p.name;
-    const name = fit(projectName(p.name), nw, 'left', t.ellipsis);
-    const start = ` ${chosen ? t.yellow(t.ascii ? '>' : '▸') : ' '} ${chosen ? t.bold(name) : name}${bw ? scaled(p.points, (s) => s) : ''}${numbers(p.points)}  ${t.dim(fit(p.last ? ago(now - p.last) : '', 4, 'right'))}  `;
-    // Its sessions, a glyph each, as many as fit, with how many more.
+  for (const i of drawn) {
+    const { label, depth, points, last, p } = items[i];
+    const chosen = p !== undefined && ui.project === p.name;
+    // Under the folders it is in, two columns each, as far as its name leaves room; a path cut at
+    // its start, where it says most.
+    const pad = Math.min(2 * depth, Math.max(0, nw - 6));
+    const w = nw - pad;
+    const name = ui.paths && /[\\/]/.test(label) ? fit(tail(label, w, t.ellipsis), w) : fit(label, w, 'left', t.ellipsis);
+    const start = ` ${' '.repeat(pad)}${chosen ? t.yellow(t.ascii ? '>' : '▸') : ' '} ${chosen ? t.bold(name) : name}${bw ? scaled(points, (s) => s) : ''}${numbers(points)}  ${t.dim(fit(last ? ago(now - last) : '', 4, 'right'))}  `;
+    // Its own sessions, a glyph each, as many as fit, with how many more.
+    const sessions = p?.sessions ?? [];
     const x = visibleWidth(start);
-    const n = p.sessions.length;
+    const n = sessions.length;
     let k = n;
     while (k > 0 && (k < n ? 2 * k + width(`+${n - k}`) : 2 * k - 1) > cols - x) k--;
     /** @type {Spot[]} */
-    const cells = p.sessions.slice(0, k).map((a, i) => ({ x0: x + 2 * i, x1: x + 2 * i + 2, action: { open: a.key } }));
-    const glyphs = p.sessions.slice(0, k).map((a) => glyph(shown(a), t, now)).join(' ');
+    const cells = sessions.slice(0, k).map((a, j) => ({ x0: x + 2 * j, x1: x + 2 * j + 2, action: { open: a.key } }));
+    const glyphs = sessions.slice(0, k).map((a) => glyph(shown(a), t, now)).join(' ');
     const more = k < n ? t.dim(`${k ? ' ' : ''}+${n - k}`) : '';
-    body.push(line(start + glyphs + more, cols, t, { project: p.name }, cells));
+    body.push(line(start + glyphs + more, cols, t, p ? { project: p.name } : NONE, cells));
   }
-  if (order.length > listed.length) body.push(line(t.dim(`   and ${order.length - listed.length} more`), cols, t));
+  const on = new Set(drawn);
+  const hidden = items.filter((x, i) => x.p && !on.has(i)).length;
+  if (hidden) body.push(line(t.dim(`   and ${hidden} more`), cols, t));
   if (rest >= 1) body.push(line(`   ${t.dim(fit('elsewhere', nw))}${bw ? scaled(rest, t.dim) : ''}${numbers(rest)}  ${t.dim('not in the replies read here')}`, cols, t));
-  if (!order.length) body.push(line(t.dim('   No sessions listed.'), cols, t));
+  if (!items.length) body.push(line(t.dim('   No sessions listed.'), cols, t));
   // As much of what the numbers are as fits: the heading's rules and spaces take 8 columns.
-  const title = 'Projects';
+  const title = ui.paths ? 'Projects by folder' : 'Projects';
   const said = count(projects.size, 'project');
   const what = share ? `points of the week since ${minute(share.from, now)}` : "the week's use not known yet";
   const price = priced && snap.planPrice ? `a point ${dollars(priced)}, at ${dollars(snap.planPrice)} a month` : '';
   const right = [[said, what, price], [said, what], [said]].map((ps) => ps.filter(Boolean).join(t.sep)).find((r) => width(title) + width(r) + 8 < cols) ?? '';
-  return frame(title, t.dim(right), body, screen, t);
+  // A click on the heading shows them by folder, or by name again, as p does.
+  return frame(title, t.dim(right), body, screen, t, { key: 'p' });
 }
 
 // Today -------------------------------------------------------------------------------------
@@ -1770,7 +1945,7 @@ export const VIEWS = [
   { name: 'files', what: 'the files changed in the last hour, and those two sessions changed', animated: false, lines: filesLines },
   { name: 'chart', what: "the session's usage over its window and the week's, at its pace on to the reset; what a point of the week came to; when in the day it was used", animated: false, lines: chartLines },
   { name: 'share', what: "what each session and model on this computer used of the session's limit and the week's; with the plan's price, the week's in dollars", animated: false, lines: shareLines },
-  { name: 'projects', what: "the sessions by project: what each used of the week's limit (with the plan's price, in dollars), when it was last active, its sessions; a click on one lists it alone", animated: false, lines: projectsLines },
+  { name: 'projects', what: "the sessions by project: what each used of the week's limit (with the plan's price, in dollars), when it was last active, its sessions; a click on one lists it alone; p shows them under their folders, each with what those in it came to", animated: false, lines: projectsLines },
   { name: 'today', what: 'what today came to: sessions, agents, prompts, replies, tokens, models, hours, tools, the time waited on you', animated: false, lines: todayLines },
   { name: 'tank', what: "the session's limit as a tank the replies drip into, and the week's; with the plan's price, the week's in dollars", animated: true, lines: tankLines },
   { name: 'radar', what: 'the sessions as blips, nearer the middle the more lately they did something; the sweep lights what just did', animated: true, lines: radarLines },
