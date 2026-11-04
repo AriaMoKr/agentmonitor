@@ -1,9 +1,10 @@
 // A Claude Code config folder for the tests, in a temporary folder: the registry, transcripts,
-// subagents and workflows, background jobs and the desktop app's session records, written as
-// Claude Code writes them.
+// subagents and workflows, background jobs and the desktop app's session records and its page's
+// Local Storage, written as Claude Code and the app write them.
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { writeLocalStorage } from './leveldb.js';
 
 export const NOW = Date.parse('2026-10-29T20:00:00Z');
 export const MINUTE = 60_000;
@@ -195,6 +196,14 @@ export function makeConfig(t) {
     planUsage(samples, base = desktop) {
       const json = { version: 2, samples: samples.map(([t, fh, sd]) => ({ t, org: 'org-1', u: { fh, sd } })) };
       return write(join(base, 'plan-usage-history.json'), JSON.stringify(json));
+    },
+    /**
+     * The desktop app's page's Local Storage: its items [name, text], written to its log, or
+     * appended to it once it is there.
+     * @param {[string, string][]} items @param {string} [base] the app's folder
+     */
+    localStorage(items, base = desktop) {
+      writeLocalStorage(join(base, 'Local Storage', 'leveldb'), 'https://claude.ai', items);
     },
   };
 }

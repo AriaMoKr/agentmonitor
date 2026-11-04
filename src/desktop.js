@@ -4,13 +4,19 @@
 // ultracode is on, the app's summary of its last turn, and when it was last opened and its last
 // turn started or ended: from those, which ones the app shows as unread. Keyed here by the Claude
 // Code session ID (cliSessionId) they run, and by those they ran before it (priorCliSessionIds): a
-// session can go on in a new one, after a rewind say.
+// session can go on in a new one, after a rewind say. And from its page's Local Storage, the
+// next-step boxes closed there, which ask nothing any more.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { entries, JsonFiles } from './files.js';
+import { LevelDb } from './leveldb.js';
 
 /** The most openings of sessions remembered. */
 const MAX_OPENINGS = 10_000;
+/** The page the app shows, whose Local Storage keeps what its Code tab remembers. */
+const ORIGIN = 'https://claude.ai';
+/** Where it keeps the next-step boxes closed: by session, the wrap_up calls they were for. */
+const CLOSED = 'epitaxy.dismissedTurnReceipts';
 
 /**
  * @typedef {object} TurnSummary the app's summary of a session's last turn (postTurnSummary),
@@ -68,6 +74,27 @@ export async function desktopDataDirs(env = process.env, platform = process.plat
   return [join(env.XDG_CONFIG_HOME || join(home, '.config'), 'Claude')];
 }
 
+/**
+ * A key of a page's Local Storage as Chromium keeps it in LevelDB: '_', the page's origin, a 0
+ * byte, then the name after a byte that says how it is written: 1 Latin-1, 0 UTF-16. Both ways.
+ * @param {string} origin
+ * @param {string} name
+ */
+export function localStorageKeys(origin, name) {
+  const head = Buffer.from(`_${origin}\0`, 'latin1');
+  return [Buffer.concat([head, Uint8Array.of(1), Buffer.from(name, 'latin1')]), Buffer.concat([head, Uint8Array.of(0), Buffer.from(name, 'utf16le')])];
+}
+
+/**
+ * A Local Storage value's text: its first byte says how it is written, 1 Latin-1, 0 UTF-16.
+ * @param {Buffer} value
+ */
+export function localStorageText(value) {
+  if (value[0] === 1) return value.subarray(1).toString('latin1');
+  if (value[0] === 0) return value.subarray(1).toString('utf16le');
+  return '';
+}
+
 export class DesktopSessions {
   /** @param {() => Promise<string[]>} dirs the app's data folders, looked up on each read */
   constructor(dirs) {
@@ -83,19 +110,25 @@ export class DesktopSessions {
      * record keeps only its last, so those seen before are remembered here
      */
     this.openings = [];
+    /** @type {Map<string, LevelDb>} each data folder's Local Storage */
+    this.stores = new Map();
+    /** @type {Map<string, Set<string>>} the next-step boxes closed: by the app's session ID, the wrap_up calls' IDs */
+    this.closed = new Map();
   }
 
   /**
-   * The sessions by Claude Code session ID, read again at most every `maxAgeMs`.
+   * The sessions by Claude Code session ID, read again at most every `maxAgeMs`; and the
+   * next-step boxes closed in the app.
    * @param {number} now
    * @param {number} [maxAgeMs]
    */
   async read(now, maxAgeMs = 5000) {
     if (now - this.readAt < maxAgeMs) return this.byCliSession;
     this.readAt = now;
+    const bases = await this.dirs();
     /** @type {string[]} */
     const paths = [];
-    for (const base of await this.dirs()) {
+    for (const base of bases) {
       const root = join(base, 'claude-code-sessions');
       for (const account of await entries(root)) {
         if (!account.isDirectory()) continue;
@@ -132,7 +165,50 @@ export class DesktopSessions {
     this.noteOpenings(all);
     this.byCliSession = byCliSession;
     this.byPriorRun = byPriorRun;
+    this.closed = await this.readClosed(bases);
     return byCliSession;
+  }
+
+  /**
+   * The next-step boxes closed in the app, which its page keeps in its Local Storage: by the
+   * app's session ID, the IDs of the wrap_up calls whose boxes were closed (answering one does
+   * not close it).
+   * @param {string[]} bases the app's data folders
+   */
+  async readClosed(bases) {
+    const dirs = bases.map((b) => join(b, 'Local Storage', 'leveldb'));
+    for (const dir of this.stores.keys()) if (!dirs.includes(dir)) this.stores.delete(dir);
+    /** @type {Map<string, Set<string>>} */
+    const closed = new Map();
+    for (const dir of dirs) {
+      let store = this.stores.get(dir);
+      if (!store) this.stores.set(dir, (store = new LevelDb(dir, localStorageKeys(ORIGIN, CLOSED))));
+      for (const value of (await store.read()).values()) {
+        let o;
+        try {
+          o = JSON.parse(localStorageText(value));
+        } catch {
+          continue;
+        }
+        if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
+        for (const [id, calls] of Object.entries(o)) {
+          if (!Array.isArray(calls)) continue;
+          const ids = closed.get(id) ?? new Set();
+          for (const c of calls) if (typeof c === 'string') ids.add(c);
+          closed.set(id, ids);
+        }
+      }
+    }
+    return closed;
+  }
+
+  /**
+   * Whether a wrap_up call's next-step box was closed in the app, as last read.
+   * @param {string | undefined} sessionId the app's session ID
+   * @param {string | undefined} callId the call's tool use ID
+   */
+  closedBox(sessionId, callId) {
+    return Boolean(sessionId && callId && this.closed.get(sessionId)?.has(callId));
   }
 
   /**

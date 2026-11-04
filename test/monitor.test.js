@@ -684,13 +684,50 @@ test("a session whose last turn ended asking you something is blocked on it till
     return [r?.state, r?.activityKind, r?.activity, r?.activityAt, r?.blocked];
   };
   assert.deepEqual(seen(idle), ['idle', 'blocked', 'blocked: Take out the 15?', NOW - 2 * MINUTE, true]);
-  assert.deepEqual(row(idle)?.nextStep, { text: 'Take out the 15?', answers: ['Take out the 15', 'Take out 20 instead'], ts: NOW - 3 * MINUTE + 100 });
+  assert.deepEqual(row(idle)?.nextStep, { id: `w${NOW - 3 * MINUTE}`, text: 'Take out the 15?', answers: ['Take out the 15', 'Take out 20 instead'], ts: NOW - 3 * MINUTE + 100 });
   assert.deepEqual(row(idle)?.turn, { category: 'completed', detail: 'Cutting 15 picks leaves 99', needs: undefined });
   assert.deepEqual(seen(busy), ['working', 'thinking', 'thinking', NOW - 2 * MINUTE, undefined], 'at work, it asks nothing yet');
   assert.equal(row(busy)?.nextStep, undefined);
   assert.deepEqual(seen(ended), ['ended', 'blocked', 'blocked: Take out the 15?', NOW - 2 * MINUTE, true], 'ended, it still waits on you');
   assert.deepEqual(seen(answered), ['idle', 'summary', 'Cutting 15 picks leaves 99', NOW - 2 * MINUTE, false]);
   assert.equal(row(answered)?.nextStep, undefined);
+});
+
+test('a question whose next-step box you closed in the desktop app asks nothing more: its session is not blocked on it', async (t) => {
+  const cfg = makeConfig(t);
+  /** @param {number} pid @param {string} call the wrap_up call's ID */
+  const session = (pid, call) => {
+    const id = sessionId();
+    cfg.transcript(id, [
+      rec.prompt('Check the picks', NOW - 10 * MINUTE),
+      rec.tool(call, 'mcp__ccd_turn__wrap_up', { recap: 'The 15 were never published.', ask: 'Take out the 15?' }, NOW - 3 * MINUTE),
+      rec.result(call, NOW - 3 * MINUTE + 100, false, 'Shown in the next-step box.'),
+      rec.reply('They should come out.', NOW - 2 * MINUTE),
+    ], { mtime: NOW - 2 * MINUTE });
+    cfg.registry({ pid, sessionId: id, status: 'idle', entrypoint: 'claude-desktop', hostSessionId: `local_${pid}`, statusUpdatedAt: NOW - 2 * MINUTE });
+    cfg.desktopSession({ sessionId: `local_${pid}`, cliSessionId: id, title: `local_${pid}` });
+    return id;
+  };
+  const closed = session(1, 'toolu_1');
+  const open = session(2, 'toolu_2');
+  const elsewhere = session(3, 'toolu_3');
+  // The app keeps, by session, the calls whose boxes were closed there: under another session,
+  // one counts for nothing.
+  const receipts = { local_1: ['toolu_0', 'toolu_1'], local_2: ['toolu_9'], local_9: ['toolu_3'], local_8: 'junk' };
+  cfg.localStorage([['epitaxy.dismissedTurnReceipts', JSON.stringify(receipts)], ['epitaxy-unread-v1', '{"state":{"unreadIds":[]}}']]);
+  const { monitor } = monitorOf(cfg, { running: { 1: 'claude.exe', 2: 'claude.exe', 3: 'claude.exe' } });
+  const seen = async (/** @type {number} */ now) => {
+    const rows = (await monitor.refresh(now)).rows;
+    return [closed, open, elsewhere].map((id) => {
+      const r = rows.find((x) => x.sessionId === id);
+      return [r?.activityKind, r?.blocked, r?.nextStep?.id];
+    });
+  };
+  assert.deepEqual(await seen(NOW), [['reply', undefined, undefined], ['blocked', true, 'toolu_2'], ['blocked', true, 'toolu_3']]);
+
+  // Another box closed as the monitor runs: read again with the app's records.
+  cfg.localStorage([['epitaxy.dismissedTurnReceipts', JSON.stringify({ ...receipts, local_2: ['toolu_9', 'toolu_2'] })]]);
+  assert.deepEqual(await seen(NOW + 5000), [['reply', undefined, undefined], ['reply', undefined, undefined], ['blocked', true, 'toolu_3']]);
 });
 
 test("a desktop app session's earlier runs, which it went on from in others: named after it, archived with it", async (t) => {
