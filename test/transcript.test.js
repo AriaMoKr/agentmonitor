@@ -367,7 +367,7 @@ test("what a turn's wrap_up asks you as it ends, in the desktop app's next-step 
   const tx = new Transcript(path);
   await update(tx);
   // A second call that failed changes nothing.
-  assert.deepEqual(tx.info.nextStep, { text: 'Take out the 15?', answers: ['Take out the 15', 'Take out 20 instead'], ts: NOW - 49_900 });
+  assert.deepEqual(tx.info.nextStep, { id: 'w1', text: 'Take out the 15?', answers: ['Take out the 15', 'Take out 20 instead'], ts: NOW - 49_900 });
 
   // Answered: a turn begins, and asks nothing as it ends.
   appendFileSync(path, jsonl([rec.prompt('Take out the 15', NOW - 40_000)]));
@@ -384,7 +384,7 @@ test("what a turn's wrap_up asks you as it ends, in the desktop app's next-step 
     rec.reply('Sign it off.', NOW - 24_000),
   ]));
   await update(tx);
-  assert.deepEqual(tx.info.nextStep, { text: 'The PR waits on your sign-off.', answers: ['create pr', 'commit'], ts: NOW - 24_900 });
+  assert.deepEqual(tx.info.nextStep, { id: 'w4', text: 'The PR waits on your sign-off.', answers: ['create pr', 'commit'], ts: NOW - 24_900 });
 
   // A background task's end begins a turn too.
   appendFileSync(path, jsonl([rec.taskEnd('toolu_x', 'bx', 'completed', NOW - 20_000)]));

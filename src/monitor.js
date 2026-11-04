@@ -4,9 +4,9 @@
 // sessions/<pid>.json (the running processes and their status), projects/*/<session>.jsonl (the
 // transcripts) and the agents' files beside them, and jobs/*/state.json (background sessions);
 // with the desktop app's own records of its sessions for titles, settings, which are unread, and
-// the app's summary of each one's last turn; and its samples of the plan's usage, carried on to
-// now with what the replies in the transcripts used since; and what the replies, the prompts and
-// the waits on you came to today.
+// the app's summary of each one's last turn, and the next-step boxes closed in its page's Local
+// Storage; and its samples of the plan's usage, carried on to now with what the replies in the
+// transcripts used since; and what the replies, the prompts and the waits on you came to today.
 import { join } from 'node:path';
 import { SessionAgents } from './agents.js';
 import { DesktopSessions, desktopDataDirs } from './desktop.js';
@@ -115,7 +115,7 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  * @property {number} [openedAt] when it was last opened in the desktop app
  * @property {Turn} [turn] of a session not at work, when it sums up the transcript's last reply
  * @property {import('./transcript.js').NextStep} [nextStep] of a session not at work: what its
- *   last turn asked you as it ended, in the desktop app's next-step box
+ *   last turn asked you as it ended, in the desktop app's next-step box, till you close the box
  * @property {boolean} [blocked] its turn ended on something only you can do: what `nextStep`
  *   asks, or what `turn` says
  * @property {string} [hostSessionId] the desktop app's ID for the session
@@ -407,8 +407,11 @@ export class Monitor {
       if (state === 'working' && askingOf(info)) state = 'waiting';
       const over = state === 'idle' || state === 'ended';
       const turn = over ? turnOf(d, info) : undefined;
-      // A question its last turn ended on waits for your answer: it is blocked on it.
-      const nextStep = over ? info?.nextStep : undefined;
+      const host = record?.hostSessionId ?? d?.id ?? prior?.session.id;
+      // A question its last turn ended on waits for your answer, blocked on it, till you close its
+      // box in the desktop app.
+      const asked = over ? info?.nextStep : undefined;
+      const nextStep = asked && !this.desktop.closedBox(host, asked.id) ? asked : undefined;
       const act = activityOf(state, info, record, i === 0 ? children : [], turn, now, nextStep);
       if (!record && s.job?.state && !act.text) {
         Object.assign(act, { kind: 'job', text: clean(`${s.job.state}: ${s.job.needs ?? s.job.detail ?? ''}`).replace(/:$/, ''), at: s.job.updatedAt ?? 0 });
@@ -454,7 +457,7 @@ export class Monitor {
         turn,
         nextStep,
         blocked: nextStep ? true : turn ? turn.category === 'blocked' : undefined,
-        hostSessionId: safe(record?.hostSessionId ?? d?.id ?? prior?.session.id),
+        hostSessionId: safe(host),
         earlier: of ? { of, title, rewoundAt: prior?.rewoundAt } : undefined,
         job: s.job,
         pending: pendingOf(info),

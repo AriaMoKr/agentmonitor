@@ -59,10 +59,10 @@ const SKIP = /^\{"type":"(?:api-request|file-history|atis-latch|frame-link|artif
  *   approve, a session offered
  * @typedef {{ start: number, end: number }} Span a turn: from the prompt (or the message) that
  *   began it to the reply that ended it; end 0 while it goes on
- * @typedef {{ text: string, answers: string[], ts: number }} NextStep what the desktop app's
- *   next-step box asks you at the end of a turn, as the turn's wrap_up call filled it: its
- *   question, or its recap where it says only that the session is blocked; the answers its
- *   buttons give; and when
+ * @typedef {{ id: string, text: string, answers: string[], ts: number }} NextStep what the
+ *   desktop app's next-step box asks you at the end of a turn, as the turn's wrap_up call filled
+ *   it: the call's tool use ID (which the app keeps when the box is closed), its question, or its
+ *   recap where it says only that the session is blocked; the answers its buttons give; and when
  * @typedef {ReturnType<typeof emptyInfo>} Info
  */
 
@@ -438,7 +438,7 @@ function readResult(info, id, call, text, ts) {
         info.plan = { steps, ts };
       }
       // And fills the next-step box, which asks you its question till the next turn.
-      info.nextStep = nextStepOf(input, ts);
+      info.nextStep = nextStepOf(id, input, ts);
       break;
   }
 }
@@ -448,18 +448,19 @@ function readResult(info, id, call, text, ts) {
  * none but says the session is blocked, its recap; with the answers its buttons give, an app
  * action's by its own label or else its name. A box that asks nothing waits on no one. Where the
  * app draws no box (it drops a button whose label it does not take), the reply asks it instead.
+ * @param {string} id the call's tool use ID
  * @param {Record<string, any>} input
  * @param {number} ts
  * @returns {NextStep | undefined}
  */
-function nextStepOf(input, ts) {
+function nextStepOf(id, input, ts) {
   const text = clean(input.ask) || (input.blocked === true ? clean(input.recap) : '');
   if (!text) return undefined;
   const answers = (Array.isArray(input.actions) ? input.actions : []).slice(0, 4).map((a) => {
     const o = a && typeof a === 'object' ? a : {};
     return (clean(o.label) || clean(typeof o.action === 'string' ? o.action.replace(/_/g, ' ') : '')).slice(0, 80);
   });
-  return { text: text.slice(0, MAX_TEXT), answers: answers.filter(Boolean), ts };
+  return { id: typeof id === 'string' ? id : '', text: text.slice(0, MAX_TEXT), answers: answers.filter(Boolean), ts };
 }
 
 /**
