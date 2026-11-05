@@ -229,10 +229,10 @@ test('the mouse: a click selects, a second opens, the wheel moves, a key below a
   await tui.until(() => tui.line('Old work').startsWith('>'));
   tui.click(tui.find('? help').x, 15);
   await tui.until((s) => s.includes('Keys'));
-  assert.match(tui.text(), /click {9}select a row/);
-  // The wheel scrolls it, and a click goes back.
+  // The wheel scrolls it, to what the mouse does, and a click goes back.
   tui.type('\x1b[<65;10;5M');
   await tui.until((s) => / 4-18\/\d+ *$/m.test(s));
+  assert.match(tui.text(), /click {9}select a row/);
   tui.click(0, 0);
   await tui.until((s) => s.includes('NAME'));
   tui.click(tui.find('NAME').x, 1);

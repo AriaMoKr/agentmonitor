@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';
 import { test } from 'node:test';
-import { Monitor } from '../src/monitor.js';
+import { dismissalsOf, Monitor } from '../src/monitor.js';
 import { HOUR, iso, makeConfig, MINUTE, NOW, rec, sessionId } from './helpers/fixture.js';
 
 /**
@@ -728,6 +728,84 @@ test('a question whose next-step box you closed in the desktop app asks nothing 
   // Another box closed as the monitor runs: read again with the app's records.
   cfg.localStorage([['epitaxy.dismissedTurnReceipts', JSON.stringify({ ...receipts, local_2: ['toolu_9', 'toolu_2'] })]]);
   assert.deepEqual(await seen(NOW + 5000), [['reply', undefined, undefined], ['reply', undefined, undefined], ['blocked', true, 'toolu_3']]);
+});
+
+test("x dismisses what a session's last turn left you, a question or a reply not read, till its next reply; kept by whoever keeps them", async (t) => {
+  const cfg = makeConfig(t);
+  const reply = `r${NOW - 2 * MINUTE}`;
+  const postTurnSummary = { status_category: 'blocked', status_detail: 'Checklists listed', needs_action: 'Shall I start on the checklists?', summarizes_uuid: reply };
+  const asks = desktopSession(cfg, 1, 'local_asks', { postTurnSummary });
+  // Its turn ended while another was open: unread.
+  const left = desktopSession(cfg, 2, 'local_left', { lastFocusedAt: NOW - 10 * MINUTE, lastTurnEdgeAt: NOW - 2 * MINUTE });
+  desktopSession(cfg, 3, 'local_watched', { lastFocusedAt: NOW - 5 * MINUTE, lastTurnEdgeAt: NOW - 20 * MINUTE });
+  const busy = desktopSession(cfg, 4, 'local_busy', {}, 'busy');
+  /** @type {import('../src/monitor.js').Dismissal[][]} */
+  const kept = [];
+  const running = { 1: 'claude.exe', 2: 'claude.exe', 3: 'claude.exe', 4: 'claude.exe' };
+  const make = (/** @type {import('../src/monitor.js').Dismissal[]} */ dismissed = []) => new Monitor({
+    dir: cfg.dir, windowMs: 24 * HOUR, desktopDirs: async () => [cfg.desktop], isRunning: (pid) => Object.hasOwn(running, pid),
+    processTable: async () => new Map(Object.entries(running).map(([pid, name]) => [Number(pid), { name, memKB: 1024 }])),
+    dismissed, onDismissed: (list) => kept.push(list),
+  });
+  const monitor = make();
+  const seen = async (/** @type {Monitor} */ m, /** @type {number} */ now) => {
+    const rows = (await m.refresh(now)).rows;
+    return [asks, left].map((id) => {
+      const r = rows.find((x) => x.sessionId === id);
+      return [r?.activityKind, r?.blocked, r?.unread, r?.dismissed];
+    });
+  };
+  assert.deepEqual(await seen(monitor, NOW), [['blocked', true, false, undefined], ['reply', undefined, true, undefined]]);
+  assert.equal(monitor.dismiss(`s:${sessionId()}`, true), false, 'a session not read');
+  assert.equal(monitor.dismiss('a:agent', true), false, 'an agent');
+  assert.equal(monitor.dismiss(`s:${asks}`, false), false, 'not dismissed');
+  assert.deepEqual(kept, [], 'nothing changed');
+
+  assert.equal(monitor.dismiss(`s:${asks}`, true, NOW + 1000), true);
+  assert.deepEqual(kept.at(-1), [{ session: asks, reply, at: NOW + 1000 }]);
+  assert.equal(monitor.dismiss(`s:${left}:2`, true, NOW + 2000), true, "a row of one of its processes dismisses the session");
+  const both = await seen(monitor, NOW + 3000);
+  assert.deepEqual(both, [['summary', undefined, false, true], ['reply', undefined, false, true]]);
+  const row = (await monitor.refresh(NOW + 3000)).rows.find((x) => x.sessionId === asks);
+  assert.deepEqual([row?.activity, row?.turn?.category], ['Checklists listed', 'blocked'], 'its summary says what the turn came to');
+  assert.equal(kept.length, 2);
+
+  // Brought back, and dismissed again.
+  assert.equal(monitor.dismiss(`s:${asks}`, false), true);
+  assert.deepEqual(kept.at(-1), [{ session: left, reply, at: NOW + 2000 }]);
+  assert.deepEqual((await seen(monitor, NOW + 4000))[0], ['blocked', true, false, undefined]);
+  monitor.dismiss(`s:${asks}`, true, NOW + 5000);
+  const list = /** @type {import('../src/monitor.js').Dismissal[]} */ (kept.at(-1));
+
+  // Kept, they hold in a monitor started again; a session at work has nothing to dismiss.
+  const again = make(list);
+  assert.deepEqual(await seen(again, NOW + 6000), both);
+  again.dismiss(`s:${busy}`, true, NOW + 6000);
+  assert.equal((await again.refresh(NOW + 7000)).rows.find((x) => x.sessionId === busy)?.dismissed, undefined);
+  const count = kept.length;
+
+  // Its next reply ends a dismissal: the turn it left is not the one dismissed.
+  cfg.transcript(asks, [
+    rec.prompt('Work on local_asks', NOW - 30 * MINUTE), rec.reply('Done.', NOW - 2 * MINUTE),
+    rec.prompt('Start on them', NOW + MINUTE), rec.reply('Shall I go on to the next?', NOW + 2 * MINUTE),
+  ], { mtime: NOW + 2 * MINUTE });
+  cfg.desktopSession({ sessionId: 'local_asks', cliSessionId: asks, title: 'local_asks', postTurnSummary: { ...postTurnSummary, summarizes_uuid: `r${NOW + 2 * MINUTE}` } }, NOW + 2 * MINUTE);
+  const after = await seen(again, NOW + 3 * MINUTE);
+  assert.deepEqual(after[0], ['blocked', true, false, undefined]);
+  assert.deepEqual(kept.slice(count).map((l) => l.map((d) => d.session)), [[left, busy]], 'told once, without it');
+});
+
+test('dismissals as kept in a file: only those as they should be, the latest of a session, 500 at most', () => {
+  const id = (/** @type {number} */ n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  assert.deepEqual(dismissalsOf(undefined), []);
+  assert.deepEqual(dismissalsOf({ session: id(1), reply: 'r', at: 1 }), []);
+  assert.deepEqual(dismissalsOf([
+    null, 'junk', { session: id(1), reply: 'r1', at: 5 }, { session: id(1), reply: 'r0', at: 2 }, { session: '../x', reply: 'r', at: 1 },
+    { session: id(2), reply: 7, at: 1 }, { session: id(3), reply: '', at: Infinity }, { session: id(4), reply: '', at: 3 }, { session: '__proto__', reply: 'r', at: 4 },
+  ]), [{ session: id(4), reply: '', at: 3 }, { session: '__proto__', reply: 'r', at: 4 }, { session: id(1), reply: 'r1', at: 5 }]);
+  const many = Array.from({ length: 600 }, (_, n) => ({ session: id(n), reply: `r${n}`, at: n }));
+  const kept = dismissalsOf(many);
+  assert.deepEqual([kept.length, kept[0].at, kept.at(-1)?.at], [500, 100, 599]);
 });
 
 test("a desktop app session's earlier runs, which it went on from in others: named after it, archived with it", async (t) => {

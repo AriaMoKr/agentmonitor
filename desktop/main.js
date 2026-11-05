@@ -10,13 +10,14 @@
 // the tray's Quit. The monitor runs in this process, and serves its web view on this computer
 // only, at a free port and a token of its own. The first start adds the app to the Start menu
 // (Windows) or the applications menu (Linux), to start it from there with no terminal. It writes
-// only its own files: its settings and icons in its folder, and those entries.
+// only its own files: its settings, the sessions dismissed with x and its icons in its folder,
+// and those entries.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, screen, session, shell, Tray } from 'electron';
 import { clock, dollars } from '../src/format.js';
-import { Monitor } from '../src/monitor.js';
+import { dismissalsOf, Monitor } from '../src/monitor.js';
 import { serve } from '../src/serve.js';
 import { sessionStates } from '../src/viewer.js';
 import { appIco, appIcon, countIcon, donutIcon, glyphIco, sessionsIcon, tileIcon, trayIcon, TURNS, turningIcon, usageIcon } from './icons.js';
@@ -118,6 +119,8 @@ let flyoutHidAt = 0;
 
 const folder = () => app.getPath('userData');
 const settingsPath = () => join(folder(), 'settings.json');
+/** The sessions dismissed with x, each till its next reply, kept from one run to the next. */
+const dismissedPath = () => join(folder(), 'dismissed.json');
 const icoPath = () => join(folder(), 'agentmonitor.ico');
 const pngPath = () => join(folder(), 'agentmonitor.png');
 /** A glyph as ICO, for the jump list's items. */
@@ -180,7 +183,7 @@ async function start() {
   session.defaultSession.setPermissionRequestHandler((_page, _what, answer) => answer(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   const dir = resolve(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'));
-  monitor = new Monitor({ dir, windowMs: 24 * HOUR, planPrice: settings.planPrice });
+  monitor = new Monitor({ dir, windowMs: 24 * HOUR, planPrice: settings.planPrice, dismissed: loadDismissed(), onDismissed: keepDismissed });
   served = await serve(monitor, {
     host: '127.0.0.1', port: 0, intervalMs: 1000, ascii: false, agents: 'running', showEnded: true, log,
     // q in the window or the flyout quits, as in a terminal.
@@ -858,5 +861,27 @@ function save() {
     writeFileSync(settingsPath(), `${JSON.stringify(settings, null, 2)}\n`);
   } catch (e) {
     logNow(`could not keep the settings: ${/** @type {Error} */ (e).message}`);
+  }
+}
+
+/** The sessions dismissed with x, as kept: those that are not as they should be left out. */
+function loadDismissed() {
+  try {
+    return dismissalsOf(JSON.parse(readFileSync(dismissedPath(), 'utf8')));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Keeps the sessions dismissed, each time they change.
+ * @param {import('../src/monitor.js').Dismissal[]} list
+ */
+function keepDismissed(list) {
+  try {
+    mkdirSync(folder(), { recursive: true });
+    writeFileSync(dismissedPath(), `${JSON.stringify(list, null, 2)}\n`);
+  } catch (e) {
+    logNow(`could not keep the sessions dismissed: ${/** @type {Error} */ (e).message}`);
   }
 }
