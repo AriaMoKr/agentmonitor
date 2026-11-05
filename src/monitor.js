@@ -7,6 +7,8 @@
 // the app's summary of each one's last turn, and the next-step boxes closed in its page's Local
 // Storage; and its samples of the plan's usage, carried on to now with what the replies in the
 // transcripts used since; and what the replies, the prompts and the waits on you came to today.
+// What a session's last turn left you, a question or a reply not read, can be dismissed with x,
+// till its next reply: the monitor's own, which the agentmonitor app keeps in its folder.
 import { join } from 'node:path';
 import { SessionAgents } from './agents.js';
 import { DesktopSessions, desktopDataDirs } from './desktop.js';
@@ -118,6 +120,9 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  *   last turn asked you as it ended, in the desktop app's next-step box, till you close the box
  * @property {boolean} [blocked] its turn ended on something only you can do: what `nextStep`
  *   asks, or what `turn` says
+ * @property {boolean} [dismissed] of a session not at work: what its last turn left you (a
+ *   question, a reply not read) was dismissed with x, and is neither blocked nor unread till its
+ *   next reply
  * @property {string} [hostSessionId] the desktop app's ID for the session
  * @property {{ of: string, title: string, rewoundAt?: number }} [earlier] a Claude Code session
  *   that a desktop app session ran before its current one, titled after it ("reviews (earlier
@@ -148,10 +153,39 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  *   them, for those that are not listed
  * @property {number} [planPrice] the plan's price a month, in dollars, when told: what the
  *   week's use came to is shown at it
+ *
+ * @typedef {object} Dismissal what a session's last turn left you, dismissed with x
+ * @property {string} session the Claude Code session ID
+ * @property {string} reply the uuid of its last assistant record then ('' for none): its next
+ *   reply ends the dismissal
+ * @property {number} at when it was dismissed
  */
 
 /** The states of something still at work, or waiting to be. */
 export const LIVE_STATES = new Set(['working', 'waiting', 'idle', 'active', 'running']);
+
+/** The dismissals kept at most: those made longest ago go first. */
+const MAX_DISMISSALS = 500;
+
+/**
+ * The dismissals that are as they should be, from a file: at most MAX_DISMISSALS, the latest.
+ * @param {unknown} list
+ * @returns {Dismissal[]}
+ */
+export function dismissalsOf(list) {
+  if (!Array.isArray(list)) return [];
+  /** @type {Map<string, Dismissal>} */
+  const by = new Map();
+  for (const d of list) {
+    if (!d || typeof d !== 'object') continue;
+    const { session, reply, at } = /** @type {Record<string, unknown>} */ (d);
+    if (typeof session !== 'string' || !/^[\w-]{1,100}$/.test(session) || typeof reply !== 'string' || reply.length > 100) continue;
+    if (typeof at !== 'number' || !Number.isFinite(at)) continue;
+    const known = by.get(session);
+    if (!known || at > known.at) by.set(session, { session, reply, at });
+  }
+  return [...by.values()].sort((a, b) => a.at - b.at).slice(-MAX_DISMISSALS);
+}
 
 export class Monitor {
   /**
@@ -164,13 +198,24 @@ export class Monitor {
    * @param {boolean} [o.wait] whether a refresh waits for what is read in the background (the
    *   replies the usage is carried on with): for a snapshot printed once
    * @param {number} [o.planPrice] the plan's price a month, in dollars
+   * @param {Dismissal[]} [o.dismissed] the sessions dismissed before (the agentmonitor app keeps
+   *   them from one run to the next)
+   * @param {(dismissed: Dismissal[]) => void} [o.onDismissed] told of the dismissals each time
+   *   they change, to keep them: one made or taken back, or ended by a session's next reply
    */
-  constructor({ dir, windowMs, desktopDirs = () => desktopDataDirs(), isRunning: running = isRunning, processTable: table = () => processTable(), wait = false, planPrice }) {
+  constructor({ dir, windowMs, desktopDirs = () => desktopDataDirs(), isRunning: running = isRunning, processTable: table = () => processTable(), wait = false, planPrice, dismissed = [], onDismissed = () => {} }) {
     this.dir = dir;
     this.windowMs = windowMs;
     this.wait = wait;
     /** @type {number | undefined} the plan's price a month, in dollars: the agentmonitor app's setting changes it */
     this.planPrice = planPrice;
+    /** @type {Map<string, Dismissal>} by session ID, the oldest first */
+    this.dismissals = new Map(dismissalsOf(dismissed).map((d) => [d.session, d]));
+    this.onDismissed = onDismissed;
+    /** whether a session's next reply ended a dismissal in the refresh under way */
+    this.dismissalEnded = false;
+    /** @type {Map<string, string>} each session's last assistant record, as the last refresh read it ('' for none) */
+    this.lastReplies = new Map();
     this.registry = new Registry(join(dir, 'sessions'));
     this.jobs = new Jobs(join(dir, 'jobs'));
     this.desktop = new DesktopSessions(desktopDirs);
@@ -245,9 +290,17 @@ export class Monitor {
 
     // The window is checked again by the last record's time: a session's transcript also takes
     // records with no time (its cost, when the app quits), which change the file's.
-    const rows = (await Promise.all([...found.values()].map((s) => this.sessionRows(s, live, desktop, now))))
+    /** @type {Map<string, string>} */
+    const lastReplies = new Map();
+    const rows = (await Promise.all([...found.values()].map((s) => this.sessionRows(s, live, desktop, now, lastReplies))))
       .flat()
       .filter((r) => r.live || r.state === 'active' || r.lastActive >= cutoff);
+    this.lastReplies = lastReplies;
+    // The dismissals that a session's next reply ended.
+    if (this.dismissalEnded) {
+      this.dismissalEnded = false;
+      this.onDismissed([...this.dismissals.values()]);
+    }
 
     for (const path of this.transcripts.keys()) if (!this.usedTranscripts.has(path)) this.transcripts.delete(path);
     for (const [dir, hit] of this.endedAgents) {
@@ -264,6 +317,29 @@ export class Monitor {
       ...(replies?.cwds ? { cwds: replies.cwds } : {}),
       ...(this.planPrice ? { planPrice: this.planPrice } : {}),
     };
+  }
+
+  /**
+   * Dismisses what a session's last turn left you, or takes that back: dismissed, a session not
+   * at work is neither blocked nor unread till its next reply, which the last refresh tells
+   * from the reply it read last.
+   * @param {string} key the session's key, as its row has it ('s:<id>', or 's:<id>:<pid>')
+   * @param {boolean} on
+   * @param {number} [now]
+   * @returns {boolean} whether that changed anything
+   */
+  dismiss(key, on, now = Date.now()) {
+    const id = /^s:([^:]+)/.exec(key)?.[1];
+    const reply = id ? this.lastReplies.get(id) : undefined;
+    if (!id || (on ? reply === undefined : !this.dismissals.has(id))) return false;
+    this.dismissals.delete(id);
+    if (on) this.dismissals.set(id, { session: id, reply: /** @type {string} */ (reply), at: now });
+    for (const old of this.dismissals.keys()) {
+      if (this.dismissals.size <= MAX_DISMISSALS) break;
+      this.dismissals.delete(old);
+    }
+    this.onDismissed([...this.dismissals.values()]);
+    return true;
   }
 
   /**
@@ -375,11 +451,21 @@ export class Monitor {
    * @param {Map<RegistryEntry, { live: boolean, memKB?: number }>} live
    * @param {Map<string, import('./desktop.js').DesktopSession>} desktop
    * @param {number} now
+   * @param {Map<string, string>} [lastReplies] gets the session's last assistant record ('' for none)
    * @returns {Promise<Agent[]>}
    */
-  async sessionRows(s, live, desktop, now) {
+  async sessionRows(s, live, desktop, now, lastReplies = new Map()) {
     const tx = s.file ? await this.transcript(s.file.path, s.file) : null;
     const info = tx?.info;
+    const reply = info?.lastAssistantUuid ?? '';
+    lastReplies.set(s.id, reply);
+    // A dismissal lasts till the session's next reply.
+    const dismissal = this.dismissals.get(s.id);
+    if (dismissal && info && dismissal.reply !== reply) {
+      this.dismissals.delete(s.id);
+      this.dismissalEnded = true;
+    }
+    const held = this.dismissals.has(s.id);
     const isLive = s.records.length > 0;
     if (isLive) this.seenLive.add(s.id);
     const children = await this.childrenOf(s, isLive, info, now);
@@ -408,11 +494,13 @@ export class Monitor {
       const over = state === 'idle' || state === 'ended';
       const turn = over ? turnOf(d, info) : undefined;
       const host = record?.hostSessionId ?? d?.id ?? prior?.session.id;
+      // Dismissed with x, what its last turn left you asks nothing and is not unread.
+      const dismissed = over && held;
       // A question its last turn ended on waits for your answer, blocked on it, till you close its
       // box in the desktop app.
-      const asked = over ? info?.nextStep : undefined;
+      const asked = over && !dismissed ? info?.nextStep : undefined;
       const nextStep = asked && !this.desktop.closedBox(host, asked.id) ? asked : undefined;
-      const act = activityOf(state, info, record, i === 0 ? children : [], turn, now, nextStep);
+      const act = activityOf(state, info, record, i === 0 ? children : [], turn, now, nextStep, dismissed);
       if (!record && s.job?.state && !act.text) {
         Object.assign(act, { kind: 'job', text: clean(`${s.job.state}: ${s.job.needs ?? s.job.detail ?? ''}`).replace(/:$/, ''), at: s.job.updatedAt ?? 0 });
       }
@@ -452,11 +540,12 @@ export class Monitor {
         transcript: s.file?.path,
         transcriptSize: s.file?.size,
         archived: d?.archived ?? prior?.session.archived,
-        unread: d ? (state === 'idle' || state === 'ended') && this.desktop.unread(d) : undefined,
+        unread: d ? (state === 'idle' || state === 'ended') && !dismissed && this.desktop.unread(d) : undefined,
         openedAt: d?.openedAt,
         turn,
         nextStep,
-        blocked: nextStep ? true : turn ? turn.category === 'blocked' : undefined,
+        blocked: dismissed ? undefined : nextStep ? true : turn ? turn.category === 'blocked' : undefined,
+        dismissed: dismissed || undefined,
         hostSessionId: safe(host),
         earlier: of ? { of, title, rewoundAt: prior?.rewoundAt } : undefined,
         job: s.job,
@@ -726,9 +815,11 @@ function askingOf(info) {
  * @param {Turn} [turn] the desktop app's summary of the last turn
  * @param {number} [now]
  * @param {import('./transcript.js').NextStep} [nextStep] what the last turn asked you as it ended
+ * @param {boolean} [dismissed] what the last turn left you was dismissed: a summary that says it
+ *   is blocked says only what the turn came to
  * @returns {{ kind: ActivityKind, text: string, at: number, inTool?: boolean }}
  */
-export function activityOf(state, info, record, children, turn, now = 0, nextStep) {
+export function activityOf(state, info, record, children, turn, now = 0, nextStep, dismissed = false) {
   if (state === 'waiting') {
     const ask = askingOf(info);
     if (ask) return { kind: 'waiting', text: `waiting: ${ask.text}`, at: ask.ts };
@@ -753,7 +844,7 @@ export function activityOf(state, info, record, children, turn, now = 0, nextSte
   }
   const at = info?.lastReply?.ts || info?.lastTs || 0;
   if (nextStep) return { kind: 'blocked', text: `blocked: ${nextStep.text}`, at };
-  if (turn?.category === 'blocked') return { kind: 'blocked', text: `blocked: ${turn.needs || turn.detail}`, at };
+  if (turn?.category === 'blocked' && !dismissed) return { kind: 'blocked', text: `blocked: ${turn.needs || turn.detail}`, at };
   // A session that runs, its turn over, with a command still going on in the background.
   const commands = record ? commandsOf(info) : [];
   if (commands.length) {

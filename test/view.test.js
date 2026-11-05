@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { clock, fit, monthDay, timeOfDay, weekday, width } from '../src/format.js';
 import { columns, detailLines, helpLines, initialUi, listLines, makeTheme, putAway, rate, settleSelection, table, visibleRows, wrapStyled } from '../src/view.js';
+import { Viewer } from '../src/viewer.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE, NOW } from './helpers/fixture.js';
 
@@ -124,6 +125,60 @@ test('a session whose last turn ended blocked on you: its mark, counted, listed 
   const color = makeTheme({ color: true, ascii: false, animate: false });
   const ended = listLines(snap, visibleRows(snap, ui, color), ui, { width: 170, height: 12, now: NOW }, color)[4];
   assert.ok(ended.includes('\x1b[1;33mblocked: say whether'), `a session that ended, blocked, still waits on you: ${JSON.stringify(ended)}`);
+});
+
+test('x dismisses the selected session, blocked or unread, or brings it back, in the list or its details, and reads again; the footer offers it', () => {
+  /** @type {[string, boolean][]} */
+  const calls = [];
+  let reads = 0;
+  const monitor = {
+    dir: '/home/me/.claude', windowMs: 24 * HOUR,
+    dismiss: (/** @type {string} */ key, /** @type {boolean} */ on) => calls.push([key, on]) > 0,
+  };
+  const viewer = new Viewer({ monitor, t: plain, agents: 'running', showEnded: true, refresh: () => reads++ });
+  const summary = { category: 'blocked', detail: 'Checklists listed', needs: 'Shall I start on the checklists?' };
+  const snap = snapshot([
+    blockedSession({ key: 's:blk', title: 'Blocked session' }),
+    agent({ key: 's:new', title: 'Unread session', unread: true, activity: 'Done.', activityKind: 'reply' }),
+    agent({ key: 's:dis', title: 'Dismissed session', dismissed: true, activity: 'Checklists listed', activityKind: 'summary', turn: summary }),
+    agent({ key: 's:idle', title: 'Idle session' }),
+    agent({ key: 's:wait', title: 'Waiting session', state: 'waiting', activity: 'waiting: a question', activityKind: 'waiting' }),
+    agent({ key: 's:run', title: 'Busy session', state: 'working', children: [agent({ key: 'a:sub', type: 'subagent', title: 'Explore', state: 'running' })] }),
+  ]);
+  const screen = { width: 140, height: 24, now: NOW };
+  /** The footer with the key selected, and what x says and does then. @param {string | undefined} key */
+  const press = (key) => {
+    Object.assign(viewer.ui, { selected: key, message: '', messageUntil: 0, ...(key ? {} : { index: -1 }) });
+    const footer = viewer.lines(snap, screen).at(-1) ?? '';
+    const before = calls.length;
+    viewer.key({ name: 'x', ch: 'x' });
+    return { x: /x (dismiss|bring back)/.exec(footer)?.[0], says: viewer.ui.message, did: calls.slice(before) };
+  };
+  assert.deepEqual(press('s:blk'), { x: 'x dismiss', says: 'dismissed till its next reply: Blocked session', did: [['s:blk', true]] });
+  assert.deepEqual(press('s:new'), { x: 'x dismiss', says: 'dismissed till its next reply: Unread session', did: [['s:new', true]] });
+  assert.deepEqual(press('s:dis'), { x: 'x bring back', says: 'back as it was: Dismissed session', did: [['s:dis', false]] });
+  assert.equal(reads, 3, 'read again each time, to show it');
+  assert.deepEqual(press('s:idle'), { x: undefined, says: 'nothing to dismiss: Idle session', did: [] });
+  assert.deepEqual(press('s:wait'), { x: undefined, says: 'waits for your answer where it runs: Waiting session', did: [] });
+  assert.deepEqual(press('a:sub'), { x: undefined, says: 'x dismisses a session, not an agent', did: [] });
+  assert.deepEqual(press(undefined), { x: undefined, says: "x dismisses the selected session's question or unread reply", did: [] });
+  assert.equal(reads, 3);
+
+  // In its details: its status says it, and its keys offer x.
+  Object.assign(viewer.ui, { selected: 's:dis', message: '', messageUntil: 0 });
+  viewer.key({ name: 'enter' });
+  const details = viewer.lines(snap, screen);
+  assert.match(details[0], /Dismissed session +idle · dismissed $/);
+  assert.match(details.at(-1) ?? '', /tab next {2}x bring back/);
+  viewer.key({ name: 'x', ch: 'x' });
+  assert.deepEqual([calls.at(-1), viewer.ui.view], [['s:dis', false], 'detail']);
+
+  // Where the monitor cannot, it says so.
+  const without = new Viewer({ monitor: { dir: '/home/me/.claude', windowMs: 24 * HOUR }, t: plain, agents: 'none', showEnded: true });
+  without.ui.selected = 's:blk';
+  without.lines(snap, screen);
+  without.key({ name: 'x', ch: 'x' });
+  assert.equal(without.ui.message, 'could not dismiss: Blocked session');
 });
 
 test('a session archived in the desktop app is put away once it ended, blocked or not: listed only with all that ended, counted nowhere', () => {
@@ -878,8 +933,9 @@ test('the activity log shows the newest events, and scrolls back', () => {
 });
 
 test('the help fills the screen, the keys that scroll it on its last line, one column short', () => {
-  const lines = helpLines(initialUi(), { width: 90, height: 67, now: NOW }, plain, '/home/me/.claude');
-  assert.equal(lines.length, 67);
+  const lines = helpLines(initialUi(), { width: 90, height: 68, now: NOW }, plain, '/home/me/.claude');
+  assert.equal(lines.length, 68);
+  assert.match(lines.join('\n'), / {3}x {13}dismiss a session's question or unread reply, till its next reply *\n {3}s {13}sort/);
   assert.match(lines.join('\n'), /Keys[\s\S]*States[\s\S]*Usage[\s\S]*Columns[\s\S]*Below the list[\s\S]*Reading \/home\/me\/\.claude/);
   // What a state means from the column a key's does.
   assert.match(lines.join('\n'), /◇ blocked {5}its turn ended asking you something, or on what only you can do/);
@@ -901,7 +957,7 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   assert.match(off, /↑↓ pgup pgdn home end scroll; any other key goes back\./);
   lines.slice(0, -1).forEach((l) => assert.equal(visible(l), 90, l));
   // All of it fits: no telling how far down it is.
-  assert.equal(lines[66], ` esc back  ↑↓ scroll  home/end${' '.repeat(59)}`);
+  assert.equal(lines[67], ` esc back  ↑↓ scroll  home/end${' '.repeat(59)}`);
   assert.equal(helpLines(initialUi(), { width: 90, height: 10, now: NOW }, plain, '/x').length, 10);
 });
 

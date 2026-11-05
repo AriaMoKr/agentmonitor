@@ -21,8 +21,9 @@ const DOUBLE_CLICK = 500;
 export class Viewer {
   /**
    * @param {object} o
-   * @param {{ dir: string, windowMs: number }} o.monitor what it looks at: the folder read, and
-   *   the window for "recently active", which w steps
+   * @param {{ dir: string, windowMs: number, dismiss?: (key: string, on: boolean) => boolean }} o.monitor
+   *   what it looks at: the folder read, the window for "recently active", which w steps, and
+   *   what x dismisses a session with (src/monitor.js), for every view of it
    * @param {import('./view.js').Theme} o.t
    * @param {import('./view.js').AgentsShown} o.agents
    * @param {boolean} o.showEnded
@@ -244,6 +245,25 @@ export class Viewer {
   }
 
   /**
+   * x: what the selected session's last turn left you, a question or a reply not read, dismissed
+   * till its next reply; or, dismissed already, back. In the list or in its details; read again
+   * at once, to show it.
+   */
+  dismiss() {
+    const { ui } = this;
+    const a = ui.view === 'detail' ? this.detail : this.rows.find((r) => r.agent.key === ui.selected)?.agent;
+    if (!a) return this.say("x dismisses the selected session's question or unread reply");
+    if (a.type !== 'session') return this.say('x dismisses a session, not an agent');
+    const on = !a.dismissed;
+    if (on && !a.blocked && !a.unread) {
+      return this.say(a.state === 'waiting' ? `waits for your answer where it runs: ${a.title}` : `nothing to dismiss: ${a.title}`);
+    }
+    if (!this.monitor.dismiss?.(a.key, on)) return this.say(`could not ${on ? 'dismiss' : 'bring back'}: ${a.title}`);
+    this.say(on ? `dismissed till its next reply: ${a.title}` : `back as it was: ${a.title}`);
+    this.refresh();
+  }
+
+  /**
    * A click on a row selects it, and a second one soon after opens it; one below the rows selects
    * none, but on an agent the panel there names, which it opens, as one on an agent in the details
    * does, and on a project the projects view names, whose sessions it lists alone (or all again);
@@ -333,6 +353,7 @@ export class Viewer {
           this.move(key.name === 'tab' ? 1 : -1);
           ui.logScroll = 0;
           return;
+        case 'x': return this.dismiss();
       }
       return;
     }
@@ -347,6 +368,8 @@ export class Viewer {
       case 'end': case 'G': return this.move(0, this.rows.length - 1);
       case 'enter': case 'right': case 'l':
         return this.open();
+      case 'x':
+        return this.dismiss();
       case '/':
         ui.editingFilter = true;
         return;

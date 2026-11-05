@@ -1207,6 +1207,9 @@ function footer(ui, rows, t, cols, now, onHit) {
   ];
   // The projects view's own key, while it is the view below the list.
   if (ui.panel === 'projects') all.splice(4, 0, [`p paths:${ui.paths ? 'on' : 'off'}`, 2, 'p']);
+  // x, while the selected session has something to dismiss, or was dismissed.
+  const x = dismissKey(rows.find((r) => r.agent.key === ui.selected)?.agent);
+  if (x) all.splice(2, 0, [x, 3, 'x']);
   // A web page is closed, not quit; the agentmonitor app's window quits as a terminal does.
   if (t.quit) all.push(['q quit', 5, 'q']);
   // A space before, two between the keys and the position, and one after it.
@@ -1225,6 +1228,16 @@ function footer(ui, rows, t, cols, now, onHit) {
   if (filter) onHit({ x0: 1, x1: 1 + visibleWidth(filter) - 2, action: { key: 'escape' } });
   keyHits(shown.map(([k, , key]) => [k, key]), 1 + visibleWidth(filter), onHit);
   return spread(` ${filter}${t.dim(shown.map(([k]) => k).join('  '))}`, `${t.dim(pos)} `, cols, t);
+}
+
+/**
+ * What x does to a session, as the footer says it: dismisses what its last turn left you (it is
+ * blocked or unread), or brings that back; undefined for any other agent, which x leaves alone.
+ * @param {Agent | undefined} a
+ */
+export function dismissKey(a) {
+  if (a?.type !== 'session') return undefined;
+  return a.dismissed ? 'x bring back' : a.blocked || a.unread ? 'x dismiss' : undefined;
 }
 
 /**
@@ -1287,6 +1300,8 @@ export function detailLines(a, snap, ui, { width: cols, height, now }, t, hits =
   while (lines.length < height - 1) lines.push(' '.repeat(cols));
   /** @type {[string, string | undefined][]} */
   const keys = [['esc back', 'escape'], [`${t.arrows} scroll`, undefined], ['home/end', undefined], ['tab next', 'tab']];
+  const x = dismissKey(a);
+  if (x) keys.push([x, 'x']);
   const y = lines.length;
   keyHits(keys, 1, (hit) => hits.push({ ...hit, y }));
   lines.push(t.pad(` ${t.dim(keys.map(([k]) => k).join('  '))}`, cols - 1));
@@ -1302,7 +1317,7 @@ export function detailLines(a, snap, ui, { width: cols, height, now }, t, hits =
  * @param {Theme} t
  */
 export function statusOf(a, now, t) {
-  const turn = a.nextStep ? 'blocked' : a.turn && a.turn.category !== 'completed' && a.turn.category.replace(/_/g, ' ');
+  const turn = a.dismissed ? 'dismissed' : a.nextStep ? 'blocked' : a.turn && a.turn.category !== 'completed' && a.turn.category.replace(/_/g, ' ');
   const word = a.inTool ? 'in a tool' : waitsInBackground(a) ? 'background' : a.state;
   return [word, turn, a.unread && 'unread', ongoing(a) && elapsed(now - a.activityAt)].filter(Boolean).join(t.sep);
 }
@@ -1536,6 +1551,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
     ...pair(`${t.arrows} j k`, 'move', 'pgup pgdn home end', 'move by pages'),
     ...pair(`${t.enter} l ${right}`, 'details', `esc h ${left}`, 'back, or clear the filter'),
     ...pair('/', 'filter', 'tab', 'next agent, in details'),
+    ...key('x', "dismiss a session's question or unread reply, till its next reply"),
     ...key('s', `sort: status, most recent, name, project${mouse ? ' (or click a title)' : ''}`),
     ...key('e', 'sessions that ended: on (but those the desktop app archived), off, all'),
     ...key('a', 'agents under their session: running, all, none'),

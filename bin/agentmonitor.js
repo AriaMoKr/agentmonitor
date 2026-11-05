@@ -57,12 +57,13 @@ Options:
   -h, --help
 
 Times: 30s, 5m, 2h, 1d, 1w.
-Keys: arrows move, Enter shows details, / filters, s sorts, e cycles the
-sessions that ended (on but those archived, off, all), a cycles agents, w
-cycles the window, b turns the bell on or off, v and V cycle the views below
-the list, ? help, q quits. The mouse: a click selects, a double click shows
-details, the wheel moves. The web page takes the same keys and clicks; anyone
-with its address sees what it shows.
+Keys: arrows move, Enter shows details, x dismisses the selected session's
+question or unread reply till its next reply (x again brings it back), /
+filters, s sorts, e cycles the sessions that ended (on but those archived,
+off, all), a cycles agents, w cycles the window, b turns the bell on or off,
+v and V cycle the views below the list, ? help, q quits. The mouse: a click
+selects, a double click shows details, the wheel moves. The web page takes
+the same keys and clicks; anyone with its address sees what it shows.
 `;
 
 /**
