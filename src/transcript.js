@@ -33,8 +33,10 @@ const TURN_ENDS = new Set(['end_turn', 'stop_sequence', 'max_tokens', 'refusal']
 // How a tool call's result begins when its command went on in the background, with its task ID
 // (a command's own output that says so further on is not taken for it).
 const TO_BACKGROUND = /^\s*Command (?:running in background with ID|did not complete [^\n]{0,80}?moved to the background \(ID): ?([\w-]+)/;
-// Records the monitor never needs, some of them megabytes long: skipped without being parsed.
-const SKIP = /^\{"type":"(?:api-request|file-history|atis-latch|frame-link|artifact-|mode"|bridge-session|queue-operation)/;
+// Records the monitor never needs, some of them megabytes long: skipped without being parsed. Of
+// the queue of messages for a session's next turn, only what was put in it is read: a background
+// task's end can wait there.
+const SKIP = /^\{"type":"(?:api-request|file-history|atis-latch|frame-link|artifact-|mode"|bridge-session|queue-operation","operation":"(?!enqueue"))/;
 
 /**
  * @typedef {{ ts: number, kind: 'prompt' | 'reply' | 'tool' | 'error' | 'info', text: string }} Event
@@ -254,7 +256,7 @@ async function readHead(fh, size) {
  * @param {number} end
  */
 function readLine(info, buf, start, end) {
-  if (SKIP.test(buf.toString('latin1', start, Math.min(end, start + 40)))) return;
+  if (SKIP.test(buf.toString('latin1', start, Math.min(end, start + 64)))) return;
   let rec;
   try {
     rec = JSON.parse(buf.toString('utf8', start, end));
@@ -271,6 +273,14 @@ function readLine(info, buf, start, end) {
  */
 export function readRecord(info, rec) {
   const ts = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) || 0 : 0;
+  // A message put in the queue for the session's next turn is not in the conversation yet, nor is
+  // its time the session's. But one about a background task's end says the task is over: one that
+  // ends while the session is not at work and begins no turn (you stop it in the desktop app) has
+  // its message wait there.
+  if (rec.type === 'queue-operation') {
+    if (rec.operation === 'enqueue' && typeof rec.content === 'string') taskEnded(info, rec.content, ts);
+    return;
+  }
   if (ts) {
     if (!info.firstTs || ts < info.firstTs) info.firstTs = ts;
     if (ts > info.lastTs) info.lastTs = ts;

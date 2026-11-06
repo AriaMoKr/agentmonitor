@@ -308,6 +308,42 @@ test('a background command ends by a message taken in while a turn goes on', asy
   assert.equal(tx.info.events.at(-1)?.text, 'Bash: Run the tests: failed in the background');
 });
 
+test('a background command stopped while the session is not at work: its end waits in the queue for the next turn, and no turn begins', async (t) => {
+  const path = tempFile(t);
+  writeFileSync(path, jsonl([
+    rec.prompt('serve it, and test it', NOW - 60_000),
+    rec.tool('toolu_s', 'PowerShell', { command: 'npm run serve', description: 'Serve', run_in_background: true }, NOW - 50_000),
+    rec.result('toolu_s', NOW - 49_000, false, 'Command running in background with ID: b1.'),
+    rec.tool('toolu_t', 'Bash', { command: 'npm test -- --watch', description: 'Watch the tests', run_in_background: true }, NOW - 45_000),
+    rec.result('toolu_t', NOW - 44_000, false, 'Command running in background with ID: b2.'),
+    rec.reply('It serves, and the tests run as you change them.', NOW - 40_000),
+  ]));
+  const tx = new Transcript(path);
+  await update(tx);
+  assert.deepEqual([...tx.info.commands.keys()], ['toolu_s', 'toolu_t']);
+  const turns = tx.info.turns.length;
+
+  // The queue's other records end nothing: a prompt typed during a turn, put in it, and taken from it.
+  appendFileSync(path, jsonl([
+    rec.queue('enqueue', NOW - 30_000, 'and the docs too'),
+    rec.queue('dequeue', NOW - 29_000),
+    rec.queue('remove', NOW - 28_000),
+    rec.taskQueued('toolu_s', 'b1', 'killed', NOW - 20_000),
+  ]));
+  await update(tx);
+  assert.deepEqual([...tx.info.commands.keys()], ['toolu_t'], 'the server stopped, the tests still watched');
+  assert.equal(tx.info.events.at(-1)?.text, 'PowerShell: Serve: killed in the background');
+  assert.deepEqual([tx.info.turns.length, Boolean(tx.info.turns.at(-1)?.end)], [turns, true], 'no turn begins');
+  assert.equal(tx.info.lastTs, NOW - 40_000, "the queue's times are not the session's");
+  assert.equal(tx.info.prompts, 1, 'nor are its messages prompts');
+
+  // Taken in with the next prompt, the message ends nothing more.
+  appendFileSync(path, jsonl([rec.prompt('anything else?', NOW - 10_000), rec.taskEnd('toolu_s', 'b1', 'killed', NOW - 10_000, true)]));
+  await update(tx);
+  assert.equal(tx.info.events.filter((e) => e.text.endsWith('killed in the background')).length, 1);
+  assert.deepEqual([...tx.info.commands.keys()], ['toolu_t']);
+});
+
 test("a task list: the desktop app's, step by step and checked off at the end, and TodoWrite's", async (t) => {
   const path = tempFile(t);
   const plan = (/** @type {string} */ id, /** @type {object} */ input, /** @type {number} */ at, ok = true) => [

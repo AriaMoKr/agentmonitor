@@ -209,7 +209,12 @@ test('a command in the background of a session whose turn is over; its task list
   const later = sessionId();
   cfg.transcript(later, [...records, rec.prompt('Thanks', NOW - 2 * MINUTE), rec.reply('You are welcome.', NOW - MINUTE)], { mtime: NOW - MINUTE });
   cfg.registry({ pid: 2, sessionId: later, status: 'idle', statusUpdatedAt: NOW - MINUTE });
-  const rows = (await monitorOf(cfg, { running: { 1: 'claude.exe', 2: 'claude.exe' } }).monitor.refresh(NOW)).rows;
+  // Stopped in the desktop app while the session is not at work: the message about its end waits
+  // in the queue for the next turn.
+  const stopped = sessionId();
+  cfg.transcript(stopped, [...records, rec.taskQueued('b1', 'bx1', 'killed', NOW - 3 * MINUTE)], { mtime: NOW - 3 * MINUTE });
+  cfg.registry({ pid: 3, sessionId: stopped, status: 'idle', statusUpdatedAt: NOW - 7 * MINUTE });
+  const rows = (await monitorOf(cfg, { running: { 1: 'claude.exe', 2: 'claude.exe', 3: 'claude.exe' } }).monitor.refresh(NOW)).rows;
   const row = (/** @type {string} */ id) => rows.find((r) => r.sessionId === id);
   const plan = { steps: steps.map((s) => ({ text: s.content, status: s.status })), at: NOW - 9 * MINUTE + 100, current: true };
 
@@ -221,6 +226,9 @@ test('a command in the background of a session whose turn is over; its task list
   const e = row(ended);
   assert.deepEqual([e?.state, e?.activityKind, e?.activity, e?.commands], ['ended', 'reply', 'It serves on port 8080.', undefined]);
   assert.deepEqual(row(later)?.plan, { ...plan, current: false }, 'made before the last prompt');
+  const s = row(stopped);
+  assert.deepEqual([s?.state, s?.activityKind, s?.activity, s?.commands, s?.lastActive], ['idle', 'reply', 'It serves on port 8080.', [], NOW - 7 * MINUTE]);
+  assert.equal(s?.events.at(-1)?.text, 'Bash: Serve the site: killed in the background');
 });
 
 test('an agent at work in the background of a session whose turn is over; once it finished, nothing is', async (t) => {
