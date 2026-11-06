@@ -125,9 +125,12 @@ export const rec = {
   agentName: (name) => ({ type: 'agent-name', agentName: name, sessionId: 's' }),
   /** @param {string} text */
   lastPrompt: (text) => ({ type: 'last-prompt', lastPrompt: text, sessionId: 's' }),
-  cost: () => ({
+  /** @param {Record<string, unknown>} [o] fields of Claude Code's to set, or with undefined leave out */
+  cost: (o = {}) => ({
     type: 'cost-state', sessionId: 's', totalCostUSD: 1.5, totalLinesAdded: 10, totalLinesRemoved: 2, totalAPIDuration: 1000, totalDuration: 5000,
-    modelUsage: { 'claude-opus-5-5': { inputTokens: 100, outputTokens: 2000, cacheReadInputTokens: 30_000, cacheCreationInputTokens: 4000 } },
+    startTime: NOW - HOUR, hasUnknownModelCost: false,
+    modelUsage: { 'claude-opus-5-5': { inputTokens: 100, outputTokens: 2000, cacheReadInputTokens: 30_000, cacheCreationInputTokens: 4000, costUSD: 1.5 } },
+    ...o,
   }),
 };
 

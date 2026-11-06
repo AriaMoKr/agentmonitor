@@ -48,7 +48,9 @@ const SKIP = /^\{"type":"(?:api-request|file-history|atis-latch|frame-link|artif
  * @typedef {{ steps: Step[], ts: number }} Plan a task list: the desktop app's (update_plan) or
  *   Claude Code's own (TodoWrite), as of its last change
  * @typedef {{ usd: number, input: number, output: number, cacheRead: number, cacheWrite: number,
- *   linesAdded: number, linesRemoved: number, apiMs: number, durationMs: number }} Cost
+ *   linesAdded: number, linesRemoved: number, apiMs: number, durationMs: number, since: number,
+ *   unpriced: boolean }} Cost Claude Code's own count of a session, its replies at the API's
+ *   prices: since when it counted (0 when not said), and whether a model in it has no price it knows
  * @typedef {object} Call a tool call: when it was made, and when its result came
  * @property {string} id its tool use ID
  * @property {string} name the tool
@@ -674,7 +676,10 @@ function textOf(content) {
 }
 
 /**
- * Claude Code's running totals for a session, from a cost-state record.
+ * Claude Code's running totals for a session, from a cost-state record: its replies at the API's
+ * prices, since its startTime, which the session's later runs keep counting from; and whether a
+ * model in them has no price it knows (hasUnknownModelCost: another provider's, which it still
+ * puts a cost on).
  * @param {Record<string, any>} rec
  * @returns {Cost}
  */
@@ -684,6 +689,7 @@ function costOf(rec) {
     usd: n(rec.totalCostUSD), input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
     linesAdded: n(rec.totalLinesAdded), linesRemoved: n(rec.totalLinesRemoved),
     apiMs: n(rec.totalAPIDuration), durationMs: n(rec.totalDuration),
+    since: Math.max(0, n(rec.startTime)), unpriced: rec.hasUnknownModelCost === true,
   };
   for (const u of Object.values(rec.modelUsage ?? {})) {
     cost.input += n(u?.inputTokens);

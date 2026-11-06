@@ -766,7 +766,10 @@ test('the detail view: the fields of a session, its agents and its activity', ()
   const s = agent({
     key: 's:d', title: 'Detail session', state: 'ended', live: false, sessionId: id, kind: 'cli', version: '2.1.309',
     cwd: 'C:\\work\\demo', branch: 'main', project: 'demo', model: 'claude-opus-5-5', effort: 'high', ctx: 112_400, outTokens: 5300,
-    cost: { usd: 1.5, input: 100, output: 2000, cacheRead: 30_000, cacheWrite: 4000, linesAdded: 10, linesRemoved: 2, apiMs: 1000, durationMs: 5000 },
+    cost: {
+      usd: 1.5, input: 100, output: 2000, cacheRead: 30_000, cacheWrite: 4000, linesAdded: 10, linesRemoved: 2, apiMs: 1000, durationMs: 5000,
+      since: NOW - 3 * 24 * HOUR, unpriced: false,
+    },
     startedAt: NOW - HOUR, lastActive: NOW - 5 * MINUTE, activity: 'All done.', activityKind: 'reply', activityAt: NOW - 5 * MINUTE,
     transcript: 'C:\\Users\\me\\.claude\\projects\\C--work-demo\\x.jsonl', transcriptSize: 822_041,
     events: [
@@ -788,7 +791,8 @@ test('the detail view: the fields of a session, its agents and its activity', ()
     /Folder {5}C:\\work\\demo · branch main/,
     /Model {6}claude-opus-5-5 · effort high/,
     /Context {4}112k tokens · 5\.3k output tokens in the part read/,
-    /Totals {5}\$1\.50 · 2k out · 34k in · \+10 -2 lines · as Claude Code last saved them/,
+    // Claude Code's own count, at the API's prices, since it began counting.
+    new RegExp(`API cost {3}\\$1\\.50 since ${monthDay(NOW - 3 * 24 * HOUR)} · 2k out · 34k in · \\+10 -2 lines · as Claude Code last saved them`),
     /Transcript C:\\Users\\me\\\.claude\\projects\\C--work-demo\\x\.jsonl · 803 KB/,
     /Agents {2}1 agent *\n/,
     /Explore +helper/,
@@ -841,13 +845,14 @@ test('an earlier run of a desktop app session: its details say so, and the title
   const run = agent({
     key: 's:e', title: 'reviews (earlier run)', state: 'ended', live: false, kind: 'desktop', sessionId: 'e1', hostSessionId: 'local_r',
     earlier: { of: 'reviews', title: 'Sessions, folders, and repos review', rewoundAt: NOW - 15 * MINUTE },
-    cost: { usd: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, linesAdded: 0, linesRemoved: 0, apiMs: 0, durationMs: 0 },
+    cost: { usd: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, linesAdded: 0, linesRemoved: 0, apiMs: 0, durationMs: 0, since: 0, unpriced: false },
   });
   const details = (/** @type {import('../src/monitor.js').Agent} */ a) => detailLines(a, snapshot([a]), initialUi(), { width: 100, height: 20, now: NOW }, plain).join('\n');
   const text = details(run);
   assert.match(text, /Desktop {4}local_r · an earlier run, rewound .+ \(15m ago\)/);
   assert.match(text, /Was titled Sessions, folders, and repos review/);
-  assert.match(text, /Totals {5}\$0\.00 · as Claude Code last saved them/, 'no reply, no tokens to count');
+  assert.match(text, /API cost {3}\$0\.00 · as Claude Code last saved them/, 'no reply, no tokens to count, no start said');
+  assert.match(details({ ...run, cost: { ...run.cost, unpriced: true } }), /API cost {3}\$0\.00 · a model's price unknown · as Claude Code last saved them/);
   const restarted = details({ ...run, earlier: { of: 'reviews', title: 'reviews' } });
   assert.match(restarted, /Desktop {4}local_r · an earlier run *$/m);
   assert.doesNotMatch(restarted, /Was titled/, 'the title it had is the one it is named after');
