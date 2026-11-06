@@ -32,6 +32,13 @@ const efforts = (effort, perTurnEffort) => ({
 });
 
 /**
+ * The message Claude Code sends a session when a task it runs in the background ends.
+ * @param {string} toolId the call that started it @param {string} taskId @param {string} status
+ */
+const taskNote = (toolId, taskId, status) =>
+  `<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>${toolId}</tool-use-id>\n<output-file>C:\\tmp\\${taskId}.output</output-file>\n<status>${status}</status>\n<summary>Background command ${status}</summary>\n</task-notification>`;
+
+/**
  * Transcript records, as Claude Code writes them.
  */
 export const rec = {
@@ -82,11 +89,25 @@ export const rec = {
    * @param {string} toolId the call that started it @param {string} taskId @param {string} status @param {number} at @param {boolean} [queued]
    */
   taskEnd: (toolId, taskId, status, at, queued = false) => {
-    const text = `<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>${toolId}</tool-use-id>\n<output-file>C:\\tmp\\${taskId}.output</output-file>\n<status>${status}</status>\n<summary>Background command ${status}</summary>\n</task-notification>`;
+    const text = taskNote(toolId, taskId, status);
     return queued
       ? { parentUuid: 'x', isSidechain: false, attachment: { type: 'queued_command', prompt: text }, type: 'attachment', uuid: `q${at}`, timestamp: iso(at) }
       : { parentUuid: 'x', isSidechain: false, type: 'user', message: { role: 'user', content: text }, uuid: `n${at}`, timestamp: iso(at) };
   },
+  /**
+   * The same message put in the queue for the session's next turn, where it waits: the task ended
+   * while the session was not at work, and began no turn (you stopped it in the desktop app).
+   * @param {string} toolId @param {string} taskId @param {string} status @param {number} at
+   */
+  taskQueued: (toolId, taskId, status, at) => rec.queue('enqueue', at, taskNote(toolId, taskId, status)),
+  /**
+   * A record of the queue of messages for the session's next turn: one put in it (with what it
+   * says), taken from it, or taken out.
+   * @param {'enqueue' | 'dequeue' | 'remove'} operation @param {number} at @param {string} [content]
+   */
+  queue: (operation, at, content) => ({
+    type: 'queue-operation', operation, timestamp: iso(at), sessionId: 's', ...(content === undefined ? {} : { content }),
+  }),
   /** Ultracode's reminder, which comes after some prompts. @param {number} at @param {'full' | 'sparse'} [reminderType] */
   ultra: (at, reminderType = 'full') => ({
     parentUuid: 'x', isSidechain: false, attachment: { type: 'ultra_effort_enter', reminderType }, type: 'attachment', uuid: `ue${at}`, timestamp: iso(at),
