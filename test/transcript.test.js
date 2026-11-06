@@ -47,10 +47,34 @@ test('reads a session: model, context, prompt, reply, titles, totals', async (t)
   assert.equal(i.firstTs, NOW - 60_000);
   assert.equal(i.lastTs, NOW - 50_000);
   assert.equal(i.prompts, 1);
-  assert.deepEqual(i.cost, { usd: 1.5, input: 100, output: 2000, cacheRead: 30_000, cacheWrite: 4000, linesAdded: 10, linesRemoved: 2, apiMs: 1000, durationMs: 5000 });
+  assert.deepEqual(i.cost, {
+    usd: 1.5, input: 100, output: 2000, cacheRead: 30_000, cacheWrite: 4000, linesAdded: 10, linesRemoved: 2, apiMs: 1000, durationMs: 5000,
+    since: NOW - HOUR, unpriced: false,
+  });
   assert.deepEqual(tx.head, { firstTs: NOW - 60_000, firstPrompt: 'Build the monitor' });
   assert.deepEqual(i.events.map((e) => e.kind), ['prompt', 'reply']);
   assert.equal(await update(tx), false, 'an unchanged file is not read again');
+});
+
+test("Claude Code's totals: the last saved, since when it counted, and whether a model in them has no price it knows", async (t) => {
+  const path = tempFile(t);
+  writeFileSync(path, jsonl([
+    rec.prompt('Try the local model', NOW - 60_000),
+    rec.reply('It runs.', NOW - 50_000),
+    rec.cost({ startTime: NOW - 30 * HOUR }),
+  ]));
+  const tx = new Transcript(path);
+  await update(tx);
+  assert.equal(tx.info.cost?.since, NOW - 30 * HOUR);
+  assert.equal(tx.info.cost?.unpriced, false);
+  // Saved again, as the app quits: with a model of another provider's, and without its start, as
+  // a new version might write it.
+  appendFileSync(path, jsonl([rec.cost({ totalCostUSD: 1.62, startTime: undefined, hasUnknownModelCost: true })]));
+  await update(tx);
+  assert.equal(tx.info.cost?.usd, 1.62);
+  assert.equal(tx.info.cost?.since, 0);
+  assert.equal(tx.info.cost?.unpriced, true);
+  assert.deepEqual([tx.info.firstTs, tx.info.lastTs], [NOW - 60_000, NOW - 50_000], "the start of its count is no time of the session's");
 });
 
 test('tool calls stay pending until their result, and failures become events', async (t) => {

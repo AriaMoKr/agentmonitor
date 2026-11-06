@@ -1412,8 +1412,10 @@ function* fieldLines(a, snap, now, t, cols) {
       field('Model', join([a.model, a.effort && `effort ${a.effort}`, a.ultracode && 'ultracode', a.permissionMode && `permissions ${a.permissionMode}`])),
       field('Context', join([a.ctx && `${tokens(a.ctx)} tokens`, a.outTokens && `${tokens(a.outTokens)} output tokens in the part read`])),
       ...cacheLines(a, snap, now).map(([label, value]) => field(label, value)),
-      field('Totals', a.cost ? join([
-        `$${a.cost.usd.toFixed(2)}`,
+      // Claude Code's own count, at the API's prices: not the plan's share, which Plan says.
+      field('API cost', a.cost ? join([
+        `$${a.cost.usd.toFixed(2)}${a.cost.since ? ` since ${monthDay(a.cost.since)}` : ''}`,
+        a.cost.unpriced && "a model's price unknown",
         a.cost.output && `${tokens(a.cost.output)} out`,
         (a.cost.input + a.cost.cacheRead + a.cost.cacheWrite) && `${tokens(a.cost.input + a.cost.cacheRead + a.cost.cacheWrite)} in`,
         (a.cost.linesAdded || a.cost.linesRemoved) && `+${a.cost.linesAdded} -${a.cost.linesRemoved} lines`,
