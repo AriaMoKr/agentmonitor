@@ -1,9 +1,9 @@
 // What the agentmonitor app shows on its taskbar button and beside it, of what the tray worked
 // out: the plan's usage as the button's bar, how many sessions need you or the sessions by what
 // they show as its overlay, a button for each session under its preview and the part of the
-// window the preview shows, and the jump list of its sessions; where the tray's flyout opens; and
-// the session a start of the app asks it to open. Pure, so the tests can tell; main.js shows it
-// with Electron.
+// window the preview shows, and the jump list of its sessions; the button's details, for a pin
+// made from it; where the tray's flyout opens; and the session a start of the app asks it to
+// open. Pure, so the tests can tell; main.js shows it with Electron.
 import { limitsOf, sessionEnd, weekPace } from '../src/view.js';
 
 /**
@@ -171,6 +171,26 @@ export function openArg(argv) {
     if (a.startsWith(OPEN) && KEY.test(a.slice(OPEN.length))) return a.slice(OPEN.length);
   }
   return undefined;
+}
+
+/**
+ * The details of the window's taskbar button (Windows), for Electron's setAppDetails: the app's
+ * ID, the process's too, so the button, its jump list and the Start menu's shortcut go together
+ * as before; and what a pin made from the button starts, by what name and with what icon: the
+ * program, with the app's folder where it is not packaged, each in quotes, where without them it
+ * would be the program alone, Electron, by its name and with its icon. Not the icon a taskbar
+ * that combines its buttons shows (by default another monitor's): that is the icon of the app's
+ * entry in the Start menu.
+ * @param {string} id
+ * @param {string} icon the app's ICO
+ * @param {string[]} command the program and its arguments
+ */
+export function appDetailsOf(id, icon, command) {
+  return {
+    appId: id, appIconPath: icon, appIconIndex: 0,
+    relaunchCommand: command.map((part) => `"${part}"`).join(' '),
+    relaunchDisplayName: id,
+  };
 }
 
 /**

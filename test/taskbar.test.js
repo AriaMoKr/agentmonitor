@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buttonsOf, flyoutBounds, gaugeOf, jumpListOf, openArg, openSwitch, overlayOf, thumbnailClip, units } from '../desktop/taskbar.js';
+import { appDetailsOf, buttonsOf, flyoutBounds, gaugeOf, jumpListOf, openArg, openSwitch, overlayOf, thumbnailClip, units } from '../desktop/taskbar.js';
 import { trayState } from '../desktop/tray.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE, NOW } from './helpers/fixture.js';
@@ -98,6 +98,18 @@ test('a start of the app that opens a session: --open=<key>, a key as the monito
     assert.equal(openArg([bad]), undefined, bad);
   }
   assert.equal(openArg(['--open=s:a b', '--open=w:run-1']), 'w:run-1', 'the first that is a key');
+});
+
+test("the window's taskbar button: the app's ID, and what a pin made from it starts, by what name and with what icon", () => {
+  const ico = 'C:\\Users\\me\\AppData\\Roaming\\agentmonitor\\agentmonitor.ico';
+  const electron = 'C:\\git\\agentmonitor\\desktop\\node_modules\\electron\\dist\\electron.exe';
+  assert.deepEqual(appDetailsOf('agentmonitor', ico, [electron, 'C:\\git\\agentmonitor\\desktop']), {
+    appId: 'agentmonitor', appIconPath: ico, appIconIndex: 0,
+    relaunchCommand: `"${electron}" "C:\\git\\agentmonitor\\desktop"`,
+    relaunchDisplayName: 'agentmonitor',
+  });
+  const packaged = appDetailsOf('agentmonitor', ico, ['C:\\Program Files\\agentmonitor\\agentmonitor.exe']);
+  assert.equal(packaged.relaunchCommand, '"C:\\Program Files\\agentmonitor\\agentmonitor.exe"', 'the program alone, its spaces quoted');
 });
 
 test('the part of the window its preview shows: the top left, the list\'s first lines at the page\'s zoom; all of a window no bigger', () => {

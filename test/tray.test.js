@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { inflateSync } from 'node:zlib';
 import { appIco, appIcon, countIcon, crc32, donutIcon, glyphIco, ico, png, sessionsIcon, tileIcon, trayIcon, TURNS, turningIcon, usageIcon } from '../desktop/icons.js';
-import { desktopEntry } from '../desktop/launch.js';
+import { desktopEntry, electronShortcuts, toastClsidOf } from '../desktop/launch.js';
 import { menuLabel, notices, trayState } from '../desktop/tray.js';
 import { timeOfDay } from '../src/format.js';
 import { sessionStates } from '../src/viewer.js';
@@ -165,6 +166,36 @@ test('Linux\'s desktop entry: Exec\'s arguments quoted as the spec says, % doubl
   const odd = desktopEntry(['/a/b', '50%', 'it\'s "$x" \\ `y`', ''], '/i\\con.png').split('\n');
   assert.equal(odd[4], 'Exec=/a/b 50%% "it\'s \\\\"\\\\$x\\\\" \\\\\\\\ \\\\`y\\\\`" ""');
   assert.equal(odd[5], 'Icon=/i\\\\con.png');
+});
+
+test("the notifications' activator on Windows: a CLSID of version 5 from the app's ID, the same each run, another for another ID", () => {
+  const clsid = toastClsidOf('agentmonitor');
+  assert.match(clsid, /^\{[0-9A-F]{8}-[0-9A-F]{4}-5[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}\}$/, 'in braces, its version and variant set');
+  assert.equal(toastClsidOf('agentmonitor'), clsid);
+  assert.notEqual(toastClsidOf('agentmonitor-buildtest'), clsid, 'a copy with another name has its own');
+  // A UUID of version 5 as RFC 4122 makes one: SHA-1 of the namespace and the name, worked out
+  // here again by hand.
+  const hash = createHash('sha1').update(Buffer.from('5d0653aac1dd42febaef3123e11ecad6', 'hex')).update('agentmonitor').digest('hex');
+  const v5 = (hash.slice(0, 12) + '5' + hash.slice(13, 16) + ((parseInt(hash[16], 16) & 3) | 8).toString(16) + hash.slice(17, 32)).toUpperCase();
+  assert.equal(clsid.replace(/[{}-]/g, ''), v5);
+});
+
+test("the shortcuts Electron's notifications wrote of their own: the app's ID, of its program alone, not the app's own", () => {
+  const program = 'C:\\git\\agentmonitor\\desktop\\node_modules\\electron\\dist\\electron.exe';
+  const programs = 'C:\\Users\\me\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs';
+  const own = `${programs}\\agentmonitor.lnk`;
+  const links = [
+    { path: own, target: program, args: '"C:\\git\\agentmonitor\\desktop"', appUserModelId: 'agentmonitor' },
+    { path: `${programs}\\Electron.lnk`, target: program.toUpperCase(), args: '', appUserModelId: 'agentmonitor' },
+    { path: `${programs}\\Electron (2).lnk`, target: program, appUserModelId: 'agentmonitor' },
+    { path: `${programs}\\Other.lnk`, target: program, args: '', appUserModelId: 'electron.app.Other' },
+    { path: `${programs}\\Elsewhere.lnk`, target: 'C:\\elsewhere\\electron.exe', args: '', appUserModelId: 'agentmonitor' },
+    { path: `${programs}\\With args.lnk`, target: program, args: '"C:\\elsewhere"', appUserModelId: 'agentmonitor' },
+    { path: `${programs}\\Notepad.lnk`, target: 'C:\\Windows\\notepad.exe' },
+  ];
+  assert.deepEqual(electronShortcuts(links, own, program, 'agentmonitor'), [`${programs}\\Electron.lnk`, `${programs}\\Electron (2).lnk`]);
+  assert.equal(electronShortcuts(links, own.toUpperCase(), program, 'agentmonitor').length, 2, 'its own, whatever its case');
+  assert.deepEqual(electronShortcuts([{ ...links[0], args: '' }], own, program, 'agentmonitor'), [], 'never its own, packaged with no arguments');
 });
 
 test('the icons: PNG with each chunk\'s checksum right, the glyph in the middle in its color, the corners clear; an ICO of them', () => {
