@@ -11,8 +11,11 @@
 // only, at a free port and a token of its own. The first start adds the app to the Start menu
 // (Windows) or the applications menu (Linux), to start it from there with no terminal. It writes
 // only its own files: its settings, the sessions dismissed with x and its icons in its folder,
-// and those entries.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+// and those entries. On Windows, once one shows, Electron's notifications register their
+// activator for the account, and where the app is not packaged write a Start menu shortcut of
+// their own, which it hides.
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, screen, session, shell, Tray } from 'electron';
@@ -21,8 +24,8 @@ import { dismissalsOf, Monitor } from '../src/monitor.js';
 import { serve } from '../src/serve.js';
 import { sessionStates } from '../src/viewer.js';
 import { appIco, appIcon, countIcon, donutIcon, glyphIco, sessionsIcon, tileIcon, trayIcon, TURNS, turningIcon, usageIcon } from './icons.js';
-import { desktopEntry } from './launch.js';
-import { buttonsOf, flyoutBounds, gaugeOf, jumpListOf, openArg, openSwitch, overlayOf, thumbnailClip } from './taskbar.js';
+import { desktopEntry, electronShortcuts, toastClsidOf } from './launch.js';
+import { appDetailsOf, buttonsOf, flyoutBounds, gaugeOf, jumpListOf, openArg, openSwitch, overlayOf, thumbnailClip } from './taskbar.js';
 import { menuLabel, notices, trayState } from './tray.js';
 
 /**
@@ -243,6 +246,12 @@ function createWindow() {
     autoHideMenuBar: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false },
   });
+  // Before it shows: a pin made from its taskbar button starts the app, by its name and with its
+  // icon, not Electron alone where it is not packaged. (A taskbar that combines its buttons shows
+  // the icon of the app's entry in the Start menu: hideElectronShortcuts.) Windows asks for these
+  // to be taken off a window before it closes, which Electron has no way to do; this one lasts
+  // till the app quits.
+  if (platform === 'win32') win.setAppDetails(appDetailsOf(ID, icoPath(), command([])));
   guard(win.webContents);
   win.once('ready-to-show', () => {
     if (!hidden) show();
@@ -743,10 +752,17 @@ function change(to) {
 
 /** @type {Set<Notification>} the notifications shown, kept from the garbage collector till they close */
 const notes = new Set();
+/** Whether Electron's notifications started in this run: on Windows they then write their shortcut. */
+let notifying = false;
 
 /** @param {Notice} n */
 function notify(n) {
   if (!Notification.isSupported()) return;
+  if (!notifying) {
+    notifying = true;
+    // Their shortcut, in the background, as they start.
+    setTimeout(hideElectronShortcuts, 10_000).unref();
+  }
   const note = new Notification({ title: n.title, body: n.body, icon: image('app', appIcon, 32) });
   notes.add(note);
   note.on('click', () => show());
@@ -796,6 +812,9 @@ function setLauncher(on) {
       icon: icoPath(),
       iconIndex: 0,
       appUserModelId: ID,
+      // Packaged, it is the shortcut Electron's notifications want too (named after the program's
+      // product name, the app's), and with this CLSID, which they take as theirs, they leave it be.
+      ...(app.isPackaged ? { toastActivatorClsid: toastClsidOf(ID) } : {}),
     });
     if (!ok) logNow(`could not write ${launcherPath()}`);
   } else if (platform === 'win32') {
@@ -814,6 +833,40 @@ function startLauncher() {
   if (platform === 'darwin') return;
   if (settings.launcher === undefined || (settings.launcher && existsSync(launcherPath()))) setLauncher(true);
   else if (settings.launcher) change({ launcher: false });
+  hideElectronShortcuts();
+}
+
+/**
+ * On Windows where the app is not packaged, while its own shortcut is in the Start menu: hides the
+ * one Electron's notifications wrote of their own (`electronShortcuts`), which the Start menu
+ * would list for the app, as Electron, and whose icon, Electron's, a taskbar that combines its
+ * buttons would show. Hidden, the Start menu leaves it out, and they still find it theirs. Without
+ * the app's own it stays, as their notifications need one.
+ */
+function hideElectronShortcuts() {
+  if (platform !== 'win32' || app.isPackaged || !existsSync(launcherPath())) return;
+  const programs = dirname(launcherPath());
+  /** @type {string[]} */
+  let names = [];
+  try {
+    names = readdirSync(programs).filter((name) => name.toLowerCase().endsWith('.lnk'));
+  } catch {
+    return;
+  }
+  const links = names.flatMap((name) => {
+    const path = join(programs, name);
+    try {
+      return [{ ...shell.readShortcutLink(path), path }];
+    } catch {
+      return [];
+    }
+  });
+  const attrib = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'attrib.exe');
+  for (const path of electronShortcuts(links, launcherPath(), process.execPath, ID)) {
+    execFile(attrib, ['+h', path], { windowsHide: true }, (error) => {
+      if (error) logNow(`could not hide ${path}: ${error.message}`);
+    });
+  }
 }
 
 /**

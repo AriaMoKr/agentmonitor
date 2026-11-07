@@ -318,6 +318,7 @@ Its tooltip counts the sessions and gives the plan's usage. Its menu lists the s
 On Windows the window's taskbar button shows more:
 
 - its bar: the plan's usage, the limit used more, green, yellow from 75% or where at its pace it would reach 100% before it resets, red from 90%. macOS shows it on the dock's icon.
+- its icon, the app's. A taskbar that combines its buttons (another monitor's does at first) shows the icon of agentmonitor's entry in the Start menu instead. A pin made from the button starts agentmonitor again, by its name and with its icon.
 - on its icon, how many sessions need you, dark on yellow; else, while one is unread, at work or in the background, a ring of the sessions by what they show.
 - under its preview, which shows the top of the list, a button for each session but those idle, seven at most, what matters most first: a click opens it in the window.
 - its jump list (a right click on it, or on agentmonitor pinned to the taskbar): the sessions that need you, those unread and those at work, each opened in the window, then Show Claude agents and Quit agentmonitor. A session taken out of it stays out, and at Quit the list goes.
@@ -330,6 +331,7 @@ It writes only its own files:
 - its Start menu shortcut, `%APPDATA%\Microsoft\Windows\Start Menu\Programs\agentmonitor.lnk`, or on Linux `~/.local/share/applications/agentmonitor.desktop`. On Windows its notifications go with the shortcut: without it, they may not show.
 - on Windows its jump list, which Windows keeps for it while it runs.
 - to start at login, Windows' Run key for your account, or `~/.config/autostart/agentmonitor.desktop` on Linux.
+- on Windows, once it has notified you, what Electron's notifications keep: their activator, registered for your account under `HKEY_CURRENT_USER\Software\Classes\CLSID`, and its CLSID on the Start menu shortcut, from a release agentmonitor's own. Run here, they write a shortcut of their own, `Electron.lnk`, which agentmonitor hides while its own is there: the Start menu would list agentmonitor by it, as Electron, and another monitor's taskbar would show Electron's icon.
 
 It reads what `--serve` reads, from `$CLAUDE_CONFIG_DIR` or `~/.claude`, with "recently active" at 24 hours. It was tried on Windows 11. It should run on macOS and Linux, untried there: on macOS it offers no start at login or menu entry, which would take a packaged app, and a Linux desktop shows the icon only when it has a tray (GNOME needs an extension for one).
 
