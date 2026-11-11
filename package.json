@@ -1,6 +1,6 @@
 {
   "name": "agentmonitor",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "The Claude agents on this computer, live in a terminal: Claude Code sessions in a terminal, the desktop app, an IDE or the background, running or active lately, with what each is doing and the subagents and workflows they started.",
   "keywords": ["claude", "claude-code", "agents", "monitor", "terminal", "tui"],
   "type": "module",
