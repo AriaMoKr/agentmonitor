@@ -117,7 +117,8 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  * @property {number} [openedAt] when it was last opened in the desktop app
  * @property {Turn} [turn] of a session not at work, when it sums up the transcript's last reply
  * @property {import('./transcript.js').NextStep} [nextStep] of a session not at work: what its
- *   last turn asked you as it ended, in the desktop app's next-step box, till you close the box
+ *   last turn asked you as it ended, in the desktop app's next-step box, till you close the box;
+ *   none for an earlier run, which the app shows no more
  * @property {boolean} [blocked] its turn ended on something only you can do: what `nextStep`
  *   asks, or what `turn` says
  * @property {boolean} [dismissed] of a session not at work: what its last turn left you (a
@@ -497,8 +498,9 @@ export class Monitor {
       // Dismissed with x, what its last turn left you asks nothing and is not unread.
       const dismissed = over && held;
       // A question its last turn ended on waits for your answer, blocked on it, till you close its
-      // box in the desktop app.
-      const asked = over && !dismissed ? info?.nextStep : undefined;
+      // box in the desktop app; not an earlier run's, which the app shows no more (the session went
+      // on in another run: you rewound it, say), as it is never unread either.
+      const asked = over && !dismissed && !prior ? info?.nextStep : undefined;
       const nextStep = asked && !this.desktop.closedBox(host, asked.id) ? asked : undefined;
       const act = activityOf(state, info, record, i === 0 ? children : [], turn, now, nextStep, dismissed);
       if (!record && s.job?.state && !act.text) {

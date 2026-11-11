@@ -821,10 +821,19 @@ test("a desktop app session's earlier runs, which it went on from in others: nam
   // Started over before its first reply (a setting changed), then rewound.
   const first = sessionId();
   cfg.transcript(first, [rec.customTitle('Sessions, folders, and repos review'), rec.prompt('Review the sessions', NOW - 40 * MINUTE)], { mtime: NOW - 40 * MINUTE });
+  // Each run's last turn asked something in the next-step box, and the box was not closed.
+  const asks = (/** @type {string} */ id, /** @type {string} */ ask, /** @type {number} */ at) => [
+    rec.tool(id, 'mcp__ccd_turn__wrap_up', { recap: 'Reviewed.', ask, actions: [{ label: 'Yes' }] }, at),
+    rec.result(id, at + 100, false, 'Shown in the next-step box.'),
+  ];
   const rewound = sessionId();
-  cfg.transcript(rewound, [rec.customTitle('reviews'), rec.prompt('Review the sessions', NOW - 39 * MINUTE), rec.reply('Reviewed.', NOW - 30 * MINUTE)], { mtime: NOW - 30 * MINUTE });
+  cfg.transcript(rewound, [
+    rec.customTitle('reviews'), rec.prompt('Review the sessions', NOW - 39 * MINUTE), ...asks('w1', 'Fix the sessions too?', NOW - 31 * MINUTE), rec.reply('Reviewed.', NOW - 30 * MINUTE),
+  ], { mtime: NOW - 30 * MINUTE });
   const current = sessionId();
-  cfg.transcript(current, [rec.customTitle('reviews'), rec.prompt('Review the folders', NOW - 15 * MINUTE), rec.reply('Reviewed.', NOW - 2 * MINUTE)], { mtime: NOW - 2 * MINUTE });
+  cfg.transcript(current, [
+    rec.customTitle('reviews'), rec.prompt('Review the folders', NOW - 15 * MINUTE), ...asks('w2', 'Fix the folders too?', NOW - 3 * MINUTE), rec.reply('Reviewed.', NOW - 2 * MINUTE),
+  ], { mtime: NOW - 2 * MINUTE });
   cfg.registry({ pid: 1, sessionId: current, status: 'idle', entrypoint: 'claude-desktop', hostSessionId: 'local_r', statusUpdatedAt: NOW - 2 * MINUTE });
   cfg.desktopSession({
     sessionId: 'local_r', cliSessionId: current, title: 'reviews', lastActivityAt: NOW - 2 * MINUTE, lastFocusedAt: NOW - MINUTE,
@@ -848,6 +857,13 @@ test("a desktop app session's earlier runs, which it went on from in others: nam
     'reviews (earlier run)', 'ended', 'local_r', { of: 'reviews', title: 'Sessions, folders, and repos review', rewoundAt: undefined }, false, undefined,
   ], 'never unread: the session is');
   assert.deepEqual(row(rewound), ['reviews (earlier run)', 'ended', 'local_r', { of: 'reviews', title: 'reviews', rewoundAt: NOW - 15 * MINUTE }, false, undefined]);
+  // What the session's run asks blocks it; what the run it was rewound from asked, the app shows no more.
+  const asked = (/** @type {string} */ id) => {
+    const r = rows.find((x) => x.sessionId === id);
+    return [r?.blocked, r?.nextStep?.text, r?.activity];
+  };
+  assert.deepEqual(asked(current), [true, 'Fix the folders too?', 'blocked: Fix the folders too?']);
+  assert.deepEqual(asked(rewound), [undefined, undefined, 'Reviewed.']);
   assert.deepEqual(row(shelved), ['Old work (earlier run)', 'ended', 'local_a', { of: 'Old work', title: 'Old work', rewoundAt: undefined }, true, undefined]);
   assert.deepEqual(row(alone), ['On its own', 'ended', undefined, undefined, undefined, undefined]);
 });

@@ -62,7 +62,8 @@ const SKIP = /^\{"type":"(?:api-request|file-history|atis-latch|frame-link|artif
  * @property {boolean} [asks] it asks you something, and so waits on you: a question, a plan to
  *   approve, a session offered
  * @typedef {{ start: number, end: number }} Span a turn: from the prompt (or the message) that
- *   began it to the reply that ended it; end 0 while it goes on
+ *   began it to the reply that ended it, or where none did (its wrap_up its last word), to its last
+ *   reply or tool result before the next prompt; end 0 while it goes on
  * @typedef {{ id: string, text: string, answers: string[], ts: number }} NextStep what the
  *   desktop app's next-step box asks you at the end of a turn, as the turn's wrap_up call filled
  *   it: the call's tool use ID (which the app keeps when the box is closed), its question, or its
@@ -140,6 +141,8 @@ export function emptyInfo() {
     calls: [],
     /** @type {Span[]} the latest turns, oldest first */
     turns: [],
+    /** when the last reply or tool result was read (ms): where a turn ends that no reply ended */
+    turnTs: 0,
     /** @type {string | undefined} the message ID of the reply that ended the last turn */
     endedBy: undefined,
   };
@@ -355,13 +358,14 @@ function readUser(info, rec, ts) {
   if (typeof content === 'string') {
     taskEnded(info, content, ts);
     // A background task's end, sent to a session not at work, begins a turn.
-    if (content.startsWith('<task-notification>')) startTurn(info, ts);
+    if (content.startsWith('<task-notification>')) startTurn(info, ts, true);
     if (typed) addPrompt(info, content, ts);
     return;
   }
   if (!Array.isArray(content)) return;
   for (const part of content) {
     if (part?.type === 'tool_result') {
+      if (ts) info.turnTs = ts;
       const call = info.pending.get(part.tool_use_id);
       info.pending.delete(part.tool_use_id);
       const made = findCall(info, part.tool_use_id);
@@ -391,17 +395,26 @@ function findCall(info, id) {
 }
 
 /**
- * A turn begins, unless one goes on.
+ * A turn begins, unless one goes on: a reply read after its prompt is of its turn. A prompt, or a
+ * background task's end sent to a session not at work, begins one even so (`anew`), as one sent
+ * during a turn comes in another way (queued): the turn before ended with no reply to say so, its
+ * wrap_up its last word, and ends with its last reply or tool result. But not one with neither
+ * read since it began: a prompt that came in two records (an agent's can) is one turn's.
  * @param {Info} info
  * @param {number} ts
+ * @param {boolean} [anew] a prompt's, or a background task's end's
  */
-function startTurn(info, ts) {
+function startTurn(info, ts, anew = false) {
   const last = info.turns.at(-1);
-  if (!ts || (last && !last.end)) return;
-  info.turns.push({ start: ts, end: 0 });
-  if (info.turns.length > MAX_TURNS) info.turns.shift();
+  if (last && !last.end) {
+    if (!anew || info.turnTs < last.start) return;
+    endTurn(info, info.turnTs);
+  }
   // What the last one asked was answered, or put aside.
   info.nextStep = undefined;
+  if (!ts) return;
+  info.turns.push({ start: ts, end: 0 });
+  if (info.turns.length > MAX_TURNS) info.turns.shift();
 }
 
 /**
@@ -556,6 +569,7 @@ function readAssistant(info, rec, ts) {
     // A reply with no prompt read before it (the part read begins in its turn) begins one.
     startTurn(info, ts);
   }
+  if (ts) info.turnTs = ts;
   if (typeof m.stop_reason === 'string') info.lastStop = m.stop_reason;
   if (TURN_ENDS.has(m.stop_reason) || rec.isApiErrorMessage) {
     endTurn(info, ts);
@@ -629,7 +643,7 @@ function addPrompt(info, raw, ts) {
     addEvent(info, ts, 'info', 'interrupted');
     return;
   }
-  startTurn(info, ts);
+  startTurn(info, ts, true);
   info.prompts++;
   info.lastPrompt = { text: text.slice(0, MAX_TEXT), ts };
   addEvent(info, ts, 'prompt', text);
