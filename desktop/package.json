@@ -1,7 +1,7 @@
 {
   "name": "agentmonitor-desktop",
   "productName": "agentmonitor",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "agentmonitor as a desktop app: the web view in a window of its own, and an icon in the system tray that shows when a session needs you.",
   "private": true,
   "type": "module",
