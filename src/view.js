@@ -301,7 +301,9 @@ export function settleSelection(ui, rows, bodyHeight) {
 /**
  * @typedef {{ key: string, title: string, width: number, align?: 'left' | 'right', flex?: number, min?: number }} Column
  * The columns that fit `cols`: the name and the activity share what the others leave. With the
- * plan's price, what each session's use came to, this week and in all the replies read.
+ * plan's price, the share of it each session's use took, this week and in all the replies read:
+ * titled PLAN, as WEEK and TOTAL read as what the session cost, each a column wider than its
+ * title, so that the titles of two words stand two spaces apart and read as two.
  * @param {number} cols
  * @param {boolean} [priced] whether the plan's price is known
  * @returns {Column[]}
@@ -309,8 +311,8 @@ export function settleSelection(ui, rows, bodyHeight) {
 export function columns(cols, priced = false) {
   /** @type {(Column & { from?: number })[]} */
   const costs = [
-    { key: 'week', title: 'WEEK', width: 7, align: 'right', from: 120 },
-    { key: 'total', title: 'TOTAL', width: 7, align: 'right', from: 128 },
+    { key: 'week', title: 'PLAN WK', width: 8, align: 'right', from: 120 },
+    { key: 'total', title: 'PLAN ALL', width: 9, align: 'right', from: 128 },
   ];
   /** @type {(Column & { from?: number })[]} */
   const all = [
@@ -339,7 +341,7 @@ export function columns(cols, priced = false) {
 }
 
 /**
- * @typedef {object} Costs what the sessions' use came to, for the WEEK and TOTAL columns
+ * @typedef {object} Costs what the sessions' use came to, for the PLAN WK and PLAN ALL columns
  * @property {Map<string, number>} week each session's points of the week's limit since it reset or
  *   the plan changed, by its ID
  * @property {Map<string, number>} total its points in all the replies read, as the plan counts them now
@@ -364,7 +366,7 @@ function costsOf(snap) {
  * @param {Theme} t
  * @param {number} now
  * @param {boolean} plain
- * @param {Costs} [costs] for the WEEK and TOTAL columns
+ * @param {Costs} [costs] for the PLAN WK and PLAN ALL columns
  */
 function rowText(row, cols, t, now, plain, costs) {
   const a = row.agent;
@@ -1447,9 +1449,9 @@ function* fieldLines(a, snap, now, t, cols) {
 }
 
 /**
- * What a session's use came to at the plan's price, as its WEEK and TOTAL columns say: its points
- * of the week's limit since it reset or the plan changed, and in all the replies read where that
- * is more (in all, when it began after the first of them); undefined for next to none.
+ * What a session's use came to at the plan's price, as its PLAN WK and PLAN ALL columns say: its
+ * points of the week's limit since it reset or the plan changed, and in all the replies read where
+ * that is more (in all, when it began after the first of them); undefined for next to none.
  * @param {Agent} a
  * @param {import('./usage.js').Usage['split']} split
  * @param {number} price the plan's price a month
@@ -1591,8 +1593,8 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
     ...key('EFFORT', `the effort it works at, and a${nb}${t.magenta('+')} when ultracode is on`),
     ...key('LAST', 'how long ago it last did anything'),
     ...key('ACTIVITY', 'what it is doing, with how many of its tasks are done (4/8) and how long the current step has taken'),
-    ...key('WEEK', "with the plan's price: what its use of the week's limit came to since that reset or the plan changed"),
-    ...key('TOTAL', "and in all its replies read here, back to the desktop app's first sample of the usage (about 30 days), as the plan counts use now"),
+    ...key(`PLAN${nb}WK`, "the share of the plan's price its use of the week's limit took since that reset or the plan changed (its API cost is in its details)"),
+    ...key(`PLAN${nb}ALL`, "the same in all its replies read here, back to the desktop app's first sample of the usage (about 30 days), as the plan counts use now"),
     '',
     views.length > 1 ? ` ${t.bold('The overview')}${t.dim(', one of the views below the list, where there is room')}` : ` ${t.bold('Below the list')}${t.dim(', where there is room')}`,
     ...key('selected', 'what the selected session or agent is doing, waits for or did last, its tasks, its latest messages'),

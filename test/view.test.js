@@ -355,26 +355,27 @@ test("with the plan's price, what each session's use came to: this week, and in 
     return listLines(snap, visibleRows(snap, ui, plain), ui, { width, height: 14, now: NOW }, plain);
   };
   const lines = draw(160, { planPrice: 200, usage: { at: NOW, split } });
-  assert.match(lines[1], / LAST +WEEK +TOTAL +PID +KIND +$/);
+  // Titled as the plan's share, not as what the session cost; two words each, two spaces apart.
+  assert.match(lines[1], / LAST {2}PLAN WK {2}PLAN ALL {4}PID KIND +$/);
   const row = (/** @type {string} */ title) => lines.find((l) => l.includes(title)) ?? '';
-  // Each 7 columns, to the right: 22 and 30 points at $200 a month; nothing for an agent alone.
-  assert.match(row('Busy session'), / 5m  \$10\.12  \$13\.80   4242 /);
-  assert.match(row('Last week alone'), / 1m {11}\$1\.38 /, 'next to none this week');
-  assert.match(row('A whole dollar'), / 1m {11}\$1\.00 /, 'to the cent, as the others');
+  // 8 and 9 columns, to the right: 22 and 30 points at $200 a month; nothing for an agent alone.
+  assert.match(row('Busy session'), / 5m {3}\$10\.12 {4}\$13\.80 {3}4242 /);
+  assert.match(row('Last week alone'), / 1m {14}\$1\.38 /, 'next to none this week');
+  assert.match(row('A whole dollar'), / 1m {14}\$1\.00 /, 'to the cent, as the others');
   assert.doesNotMatch(row('Next to none'), /\$/);
   assert.doesNotMatch(row('find the parser'), /\$/);
   // The week's alone where there is room for one, none where there is not, nor with no price.
-  assert.match(draw(120, { planPrice: 200, usage: { at: NOW, split } })[1], / LAST +WEEK +KIND +$/);
+  assert.match(draw(120, { planPrice: 200, usage: { at: NOW, split } })[1], / LAST +PLAN WK +KIND +$/);
   assert.match(draw(119, { planPrice: 200, usage: { at: NOW, split } })[1], / LAST +KIND +$/);
   assert.match(draw(160, { usage: { at: NOW, split } })[1], / LAST +PID +KIND +$/);
   // Priced with the use not known yet: the columns, empty.
   const unknown = draw(160, { planPrice: 200 });
-  assert.match(unknown[1], / LAST +WEEK +TOTAL +PID +KIND +$/);
+  assert.match(unknown[1], / LAST +PLAN WK +PLAN ALL +PID +KIND +$/);
   assert.doesNotMatch(unknown.join('\n'), /\$/);
   // And in the table --once prints.
   const once = table(snapshot(rows, { planPrice: 100, usage: { at: NOW, split } }), { width: 160, now: NOW, agents: 'none', showEnded: true }, plain).split('\n');
-  assert.match(once[1], / LAST +WEEK +TOTAL +PID +KIND$/);
-  assert.match(once.find((l) => l.includes('Busy session')) ?? '', / 5m {3}\$5\.06 {3}\$6\.90 {3}4242$/);
+  assert.match(once[1], / LAST +PLAN WK +PLAN ALL +PID +KIND$/);
+  assert.match(once.find((l) => l.includes('Busy session')) ?? '', / 5m {4}\$5\.06 {5}\$6\.90 {3}4242$/);
 });
 
 test("how long each session's prompt cache keeps its context yet, while it is not at work; and in its details, what a reply comes to once it does not", () => {
@@ -950,6 +951,9 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   assert.match(lines.join('\n'), /EFFORT {8}the effort it works at, and a \+ when ultracode is on/);
   assert.match(lines.join('\n'), /CACHE {9}while it is not at work, how long the prompt cache keeps that context *\n {17}yet: an hour after its last request, yellow its last ten minutes; a *\n {17}reply after that writes it all again/);
   assert.match(lines.join('\n'), /ACTIVITY {6}what it is doing, with how many of its tasks are done \(4\/8\) and how *\n {17}long the current step has taken/);
+  // The plan's share, and what it is not.
+  assert.match(lines.join('\n'), /PLAN WK {7}the share of the plan's price its use of the week's limit took since *\n {17}that reset or the plan changed \(its API cost is in its details\)/);
+  assert.match(lines.join('\n'), /PLAN ALL {6}the same in all its replies read here/);
   assert.match(lines.join('\n'), /click {9}select a row, or none below the rows; double-click for its details/);
   assert.match(lines.join('\n'), /~34% {10}that sample carried on to now with what this computer's sessions used *\n {17}since: an estimate, blind to use elsewhere/);
   assert.match(lines.join('\n'), /resets {8}about when that limit resets: the week's at the same time each week, *\n {17}the session's five hours after its window began, on the 10-minute mark *\n {17}at or before its first use/);

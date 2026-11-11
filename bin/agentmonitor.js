@@ -38,9 +38,9 @@ Options:
                          pipeline, files, chart, share, projects, today,
                          tank, radar or spark (v and V step through them)
       --plan-price <n>   the plan's price a month, in dollars (200, say), for
-                         what the week's use came to: in the list's WEEK and
-                         TOTAL, the share and projects views, the tank and a
-                         session's details
+                         what the week's use came to: in the list's PLAN WK
+                         and PLAN ALL, the share and projects views, the tank
+                         and a session's details
       --ascii            draw with ASCII only
       --color, --no-color  colors on or off (default: on in a terminal,
                          off with NO_COLOR set)
