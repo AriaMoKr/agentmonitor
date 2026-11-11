@@ -452,6 +452,52 @@ test("what a turn's wrap_up asks you as it ends, in the desktop app's next-step 
   assert.equal(tx.info.nextStep, undefined);
 });
 
+test('a turn whose wrap_up was its last word, with no reply after it: the prompt that answers its box ends it, and begins the next', async (t) => {
+  const path = tempFile(t);
+  const actions = [{ label: 'Yes, commit' }, { label: 'Songs first' }];
+  writeFileSync(path, jsonl([
+    rec.prompt('Theme it for Christmas', NOW - 60_000),
+    rec.tool('w1', 'mcp__ccd_turn__wrap_up', { recap: 'Themed.', ask: 'Commit the theme now?', actions }, NOW - 50_000),
+    rec.result('w1', NOW - 49_900, false, 'Shown in the next-step box.'),
+  ]));
+  const tx = new Transcript(path);
+  await update(tx);
+  assert.deepEqual(tx.info.nextStep, { id: 'w1', text: 'Commit the theme now?', answers: ['Yes, commit', 'Songs first'], ts: NOW - 49_900 });
+  assert.deepEqual(tx.info.turns, [{ start: NOW - 60_000, end: 0 }], 'no record says it ended');
+
+  // A button's answer, sent through the queue as the app sends it. The turn it begins asks
+  // something else, which you turn down, and is interrupted: nothing is left asking you.
+  appendFileSync(path, jsonl([
+    rec.queue('enqueue', NOW - 30_000, 'Songs first'),
+    rec.queue('dequeue', NOW - 30_000),
+    rec.prompt('Songs first', NOW - 30_000),
+    rec.tool('q1', 'AskUserQuestion', { questions: [{ question: 'Which song?', header: 'Song' }] }, NOW - 20_000),
+    rec.result('q1', NOW - 10_000, true, "The user doesn't want to proceed with this tool use."),
+    rec.prompt('[Request interrupted by user for tool use]', NOW - 10_000),
+  ]));
+  await update(tx);
+  assert.equal(tx.info.nextStep, undefined, 'answered');
+  assert.deepEqual(tx.info.turns, [{ start: NOW - 60_000, end: NOW - 49_900 }, { start: NOW - 30_000, end: NOW - 10_000 }], 'ended at its last record');
+
+  // A background task's end, sent to the session not at work, ends one so too.
+  appendFileSync(path, jsonl([
+    rec.prompt('Commit it', NOW - 9000),
+    rec.tool('w2', 'mcp__ccd_turn__wrap_up', { recap: 'Committed.', ask: 'Push it?', actions: [{ label: 'Push' }] }, NOW - 8000),
+    rec.result('w2', NOW - 7900, false, 'Shown in the next-step box.'),
+    rec.taskEnd('toolu_b', 'b1', 'completed', NOW - 5000),
+    rec.reply('The build passed.', NOW - 4000),
+  ]));
+  await update(tx);
+  assert.equal(tx.info.nextStep, undefined);
+  assert.deepEqual(tx.info.turns.slice(2), [{ start: NOW - 9000, end: NOW - 7900 }, { start: NOW - 5000, end: NOW - 4000 }]);
+  assert.equal(tx.info.prompts, 3, 'not the interruption, nor the task\'s end');
+
+  // Two prompts with nothing read between them, as an agent's prompt can come, are one turn's.
+  appendFileSync(path, jsonl([rec.prompt('Look at the songs', NOW - 3000), rec.prompt('and at the theme', NOW - 2900), rec.reply('Both are fine.', NOW - 2000)]));
+  await update(tx);
+  assert.deepEqual(tx.info.turns.slice(4), [{ start: NOW - 3000, end: NOW - 2000 }]);
+});
+
 test('a task list made before the tail: the tail widens to take it in', async (t) => {
   const path = tempFile(t);
   const filler = 'x'.repeat(10_000);
