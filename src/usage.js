@@ -5,8 +5,10 @@
 // its percent dropped before, and the session's five hours after its window began, on the
 // 10-minute mark at or before its first use, where its percent began to rise. The percents are
 // carried on from the latest sample to now with what this computer's replies used since
-// (src/ledger.js), at as many points for so much as the samples rose by with them lately; and each
-// one's pace with the last hour's. At that rate too, what each session and model used of each
+// (src/ledger.js), at as many points for so much as the samples rose by with them lately: each
+// model's use at its own rate where the rises tell the models apart, as the plan counts some
+// models' tokens for more than their prices against each other say, else all at one; and each
+// one's pace with the last hour's. At those rates too, what each session and model used of each
 // limit, and the points the replies just written add: to the session's, or where it is not carried
 // on to the week's. A plan changed shows where the week's percent dropped at no reset of it: the
 // rises before then measured other limits, and are not used. For the chart, what a point of the
@@ -30,8 +32,15 @@ const RISE = 30 * MINUTE;
  * @type {Rises}
  */
 const SESSION_RISES = { points: 60, within: 3 * DAY, least: 10 };
-/** @type {Rises} */
-const WEEK_RISES = { points: 20, within: WEEK, least: 5 };
+/**
+ * The week's: all of a week's, for the runs of them to tell the models apart (fit). Over the
+ * samples of two weeks, carried on from each, as close at a few hours as its latest 20 points, and
+ * closer at a day or two.
+ * @type {Rises}
+ */
+const WEEK_RISES = { points: Infinity, within: WEEK, least: 5 };
+/** What a point of the week came to lately, for the chart (perPointOf): its latest 20. @type {Rises} */
+const POINT_RISES = { points: 20, within: WEEK, least: 5 };
 /**
  * The server begins a session's window on the 10-minute mark at or before its first use, and so
  * resets it on one: every reset its limit errors in the transcripts named was (quotaLimits).
@@ -54,7 +63,10 @@ const PACE_LEAST = 15 * MINUTE;
  *   changed, oldest first (changesOf), the last of them `changed`
  * @property {Tracked} [tracked] the percents carried on to a later time
  * @property {{ session?: number, week?: number }} [perUse] the points of each limit for each of use
- *   (a reply's x), as the replies carry them on
+ *   (a reply's x), as the replies carry them on: of all the use its rises came to, and so of each
+ *   model's that has no rate of its own
+ * @property {{ session?: [string, number][], week?: [string, number][] }} [perModel] the models'
+ *   own points of each limit for each of their use, where its rises tell them apart (fit)
  * @property {Point[]} [perPoint] what this computer's replies used (their x) for a point of the
  *   week, at each of its samples they tell it for (perPointOf): read with `history`
  * @property {{ session?: Share, week?: Share, all?: Share }} [split] what this computer's replies
@@ -160,8 +172,9 @@ export class PlanUsage {
       this.replies = replies;
       const f = latest && replies ? follow(latest.points, replies, now, latest.usage.weekReset, latest.usage.changed) : undefined;
       if (latest && replies && f?.tracked) {
-        const perUse = { ...(f.a !== undefined ? { session: f.a } : {}), ...(f.b !== undefined ? { week: f.b } : {}) };
-        usage = { ...latest.usage, tracked: f.tracked, perUse, ...splitOf(f, replies, now) };
+        const perUse = { ...(f.a ? { session: f.a.all } : {}), ...(f.b ? { week: f.b.all } : {}) };
+        const perModel = { ...(f.a?.by.size ? { session: [...f.a.by] } : {}), ...(f.b?.by.size ? { week: [...f.b.by] } : {}) };
+        usage = { ...latest.usage, tracked: f.tracked, perUse, ...(perModel.session || perModel.week ? { perModel } : {}), ...splitOf(f, replies, now) };
       }
       const perPoint = history && latest && replies ? this.perPointOf(latest, replies) : [];
       if (usage && perPoint.length) usage = { ...usage, perPoint };
@@ -384,8 +397,9 @@ export function weekReset(p) {
 /**
  * How far back this computer's replies are needed to carry the samples on (track): to the
  * earliest of the rises each percent is scaled by, as the samples alone tell them, or to its last
- * sample, and a window's length before that, for the windows to begin where they did. Eight days
- * back at most.
+ * sample, and a window's length before that, for the windows to begin where they did. Fifteen days
+ * back at most: all the week's rises of a sample a week old (the app not run since), none of an
+ * older one's.
  * @param {Points} p
  * @param {number} now
  * @param {Point} [changed] the plan's last change (changeOf): no rise before it is used
@@ -398,20 +412,21 @@ export function repliesSince(p, now, changed) {
     const last = q.at(-1);
     if (last) times.push(last.t, ...rises(q, o, (a) => a.t >= after).map(([a]) => a.t));
   }
-  return Math.max(now - 8 * DAY, Math.min(now, ...times) - SESSION);
+  return Math.max(now - 15 * DAY, Math.min(now, ...times) - SESSION);
 }
 
 /**
  * The percents carried on from the last sample to `now` with this computer's replies since, at as
  * many points for so much use as the latest rises of the samples came to (each between two samples
- * close together, after the time the replies are known from and the plan's last change); a percent
- * the last sample leaves out, not at all, as it tells nothing of it now. The session's: what its
- * window used since the sample when the sample was in that window too, else all its window used,
- * and 0 with no window; the windows those the replies began; and in a window its pace, the points
- * the last hour's replies came to, in whatever window they were, as an hour's worth. The week's:
- * what it used since the sample, or since its reset when one came between, and only with that
- * reset known; and its pace as the session's. Each one only where its rises come to enough points;
- * undefined when neither does.
+ * close together, after the time the replies are known from and the plan's last change): each
+ * model's use at its own rate where the rises tell the models apart (fit), else all at one. A
+ * percent the last sample leaves out, not at all, as it tells nothing of it now. The session's:
+ * what its window used since the sample when the sample was in that window too, else all its
+ * window used, and 0 with no window; the windows those the replies began; and in a window its
+ * pace, the points the last hour's replies came to, in whatever window they were, as an hour's
+ * worth. The week's: what it used since the sample, or since its reset when one came between, and
+ * only with that reset known; and its pace as the session's. Each one only where its rises come to
+ * enough points; undefined when neither does.
  * @param {Points} p
  * @param {import('./ledger.js').Replies} replies
  * @param {number} now
@@ -424,12 +439,29 @@ export function track(p, replies, now, weekAt, changed = changeOf(p.week, weekAt
 }
 
 /**
+ * @typedef {object} Rates a limit's points for each of use (a reply's x), as its rises came to
+ * @property {number} all over all the use in them
+ * @property {Map<string, number>} by each model's own, where they tell the models apart (fit): by
+ *   its name, '' for none
+ *
+ * @typedef {{ up: number, x: Map<string, number> }} Run rises one after another: the points they
+ *   came to, and each model's use over them
+ */
+
+/**
+ * A reply's points for each of its use: its model's own, else that of all use.
+ * @param {Rates} r
+ * @param {string | undefined} model
+ */
+const rateOf = (r, model) => r.by.get(model ?? '') ?? r.all;
+
+/**
  * @typedef {object} Followed what track works out: the percents carried on, and what they were
  *   carried on with, for the shares (splitOf)
  * @property {Tracked} [tracked]
- * @property {number} [a] the session's points for each of use (a reply's x)
+ * @property {Rates} [a] the session's points for each of use (a reply's x)
  * @property {number} [window] the start of the session's window now
- * @property {number} [b] the week's points for each of use
+ * @property {Rates} [b] the week's points for each of use
  * @property {number} [weekFrom] when the week's limit last reset, or the plan last changed where
  *   that is later (its first sample under the new limits)
  */
@@ -446,32 +478,55 @@ export function track(p, replies, now, weekAt, changed = changeOf(p.week, weekAt
 function follow(p, { from, replies }, now, weekAt, changed) {
   /** @type {Followed} */
   const f = {};
-  const sum = [0];
-  for (const r of replies) sum.push(/** @type {number} */ (sum.at(-1)) + r.x);
-  /** What the replies written in (a, b] used. @param {number} a @param {number} b */
-  const used = (a, b) => sum[writtenBy(replies, b)] - sum[writtenBy(replies, a)];
+  /**
+   * What the replies written in (a, b] came to, each at its model's rate.
+   * @param {Rates} r @param {number} a @param {number} b
+   */
+  const points = (r, a, b) => {
+    let v = 0;
+    for (let i = writtenBy(replies, a), end = writtenBy(replies, b); i < end; i++) v += rateOf(r, replies[i].model) * replies[i].x;
+    return v;
+  };
   const starts = windowsOf(replies);
   // The rises the replies are known for, under the limits there are now.
   const after = Math.max(from, changed?.t ?? -Infinity);
   /**
-   * Points for each of use, over the rises `keep` keeps.
+   * The rates over the rises `keep` keeps: of all the use in them, and each model's where the runs
+   * of them tell it apart from the others' (fit).
    * @param {Point[]} q @param {Rises} o @param {(a: Point, b: Point) => boolean} keep
+   * @returns {Rates | undefined}
    */
   const scale = (q, o, keep) => {
+    /** @type {Run[]} */
+    const runs = [];
+    /** @type {Point | undefined} where the last rise began: one that ends there goes on its run */
+    let joins;
     let up = 0;
     let x = 0;
+    // The latest first.
     for (const [a, b] of rises(q, o, (a, b) => a.t >= after && keep(a, b))) {
+      let run = b === joins ? runs.at(-1) : undefined;
+      if (!run) {
+        run = { up: 0, x: new Map() };
+        runs.push(run);
+      }
+      run.up += b.v - a.v;
       up += b.v - a.v;
-      x += used(a.t, b.t);
+      for (let i = writtenBy(replies, a.t), end = writtenBy(replies, b.t); i < end; i++) {
+        const m = replies[i].model ?? '';
+        run.x.set(m, (run.x.get(m) ?? 0) + replies[i].x);
+        x += replies[i].x;
+      }
+      joins = a;
     }
-    return up >= o.least && x > 0 ? up / x : undefined;
+    return up >= o.least && x > 0 ? { all: up / x, by: fit(runs, up / x, o.least) } : undefined;
   };
   // A pace: the points the last hour's replies came to, as an hour's worth; of the part of it they
   // are known for, when that is long enough.
   const since = Math.max(now - HOUR, from);
   const paced = now - since >= PACE_LEAST;
-  /** At so many points for each of use. @param {number} perUse */
-  const pace = (perUse) => (perUse * used(since, now) * HOUR) / (now - since);
+  /** At these rates. @param {Rates} r */
+  const pace = (r) => (points(r, since, now) * HOUR) / (now - since);
   /** @type {Tracked} */
   const out = { at: now };
   // Each percent from the last sample alone: the samples before tell nothing of one it leaves out.
@@ -482,13 +537,13 @@ function follow(p, { from, replies }, now, weekAt, changed) {
     const w = windowAt(starts, y.t);
     return w !== undefined && windowAt(starts, x.t) === w;
   });
-  if (s && a !== undefined) {
+  if (s && a) {
     f.a = a;
     const w = windowAt(starts, now);
     if (w === undefined) out.session = 0;
     else {
       f.window = w;
-      const v = s.v > 0 && windowAt(starts, s.t) === w ? s.v + a * used(s.t, now) : a * used(w - 1, now);
+      const v = s.v > 0 && windowAt(starts, s.t) === w ? s.v + points(a, s.t, now) : points(a, w - 1, now);
       out.session = Math.min(100, Math.round(v));
       const end = w + SESSION;
       out.sessionReset = { at: end, from: end, to: end };
@@ -497,10 +552,10 @@ function follow(p, { from, replies }, now, weekAt, changed) {
   }
   const last = p.week.at(-1)?.t === latest ? p.week.at(-1) : undefined;
   const b = last && weekAt && scale(p.week, WEEK_RISES, () => true);
-  if (last && weekAt && b !== undefined) {
+  if (last && weekAt && b) {
     f.b = b;
     if (now < weekAt.at) {
-      out.week = Math.min(100, Math.round(last.v + b * used(last.t, now)));
+      out.week = Math.min(100, Math.round(last.v + points(b, last.t, now)));
       out.weekReset = weekAt;
       // Since the reset, or the plan's change where later: the percents before were of other
       // limits. (A reset since came after any change, which is a sample.)
@@ -508,7 +563,7 @@ function follow(p, { from, replies }, now, weekAt, changed) {
     } else {
       // Reset since: what was used since the latest reset, and the next a week on.
       const k = Math.floor((now - weekAt.at) / WEEK);
-      out.week = Math.min(100, Math.round(b * used(weekAt.at + k * WEEK, now)));
+      out.week = Math.min(100, Math.round(points(b, weekAt.at + k * WEEK, now)));
       const on = (k + 1) * WEEK;
       out.weekReset = { at: weekAt.at + on, from: weekAt.from + on, to: weekAt.to + on };
       f.weekFrom = weekAt.at + k * WEEK;
@@ -523,26 +578,26 @@ function follow(p, { from, replies }, now, weekAt, changed) {
 const DROPS = 30_000;
 
 /**
- * What this computer's replies used of each limit, as track carried it on: the session's in the
- * window now, the week's since its reset or the plan's change, the later (from the time the replies
- * are known, if later still), and all the replies read, in the week's points as the plan counts
- * them now; and the replies of the last half minute, as they add to the session's, or where it is
- * not carried on (its points for them not known) to the week's.
+ * What this computer's replies used of each limit, as track carried it on (each at its model's
+ * rate): the session's in the window now, the week's since its reset or the plan's change, the
+ * later (from the time the replies are known, if later still), and all the replies read, in the
+ * week's points as the plan counts them now; and the replies of the last half minute, as they add
+ * to the session's, or where it is not carried on (its points for them not known) to the week's.
  * @param {Followed} f
  * @param {import('./ledger.js').Replies} r
  * @param {number} now
  * @returns {{ split: { session?: Share, week?: Share, all?: Share }, drops: Drop[] }}
  */
 function splitOf(f, r, now) {
-  /** @param {number} scale @param {number} from @returns {Share} */
-  const share = (scale, from) => {
+  /** @param {Rates} rates @param {number} from @returns {Share} */
+  const share = (rates, from) => {
     /** @type {Map<string, number>} */
     const sessions = new Map();
     /** @type {Map<string, number>} */
     const models = new Map();
     for (let i = writtenBy(r.replies, from - 1); i < r.replies.length && r.replies[i].t <= now; i++) {
       const x = r.replies[i];
-      const v = scale * x.x;
+      const v = rateOf(rates, x.model) * x.x;
       sessions.set(x.session ?? '', (sessions.get(x.session ?? '') ?? 0) + v);
       models.set(x.model ?? '', (models.get(x.model ?? '') ?? 0) + v);
     }
@@ -551,8 +606,8 @@ function splitOf(f, r, now) {
   };
   /** @type {{ session?: Share, week?: Share, all?: Share }} */
   const split = {};
-  if (f.a !== undefined && f.window !== undefined) split.session = share(f.a, Math.max(f.window, r.from));
-  if (f.b !== undefined && f.weekFrom !== undefined) {
+  if (f.a && f.window !== undefined) split.session = share(f.a, Math.max(f.window, r.from));
+  if (f.b && f.weekFrom !== undefined) {
     split.week = share(f.b, Math.max(f.weekFrom, r.from));
     // What each session came to in all, as far back as the replies are read (with `history`, the
     // week's first sample): an estimate of the use before the plan's change too, as if under it.
@@ -560,21 +615,21 @@ function splitOf(f, r, now) {
   }
   /** @type {Drop[]} */
   const drops = [];
-  /** @type {[Drop['limit'], number] | undefined} */
-  const into = f.a !== undefined ? ['session', f.a] : f.b !== undefined ? ['week', f.b] : undefined;
+  /** @type {[Drop['limit'], Rates] | undefined} */
+  const into = f.a ? ['session', f.a] : f.b ? ['week', f.b] : undefined;
   if (into) {
-    const [limit, perUse] = into;
+    const [limit, rates] = into;
     for (let i = writtenBy(r.replies, now - DROPS); i < r.replies.length; i++) {
       const x = r.replies[i];
-      if (x.t <= now) drops.push({ t: x.t, seen: x.seen ?? x.t, limit, v: perUse * x.x, ...(x.session ? { session: x.session } : {}) });
+      if (x.t <= now) drops.push({ t: x.t, seen: x.seen ?? x.t, limit, v: rateOf(rates, x.model) * x.x, ...(x.session ? { session: x.session } : {}) });
     }
   }
   return { split, drops };
 }
 
 /**
- * What this computer's replies used (their x) for a point of the week at each of its samples, as
- * track would scale the week by then: over the rises back from that sample, after the time the
+ * What this computer's replies used (their x) for a point of the week at each of its samples, all
+ * of it together: over the latest 20 points of rises back from that sample, after the time the
  * replies are known from and the plan's change before it, where they come to enough points. A
  * plan's first samples have none, till its rises come to enough.
  * @param {Point[]} q the week's percents, in time order
@@ -600,11 +655,11 @@ export function perPointOf(q, { from, replies }, changes) {
     const after = Math.max(from, changes[c - 1]?.t ?? -Infinity);
     let up = 0;
     let x = 0;
-    for (const [a, b] of rises(q, WEEK_RISES, (a) => a.t >= after, i)) {
+    for (const [a, b] of rises(q, POINT_RISES, (a) => a.t >= after, i)) {
       up += b.v - a.v;
       x += /** @type {number} */ (by.get(b)) - /** @type {number} */ (by.get(a));
     }
-    if (up >= WEEK_RISES.least && x > 0) out.push({ t: q[i].t, v: x / up });
+    if (up >= POINT_RISES.least && x > 0) out.push({ t: q[i].t, v: x / up });
   }
   return out;
 }
@@ -631,6 +686,77 @@ function rises(q, o, keep = () => true, end = q.length - 1) {
     up += b.v - a.v;
   }
   return out;
+}
+
+/**
+ * Each model's points for each of its use, where a limit's rises tell the models apart: by least
+ * squares over the runs of them, each run's points against each model's use over it (the run, not
+ * each rise, as the percents are whole numbers: a run's points are off by one at most, however long
+ * it is). The models fitted are those whose use comes to `least` points or more at the rate of all
+ * of it, two or more of them, with more than twice as many runs; the others' use is taken off at
+ * that rate. None where a model's use went much as the others' did (the fit cannot tell them
+ * apart), or where it leaves one at less than a third of that rate or more than three times. Over
+ * the samples of two weeks, the week's percent rose about 40% more for each of Claude Fable 5.2's
+ * use than for Claude Opus 5.5's, as weighed (src/ledger.js), and as much for Opus 5.5's as before
+ * Fable 5.2 was used.
+ * @param {Run[]} runs
+ * @param {number} all the points for each of use over all of them
+ * @param {number} least
+ * @returns {Map<string, number>}
+ */
+function fit(runs, all, least) {
+  /** @type {Map<string, number>} */
+  const totals = new Map();
+  for (const r of runs) for (const [m, v] of r.x) totals.set(m, (totals.get(m) ?? 0) + v);
+  const models = [...totals].filter(([, v]) => v * all >= least).map(([m]) => m);
+  /** @type {Map<string, number>} */
+  const out = new Map();
+  const n = models.length;
+  if (n < 2 || runs.length <= 2 * n) return out;
+  // The normal equations, each row with its right-hand side last.
+  const rows = models.map(() => new Array(n + 1).fill(0));
+  for (const r of runs) {
+    let rest = r.up;
+    for (const [m, v] of r.x) if (!models.includes(m)) rest -= v * all;
+    models.forEach((m, i) => {
+      const xi = r.x.get(m) ?? 0;
+      models.forEach((k, j) => {
+        rows[i][j] += xi * (r.x.get(k) ?? 0);
+      });
+      rows[i][n] += xi * rest;
+    });
+  }
+  const rates = solve(rows);
+  if (!rates || rates.some((v) => !(v > all / 3 && v < all * 3))) return out;
+  models.forEach((m, i) => out.set(m, rates[i]));
+  return out;
+}
+
+/**
+ * The solution of normal equations (a symmetric matrix, each row with its right-hand side last),
+ * by elimination in order: undefined where what is left of a model's column once the models before
+ * it are taken out is under a twentieth of it, as its use then went too much as theirs did.
+ * @param {number[][]} rows
+ * @returns {number[] | undefined}
+ */
+function solve(rows) {
+  const n = rows.length;
+  const m = rows.map((r) => [...r]);
+  for (let c = 0; c < n; c++) {
+    if (!(m[c][c] > rows[c][c] / 20)) return undefined;
+    for (let r = c + 1; r < n; r++) {
+      const f = m[r][c] / m[c][c];
+      for (let k = c; k <= n; k++) m[r][k] -= f * m[c][k];
+    }
+  }
+  /** @type {number[]} */
+  const v = new Array(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = m[r][n];
+    for (let k = r + 1; k < n; k++) s -= m[r][k] * v[k];
+    v[r] = s / m[r][r];
+  }
+  return v;
 }
 
 /**

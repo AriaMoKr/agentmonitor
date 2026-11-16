@@ -22,11 +22,14 @@ const points = (...a) => a.map(([m, v]) => ({ t: NOW - m * MINUTE, v }));
 
 /**
  * Replies at so many minutes before NOW, oldest first, each asked for as it was written, with
- * what it used; known from eight hours back.
- * @param {...[number, number]} a
+ * what it used, and of a model where one is given; known from eight hours back.
+ * @param {...([number, number] | [number, number, string])} a
  * @returns {import('../src/ledger.js').Replies}
  */
-const known = (...a) => ({ from: NOW - 8 * HOUR, replies: a.map(([m, x]) => ({ t: NOW - m * MINUTE, asked: NOW - m * MINUTE, x })) });
+const known = (...a) => ({
+  from: NOW - 8 * HOUR,
+  replies: a.map(([m, x, model]) => ({ t: NOW - m * MINUTE, asked: NOW - m * MINUTE, x, ...(model ? { model } : {}) })),
+});
 
 /** A reset `m` minutes from NOW, as the session's are carried on: then, to the minute. @param {number} m */
 const ends = (m) => ({ at: NOW + m * MINUTE, from: NOW + m * MINUTE, to: NOW + m * MINUTE });
@@ -130,7 +133,7 @@ test("the plan changed where the week's percent dropped at none of its weekly re
   assert.deepEqual(changesOf(twice, undefined), []);
 });
 
-test('what a point of the week came to at each sample: as the week would be scaled by then, over the rises back from it, under the plan it is in', () => {
+test('what a point of the week came to at each sample: all the use over the latest 20 points of rises back from it, under the plan it is in', () => {
   const week = points([150, 20], [135, 22], [120, 24], [105, 26], [90, 28], [75, 0], [60, 3], [45, 6]);
   const replies = known(...ROSE, [95, 20_000], [70, 6000], [50, 6000]);
   // 2 points for each 10,000, then 2 for 20,000: 5 points at least for one. The plan changed 75
@@ -313,30 +316,83 @@ test("after the plan changed, the percents scaled by the rises since alone: thos
   assert.equal(repliesSince({ session: [], week: back }, NOW), NOW - 600 * MINUTE - SESSION);
 });
 
-test('the replies are needed back to the earliest rise the scales may use, or the last sample, and a window before; 8 days at most', () => {
+test('the replies are needed back to the earliest rise the scales may use, or the last sample, and a window before; 15 days at most', () => {
   const session = points([150, 0], [135, 10], [120, 20], [105, 30]);
   assert.equal(repliesSince({ session, week: [] }, NOW), NOW - 150 * MINUTE - SESSION);
   assert.equal(repliesSince({ session, week: points([600, 20], [590, 22], [105, 26]) }, NOW), NOW - 600 * MINUTE - SESSION, 'the week\'s further back');
   assert.equal(repliesSince({ session: points([400, 50], [300, 60]), week: [] }, NOW), NOW - 300 * MINUTE - SESSION, 'no rise: the last sample');
-  assert.equal(repliesSince({ session: points([20 * 24 * 60, 0], [20 * 24 * 60 - 15, 10]), week: [] }, NOW), NOW - 8 * DAY);
+  // The week's rises, all of the week before its last sample: here three days old.
+  const days = (/** @type {number} */ d) => d * 24 * 60;
+  const old = points([days(9), 10], [days(9) - 15, 12], [days(3) + 15, 30], [days(3), 31]);
+  assert.equal(repliesSince({ session: [], week: old }, NOW), NOW - 9 * DAY - SESSION);
+  assert.equal(repliesSince({ session: points([days(20), 0], [days(20) - 15, 10]), week: [] }, NOW), NOW - 15 * DAY);
 });
 
 const OPUS = 'claude-opus-5-5';
+const FABLE = 'claude-fable-5-2';
 
 /**
- * The usage as the app's samples given tell, carried on with these replies of this computer's
- * sessions aaa and bbb: 1,000 just before the samples, 10,000 between each two, 20,000 an hour ago
- * and 500 20 seconds ago, which a read 5 seconds ago found; known from eight hours back.
+ * Five runs of the week's rises, an hour apart, and what each model used in them: a point of the
+ * week for each 1,000 of OPUS's use, two for each 1,000 of FABLE's; from 20% to 70%, the last
+ * sample 85 minutes ago.
+ * @type {{ week: [number, number][], replies: [number, number, string][] }}
+ */
+const RUNS = {
+  week: [[400, 20], [385, 30], [325, 30], [310, 40], [250, 40], [235, 50], [175, 50], [160, 60], [100, 60], [85, 70]],
+  replies: [
+    [390, 10_000, OPUS],
+    [315, 5000, FABLE],
+    [245, 4000, OPUS], [240, 3000, FABLE],
+    [170, 6000, OPUS], [165, 2000, FABLE],
+    [95, 2000, OPUS], [90, 4000, FABLE],
+  ],
+};
+
+test("the week carried on at each model's own rate, where the runs of its rises tell the models apart: else all at one", () => {
+  const later = { at: NOW + 2 * DAY, from: NOW + 2 * DAY - 9 * MINUTE, to: NOW + 2 * DAY + 5 * MINUTE };
+  /** @type {[number, number, string]} 10,000 of FABLE's half an hour ago */
+  const since = [30, 10_000, FABLE];
+  const week = points(...RUNS.week);
+  // At FABLE's rate, 20 points: at that of all the use in the rises, 50 points for 36,000, 13.9.
+  assert.deepEqual(round(track({ session: [], week }, known(...RUNS.replies, since), NOW, later)), { at: NOW, week: 90, weekReset: later, weekPace: 20 });
+  // Four runs: too few to tell two models apart. 40 points for 26,000: 15.4.
+  const four = { session: [], week: week.slice(2) };
+  assert.deepEqual(round(track(four, known(...RUNS.replies.slice(1), since), NOW, later)), { at: NOW, week: 85, weekReset: later, weekPace: 15.385 });
+  // Each run with as much of each: they cannot be told apart. 6 points for each 4,000.
+  const same = points([400, 20], [385, 26], [325, 26], [310, 32], [250, 32], [235, 38], [175, 38], [160, 44], [100, 44], [85, 50]);
+  const even = [390, 315, 245, 170, 95].flatMap((m) => /** @type {[number, number, string][]} */ ([[m, 2000, OPUS], [m - 1, 2000, FABLE]]));
+  assert.equal(track({ session: [], week: same }, known(...even, since), NOW, later)?.week, 65);
+  // A rate it would give out of all bounds, here none for FABLE's use: 25 points for 50,000.
+  const free = points([400, 20], [385, 30], [325, 30], [310, 30], [250, 30], [235, 35], [175, 35], [160, 45], [100, 45], [85, 45]);
+  const odd = /** @type {[number, number, string][]} */ ([
+    [390, 10_000, OPUS], [315, 10_000, FABLE], [245, 5000, OPUS], [240, 5000, FABLE], [170, 10_000, OPUS], [95, 10_000, FABLE],
+  ]);
+  assert.equal(track({ session: [], week: free }, known(...odd, since), NOW, later)?.week, 50);
+});
+
+/**
+ * The replies usageWith carries the samples on with, unless told others: so long ago (ms), what
+ * each used, its session and its model. 1,000 just before the samples, 10,000 between each two,
+ * 20,000 an hour ago and 500 20 seconds ago.
+ * @type {[number, number, string, string][]}
+ */
+const SPLIT = [
+  [160 * MINUTE, 1000, 'aaa', OPUS], [140 * MINUTE, 10_000, 'aaa', OPUS], [125 * MINUTE, 10_000, 'bbb', OPUS],
+  [110 * MINUTE, 10_000, 'aaa', 'claude-sonnet-5-5'], [60 * MINUTE, 20_000, 'bbb', OPUS], [20_000, 500, 'aaa', OPUS],
+];
+
+/**
+ * The usage as the app's samples given tell, carried on with replies of this computer's sessions
+ * aaa and bbb (SPLIT, unless told others); those of the last minute found by a read 5 seconds ago,
+ * and all known from eight hours back.
  * @param {import('node:test').TestContext} t
  * @param {[number, number | undefined, number | undefined][]} samples
+ * @param {[number, number, string, string][]} [list]
  */
-async function usageWith(t, samples) {
+async function usageWith(t, samples, list = SPLIT) {
   const cfg = makeConfig(t);
   cfg.planUsage(samples);
-  const replies = /** @type {[number, number, string, string][]} */ ([
-    [160 * MINUTE, 1000, 'aaa', OPUS], [140 * MINUTE, 10_000, 'aaa', OPUS], [125 * MINUTE, 10_000, 'bbb', OPUS],
-    [110 * MINUTE, 10_000, 'aaa', 'claude-sonnet-5-5'], [60 * MINUTE, 20_000, 'bbb', OPUS], [20_000, 500, 'aaa', OPUS],
-  ]).map(([ago, x, session, model]) => ({ t: NOW - ago, asked: NOW - ago, x, session, model, seen: ago < MINUTE ? NOW - 5000 : NOW - ago }));
+  const replies = list.map(([ago, x, session, model]) => ({ t: NOW - ago, asked: NOW - ago, x, session, model, seen: ago < MINUTE ? NOW - 5000 : NOW - ago }));
   const ledger = /** @type {import('../src/ledger.js').Ledger} */ (/** @type {unknown} */ ({ read: async () => ({ from: NOW - 8 * HOUR, replies }) }));
   return new PlanUsage(async () => [cfg.desktop], ledger).read(NOW, { wait: true });
 }
@@ -377,6 +433,26 @@ test("where the session is not carried on, the replies just written add to the w
   // Neither carried on: no drops.
   const none = await usageWith(t, [[NOW - 150 * MINUTE, undefined, 20], [NOW - 105 * MINUTE, undefined, 26]]);
   assert.deepEqual([none?.tracked, none?.drops], [undefined, undefined]);
+});
+
+test("each model's own rate where the week's runs of rises tell them apart: the week carried on, the shares and the drops at each one's", async (t) => {
+  const R = NOW + 10 * HOUR;
+  const resets = [R - 2 * WEEK, R - WEEK].flatMap((r) => [[r - 10 * MINUTE, 0, 80], [r + 5 * MINUTE, 0, 1]]);
+  const week = RUNS.week.map(([m, v]) => /** @type {[number, undefined, number]} */ ([NOW - m * MINUTE, undefined, v]));
+  // aaa's replies OPUS's, bbb's FABLE's; and 10,000 of bbb's half an hour ago, 500 of aaa's just now.
+  const list = /** @type {[number, number, string, string][]} */ ([
+    ...RUNS.replies.map(([m, x, model]) => [m * MINUTE, x, model === OPUS ? 'aaa' : 'bbb', model]),
+    [30 * MINUTE, 10_000, 'bbb', FABLE], [20_000, 500, 'aaa', FABLE],
+  ]);
+  const u = await usageWith(t, [...resets, ...week], list);
+  // Points a thousand: each model's, and all the use's in the rises, 50 for 36,000.
+  const thousand = (/** @type {number} */ v) => v * 1000;
+  assert.deepEqual(round(u?.perModel?.week?.map(([m, v]) => [m, thousand(v)])), [[OPUS, 1], [FABLE, 2]]);
+  assert.deepEqual(round(thousand(u?.perUse?.week ?? 0)), 1.389);
+  assert.equal(u?.perModel?.session, undefined, 'the session not carried on');
+  assert.deepEqual(round(u?.tracked), { at: NOW, week: 91, weekReset: { at: R, from: R - 9 * MINUTE, to: R + 5 * MINUTE }, weekPace: 21 });
+  assert.deepEqual(round(u?.split?.week), { from: NOW - 8 * HOUR, to: NOW, sessions: [['bbb', 48], ['aaa', 23]], models: [[FABLE, 49], [OPUS, 22]] });
+  assert.deepEqual(round(u?.drops), [{ t: NOW - 20_000, seen: NOW - 5000, limit: 'week', v: 1, session: 'aaa' }]);
 });
 
 test("after the plan changed within the week, the week's split counts from its first sample under the new limits: the use before was of other limits", async (t) => {
