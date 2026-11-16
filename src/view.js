@@ -1472,10 +1472,19 @@ function planOf(a, split, price) {
 }
 
 /**
+ * A limit's points for each of a model's use (a reply's x), as the usage is carried on: the model's
+ * own where the rises tell it apart from the others', else that of all the use.
+ * @param {import('./usage.js').Usage | undefined} u
+ * @param {'session' | 'week'} limit
+ * @param {string | undefined} model
+ */
+const perUseOf = (u, limit, model) => u?.perModel?.[limit]?.find(([m]) => m === (model ?? ''))?.[1] ?? u?.perUse?.[limit];
+
+/**
  * A session's prompt cache in its details, while it is not at work: till when it keeps its context
  * (an hour or five minutes after its last request), and what a reply once it does not adds to the
- * use, writing it all again where it would have read it: in points of each limit, and at the
- * plan's price.
+ * use, writing it all again where it would have read it: in points of each limit, at its model's
+ * rate, and at the plan's price.
  * @param {Agent} a
  * @param {Snapshot} snap
  * @param {number} now
@@ -1489,7 +1498,8 @@ function cacheLines(a, snap, now) {
   /** @type {[string, string][]} */
   const out = [['Cache', end > now ? `warm till ${clock(end, now)} (in ${till(end - now)}), ${after}` : `ran out at ${clock(end, now)} (${ago(now - end)} ago), ${after}`]];
   if (!a.ctx) return out;
-  const per = c.rewrite > 0 ? snap.usage?.perUse : undefined;
+  const u = snap.usage;
+  const per = c.rewrite > 0 ? { session: perUseOf(u, 'session', a.model), week: perUseOf(u, 'week', a.model) } : undefined;
   const pts = (/** @type {number} */ v) => (v < 0.01 ? '<0.01' : v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : String(Math.round(v)));
   /** @type {string[]} */
   const cost = [];

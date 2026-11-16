@@ -415,6 +415,13 @@ test("how long each session's prompt cache keeps its context yet, while it is no
     ' Cache miss writes its 281k tokens again: 0.64 points of the session, 0.08 of the week, $0.04',
   ]);
   assert.deepEqual(details(warm, { usage: { at: NOW, perUse: { week: perUse.week } } })[1], ' Cache miss writes its 281k tokens again: 0.08 points of the week', 'the week alone, no price');
+  // At its model's own rate, where the rises tell the models apart: here the week's.
+  const perModel = { week: /** @type {[string, number][]} */ ([['claude-fable-5-2', 2e-6], ['claude-opus-5-5', 1e-6]]) };
+  assert.deepEqual(
+    details({ ...warm, model: 'claude-fable-5-2' }, { planPrice: 200, usage: { at: NOW, perUse, perModel } })[1],
+    ' Cache miss writes its 281k tokens again: 0.64 points of the session, 0.16 of the week, $0.07',
+  );
+  assert.deepEqual(details({ ...warm, model: 'claude-haiku-5-5' }, { usage: { at: NOW, perUse, perModel } })[1], ' Cache miss writes its 281k tokens again: 0.64 points of the session, 0.08 of the week', 'a model with no rate of its own: that of all');
   assert.deepEqual(details(warm)[1], ' Cache miss writes its 281k tokens again', 'what that comes to not known');
   assert.deepEqual(details(soon), [` Cache      warm till ${clock(NOW + 5 * MINUTE, NOW)} (in 5m), an hour after its last request`]);
   assert.deepEqual(details(cold), [` Cache      ran out at ${clock(NOW - HOUR, NOW)} (1h ago), an hour after its last request`]);
