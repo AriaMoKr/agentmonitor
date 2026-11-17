@@ -35,7 +35,8 @@ const OPEN = '--open=';
  * The plan's usage as a bar: the session's limit or the week's, whichever is used more (the
  * week's on a tie), as the list shows it; colored as the list colors its percent, and yellow too
  * where at its pace it reaches 100% before it resets, as below the list. None without the
- * desktop app's samples.
+ * desktop app's samples, nor while their percents are being calculated (limitsOf): the replies
+ * to carry an old sample on with are still being read.
  * @param {import('../src/usage.js').Usage | undefined} u
  * @param {number} now
  * @returns {Gauge | undefined}

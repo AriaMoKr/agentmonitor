@@ -539,27 +539,48 @@ const USAGE_FRESH = 45 * MINUTE;
  *   carried on (below the list and in the chart, the week's is weekPace's instead: since it reset)
  */
 
+/** @typedef {'session' | 'week'} LimitName */
+
 /**
  * The session's limit and the week's as shown: carried on to now with this computer's replies
  * where they tell how, else as the desktop app last sampled it, till it surely reset since:
- * without a reset known, the session's after five hours and the week's after seven days.
+ * without a reset known, the session's after five hours and the week's after seven days. While
+ * the replies to carry it on with are still being read (the first read of them, at the monitor's
+ * start), a sample that is no longer fresh is not shown, as it can be far off: `reading` names
+ * its limits instead, their percents being calculated, and their resets are the sample's.
  * @param {import('./usage.js').Usage} u
  * @param {number} now
- * @returns {{ session?: Limit, week?: Limit }}
+ * @returns {{ session?: Limit, week?: Limit, reading: LimitName[] }}
  */
 export function limitsOf(u, now) {
   const k = u.tracked;
   const s = u.sessionReset;
   const w = u.weekReset;
+  /** @type {LimitName[]} */
+  const reading = [];
+  /** A limit as sampled, unless it is being calculated. @param {LimitName} name @param {Limit | undefined} l */
+  const sampled = (name, l) => {
+    if (!l || !u.reading || now - u.at < USAGE_FRESH) return l;
+    reading.push(name);
+    return undefined;
+  };
   return {
     session: k?.session !== undefined ? { v: k.session, near: true, reset: k.sessionReset, pace: k.sessionPace }
-      : u.session !== undefined && now < (s ? s.to : u.at + SESSION) ? { v: u.session, near: false, reset: s }
-        : undefined,
+      : sampled('session', u.session !== undefined && now < (s ? s.to : u.at + SESSION) ? { v: u.session, near: false, reset: s } : undefined),
     week: k?.week !== undefined ? { v: k.week, near: true, reset: k.weekReset, pace: k.weekPace }
-      : u.week !== undefined && now < (w ? w.to : u.at + WEEK) ? { v: u.week, near: false, reset: w }
-        : undefined,
+      : sampled('week', u.week !== undefined && now < (w ? w.to : u.at + WEEK) ? { v: u.week, near: false, reset: w } : undefined),
+    reading,
   };
 }
+
+/**
+ * What a limit whose percent is being calculated says in its place (limitsOf), or `text` so,
+ * trailing off: with `--ascii` in dots, as the theme's ellipsis is the `~` of an estimate. Plain,
+ * to be drawn dim.
+ * @param {Theme} t
+ * @param {string} [text]
+ */
+export const calculating = (t, text = 'calculating') => `${text}${t.ascii ? '...' : '…'}`;
 
 /**
  * The week's pace, in points a day: what it rose by since it last reset, or since the plan last
@@ -633,10 +654,10 @@ export const sessionEnd = (r) => (r && r.to - r.from <= 30 * MINUTE ? Math.round
  * The plan's usage in the header: how much of the session's limit and of the week's is used,
  * yellow from 75% and red from 90%, each with when it resets where that is known closely enough.
  * As carried on to now with this computer's replies (`~34%`) where they tell how, else as the
- * desktop app last sampled it, with how long ago once that is no longer fresh (limitsOf). The
- * session's reset is shown when known within half an hour, to five minutes; the week's to the
- * minute when known within an hour and less than a day off, else by its day when known within
- * half a day.
+ * desktop app last sampled it, with how long ago once that is no longer fresh, or while the
+ * replies are still being read, `calculating…` in its place (limitsOf). The session's reset is
+ * shown when known within half an hour, to five minutes; the week's to the minute when known
+ * within an hour and less than a day off, else by its day when known within half a day.
  * @param {import('./usage.js').Usage | undefined} u
  * @param {number} now
  * @param {Theme} t
@@ -648,22 +669,22 @@ export function usageParts(u, now, t) {
   /** @type {Part[]} */
   const parts = [];
   let sampled = false;
-  /** @param {string} label @param {Limit} l @param {string | false | undefined} resets */
-  const add = (label, { v, near }, resets) => {
+  /** @param {string} label @param {Limit | undefined} l undefined while it is being calculated @param {string | false | undefined} resets */
+  const add = (label, l, resets) => {
     /** @type {Part} */
-    const part = [`${t.dim(label)} ${levelOf(v, `${near ? '~' : ''}${v}%`, t)}`, 6];
+    const part = [`${t.dim(label)} ${l ? levelOf(l.v, `${l.near ? '~' : ''}${l.v}%`, t) : t.dim(calculating(t))}`, 6];
     parts.push(part);
     if (resets) parts.push([`${t.dim('resets')} ${resets}`, 4, part]);
-    if (!near) sampled = true;
+    if (l && !l.near) sampled = true;
   };
   /** @param {import('./usage.js').Reset | undefined} r */
   const weekAt = (r) => r && (r.to - r.from <= HOUR && r.at - now < DAY ? timeOfDay(r.at) : r.to - r.from <= 12 * HOUR && weekday(r.at));
-  const { session, week } = limitsOf(u, now);
-  if (session) {
-    const end = sessionEnd(session.reset);
+  const { session, week, reading } = limitsOf(u, now);
+  if (session || reading.includes('session')) {
+    const end = sessionEnd(session ? session.reset : u.sessionReset);
     add('session', session, end !== undefined && timeOfDay(end));
   }
-  if (week) add('week', week, weekAt(week.reset));
+  if (week || reading.includes('week')) add('week', week, weekAt(week ? week.reset : u.weekReset));
   if (sampled && age >= USAGE_FRESH) parts.push([t.dim(`${ago(age)} ago`), 6]);
   return parts;
 }
@@ -1005,6 +1026,7 @@ export function bar(v, gone, w, t) {
  * it), the week's since it reset or the plan changed (weekPace): at that pace, when it reaches
  * 100% where that comes before it resets, else about how much it comes to by then. On a narrow
  * screen without the bar, and wrapped to three lines at most, a time kept with what it goes with.
+ * A limit whose percent is being calculated, `calculating…` and its reset alone.
  * @param {import('./usage.js').Usage | undefined} u
  * @param {number} cols
  * @param {number} now
@@ -1013,16 +1035,18 @@ export function bar(v, gone, w, t) {
  */
 function paceLines(u, cols, now, t) {
   if (!u) return [];
-  const { session, week } = limitsOf(u, now);
+  const { session, week, reading } = limitsOf(u, now);
   const w = cols >= 100 ? 24 : cols >= 80 ? 16 : cols >= 64 ? 10 : 0;
   // A no-break space (wrapStyled draws it as a space) keeps the words on either side together.
   const nb = ' ';
   const sep = t.dim(t.sep.replace(/^ /, nb));
   /** @type {string[]} */
   const lines = [];
-  /** @param {string} label @param {Limit} l @param {number | undefined} gone @param {string[]} said */
+  /** @param {string} label @param {Limit | undefined} l undefined while it is being calculated @param {number | undefined} gone @param {string[]} said */
   const line = (label, l, gone, said) => {
-    const head = ` ${t.dim(fit(label, 7))} ${w ? `${bar(l.v, gone, w, t)} ` : ''}${levelOf(l.v, fit(`${l.near ? '~' : ''}${l.v}%`, 5, 'right'), t)}  `;
+    const head = l
+      ? ` ${t.dim(fit(label, 7))} ${w ? `${bar(l.v, gone, w, t)} ` : ''}${levelOf(l.v, fit(`${l.near ? '~' : ''}${l.v}%`, 5, 'right'), t)}  `
+      : ` ${t.dim(fit(label, 7))} ${t.dim(calculating(t))}  `;
     lines.push(...wrapped(head + said.join(sep), cols, visibleWidth(head), 3, t));
   };
   /** When it resets, as said, and how soon. @param {string} at @param {number} end */
@@ -1037,26 +1061,26 @@ function paceLines(u, cols, now, t) {
     if (full < end) return t.yellow(`${rate(pace, per)}: 100% ${when(full)}, ${till(end - full)}${nb}before`);
     return `${rate(pace, per)}${t.dim(':')} ${t.dim('about')}${nb}${Math.round(l.v + (pace * (end - now)) / unit)}%${nb}${t.dim(`by${nb}then`)}`;
   };
-  if (session) {
-    const end = sessionEnd(session.reset);
+  if (session || reading.includes('session')) {
+    const end = sessionEnd(session ? session.reset : u.sessionReset);
     /** @type {string[]} */
     const said = [];
-    if (session.v >= 100) said.push(t.red('used up'));
+    if (session && session.v >= 100) said.push(t.red('used up'));
     if (end !== undefined) said.push(resets(timeOfDay(end), end));
-    if (session.pace !== undefined && session.v < 100) {
+    if (session?.pace !== undefined && session.v < 100) {
       said.push(end === undefined ? rate(session.pace, 'h') : ahead(session, session.pace, HOUR, 'h', end, (at) => `at${nb}${timeOfDay(at)}`));
     }
     line('session', session, end === undefined ? undefined : 1 - (end - now) / SESSION, said);
   }
-  if (week) {
-    const r = week.reset;
+  if (week || reading.includes('week')) {
+    const r = week ? week.reset : u.weekReset;
     const end = r && r.to - r.from <= 12 * HOUR ? r.at : undefined;
     /** @type {string[]} */
     const said = [];
-    if (week.v >= 100) said.push(t.red('used up'));
+    if (week && week.v >= 100) said.push(t.red('used up'));
     if (end !== undefined) said.push(resets(r && r.to - r.from <= HOUR ? `${weekday(end)}${nb}${timeOfDay(end)}` : weekday(end), end));
-    const pace = end === undefined ? undefined : weekPace(u, week, end, now);
-    if (end !== undefined && pace !== undefined && week.v < 100) {
+    const pace = end === undefined || !week ? undefined : weekPace(u, week, end, now);
+    if (week && end !== undefined && pace !== undefined && week.v < 100) {
       said.push(ahead(week, pace, DAY, 'd', end, (at) => `${weekday(at)}${nb}${timeOfDay(at)}`));
     }
     line('week', week, end === undefined ? undefined : (now - (end - WEEK)) / WEEK, said);

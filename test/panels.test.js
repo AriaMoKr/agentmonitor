@@ -890,6 +890,37 @@ test('the spark: asleep when none works, turning when some do, waving when one n
   assert.deepEqual([styleAt(43), styleAt(80), styleAt(92), styleAt(92, snapshot([sessions()[4]], { usage: USAGE }))], ['33', '1;33', '31', '2']);
 });
 
+test("while the replies to carry an old sample on with are still being read: the chart's samples alone, calculating… with the resets; the tank and the spark say so", () => {
+  /** @type {import('../src/usage.js').Usage} sampled an hour ago, the replies not read yet */
+  const reading = {
+    ...USAGE, at: NOW - HOUR, tracked: undefined, split: undefined, drops: undefined, reading: true,
+    sessionReset: { at: NOW + 2 * HOUR, from: NOW + 2 * HOUR, to: NOW + 2 * HOUR },
+    weekReset: { at: NOW + 2 * DAY, from: NOW + 2 * DAY, to: NOW + 2 * DAY },
+  };
+  const snap = fullSnapshot({ usage: reading });
+  const chart = draw('chart', { snap, height: 48 }).view;
+  assert.match(chart[1], new RegExp(`^ ─ Usage ─+ sampled ${clock(NOW - HOUR, NOW)} ─$`));
+  assert.equal(chart[2], ` session calculating…  resets ${timeOfDay(NOW + 2 * HOUR)}, in 2h00m`);
+  assert.equal(chart[14], ` week    calculating…  resets ${weekday(NOW + 2 * DAY)} ${timeOfDay(NOW + 2 * DAY)}`);
+  // The session's samples alone: not carried on to now (in cyan), as the last one is once read.
+  /** The session's plot in color. @param {import('../src/usage.js').Usage} usage */
+  const plotted = (usage) => {
+    const { lines, top } = draw('chart', { snap: fullSnapshot({ usage }), height: 48, t: color });
+    return lines.slice(top + 3, top + 13).join('\n');
+  };
+  assert.ok(!plotted(reading).includes('\x1b[36m'));
+  assert.ok(plotted({ ...reading, reading: undefined }).includes('\x1b[36m'));
+  const tank = draw('tank', { snap, height: 30 }).view;
+  assert.match(tank[1], /^ ─ Tank ─+$/);
+  assert.equal(tank[2], "   Calculating the usage from the desktop app's check 1h ago…");
+  assert.ok(tank.slice(3).every((l) => l === ''), 'and no tanks');
+  const spark = draw('spark', { snap, height: 20 }).view;
+  const middle = spark.findIndex((l) => l.includes('2 at work'));
+  assert.equal(spark[middle + 1], `${' '.repeat(11)}|${' '.repeat(13)}session calculating…  week calculating…`);
+  // With --ascii, dots.
+  assert.equal(draw('tank', { snap, height: 30, t: ascii }).view[2], "   Calculating the usage from the desktop app's check 1h ago...");
+});
+
 test('the views that move do so with the time they are drawn for, though nothing is at work', () => {
   const still = snapshot(sessions().slice(3), { usage: USAGE });
   for (const name of ['floor', 'tank', 'radar', 'spark']) {

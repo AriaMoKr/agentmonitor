@@ -62,6 +62,8 @@ const PACE_LEAST = 15 * MINUTE;
  * @property {Point[]} [changes] the week's first sample after each time the plan seems to have
  *   changed, oldest first (changesOf), the last of them `changed`
  * @property {Tracked} [tracked] the percents carried on to a later time
+ * @property {true} [reading] the replies to carry them on with are still being read (the first
+ *   read of them, at the monitor's start, takes some seconds): the sample alone till then
  * @property {{ session?: number, week?: number }} [perUse] the points of each limit for each of use
  *   (a reply's x), as the replies carry them on: of all the use its rises came to, and so of each
  *   model's that has no rate of its own
@@ -144,15 +146,16 @@ export class PlanUsage {
   /**
    * The latest sample in the app's folders, carried on to `now` where the replies tell how; read
    * again at most every `maxAgeMs`. The replies are read in the background unless `wait`: until
-   * the first read of them has finished, the sample alone. With `since`, they are read back to
-   * then at least, samples or none, and kept in `replies`. With `history`, back to the week's
-   * first sample too, for what a point of the week came to at each sample (perPoint).
+   * the first read of them has finished, the sample alone, marked `reading`, and read again at
+   * each call, to be carried on as soon as they are. With `since`, they are read back to then at
+   * least, samples or none, and kept in `replies`. With `history`, back to the week's first sample
+   * too, for what a point of the week came to at each sample (perPoint).
    * @param {number} now
    * @param {{ maxAgeMs?: number, wait?: boolean, since?: number, history?: boolean }} [o]
    * @returns {Promise<Usage | undefined>}
    */
   async read(now, { maxAgeMs = 5000, wait = false, since, history = false } = {}) {
-    if (now - this.readAt < maxAgeMs) return this.usage;
+    if (now - this.readAt < maxAgeMs && !this.usage?.reading) return this.usage;
     this.readAt = now;
     /** @type {Told | undefined} */
     let latest;
@@ -170,6 +173,8 @@ export class PlanUsage {
     if (back !== Infinity && this.ledger) {
       const replies = await this.ledger.read(now, back, { wait });
       this.replies = replies;
+      // Not read yet: they are, in the background (waited for, a read that failed is all there is).
+      if (usage && !replies && !wait) usage = { ...usage, reading: true };
       const f = latest && replies ? follow(latest.points, replies, now, latest.usage.weekReset, latest.usage.changed) : undefined;
       if (latest && replies && f?.tracked) {
         const perUse = { ...(f.a ? { session: f.a.all } : {}), ...(f.b ? { week: f.b.all } : {}) };

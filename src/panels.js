@@ -8,7 +8,7 @@
 // that move do so with the time they are drawn for.
 import { Canvas } from './canvas.js';
 import { ago, clean, clock, dollars, durationLabel, elapsed, fit, graphemes, lastPart, monthDay, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
-import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, pointPrice, projectName, putAway, rate, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
+import { bar, calculating, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, pointPrice, projectName, putAway, rate, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -22,6 +22,7 @@ import { bar, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, po
  * @typedef {import('./view.js').Theme} Theme
  * @typedef {import('./view.js').Shown} Shown
  * @typedef {import('./view.js').Limit} Limit
+ * @typedef {import('./view.js').LimitName} LimitName
  * @typedef {import('./view.js').Panel} Panel
  * @typedef {import('./view.js').PanelLine} PanelLine
  * @typedef {import('./view.js').Action} Action
@@ -1221,9 +1222,10 @@ function heat(c, y, points, now, t) {
 
 /**
  * The chart: the session's limit over its window of five hours and the week's over its seven
- * days, each with its samples, carried on to now, and at its pace on to its reset; what a point of
- * the week came to over the samples' days, as the plans changed; on a tall screen, when in the
- * day the session's was used over the last week.
+ * days, each with its samples, carried on to now, and at its pace on to its reset (while its
+ * percent is being calculated, the samples alone); what a point of the week came to over the
+ * samples' days, as the plans changed; on a tall screen, when in the day the session's was used
+ * over the last week.
  * @type {Panel}
  */
 function chartLines(snap, rows, ui, screen, t) {
@@ -1231,7 +1233,7 @@ function chartLines(snap, rows, ui, screen, t) {
   const room = Math.max(0, height - 2);
   const u = snap.usage;
   if (!u?.history) return frame('Usage', '', [line(t.dim('   No usage known: the desktop app samples it while it runs.'), cols, t)], screen, t);
-  const { session, week } = limitsOf(u, now);
+  const { session, week, reading } = limitsOf(u, now);
   const c = new Canvas(cols, room);
   // Each chart a title, its lines and its times: the session's; the week's where there is room;
   // then what a point of the week came to, where that is read (not for a snapshot printed once);
@@ -1240,14 +1242,18 @@ function chartLines(snap, rows, ui, screen, t) {
   const withHeat = room >= (n === 3 ? 30 : 26);
   const h = Math.max(2, Math.min(10, Math.floor(((withHeat ? room - 9 : room) - 2 * n) / n)));
   let y = 0;
-  /** @param {string} label @param {Limit | undefined} l @param {string} said */
+  /** @param {LimitName} label @param {Limit | undefined} l @param {string} said */
   const title = (label, l, said) => {
     c.put(1, y, label, t.bold);
+    let x = 16;
     if (l) c.put(9, y, `${l.near ? '~' : ''}${l.v}%`, levelStyle(l.v, t));
-    if (said) c.put(16, y, said, t.dim);
+    else if (reading.includes(label)) x = c.put(9, y, calculating(t), t.dim) + 2;
+    if (said) c.put(x, y, said, t.dim);
     y++;
   };
-  const sEnd = sessionEnd(session?.reset) ?? session?.reset?.at;
+  // While a percent is being calculated, its reset is the sample's.
+  const sReset = session ? session.reset : reading.includes('session') ? u.sessionReset : undefined;
+  const sEnd = sessionEnd(sReset) ?? sReset?.at;
   const sFrom = sEnd ? sEnd - SESSION : now - 4 * HOUR;
   const sTo = sEnd ?? now + HOUR;
   // A plan can have no session's limit: the app's checks leave it out then.
@@ -1256,7 +1262,7 @@ function chartLines(snap, rows, ui, screen, t) {
   plot(c, y, h, u.history.session, { from: sFrom, to: sTo, now, v: session?.v, pace: session?.pace, unit: HOUR, days: false }, t);
   y += h + 1;
   if (n >= 2) {
-    const r = week?.reset;
+    const r = week ? week.reset : reading.includes('week') ? u.weekReset : undefined;
     const wEnd = r && r.to - r.from <= 12 * HOUR ? r.at : undefined;
     const wFrom = wEnd ? wEnd - WEEK : now - 6 * DAY;
     const pace = week && wEnd ? weekPace(u, week, wEnd, now) : undefined;
@@ -1739,14 +1745,18 @@ function tank(c, x, y, w, h, v, drops, now, t) {
  * reset. The week's beside it, with its own; the replies drip into it instead where the session's
  * points for them are not known (its percent left out of the desktop app's samples, as after a
  * change of plan, or not carried on yet). With the plan's price, the week's in dollars too: what
- * its whole comes to, its percent and its pace.
+ * its whole comes to, its percent and its pace. While their percents are being calculated, none,
+ * and what the desktop app's sample is being carried on from.
  * @type {Panel}
  */
 function tankLines(snap, rows, ui, screen, t) {
   const { width: cols, height, now } = screen;
   const room = Math.max(0, height - 2);
   const u = snap.usage;
-  const { session, week } = u ? limitsOf(u, now) : {};
+  const { session, week, reading = [] } = u ? limitsOf(u, now) : {};
+  if (u && !session && !week && reading.length) {
+    return frame('Tank', '', [line(t.dim(`   ${calculating(t, `Calculating the usage from the desktop app's check ${ago(Math.max(0, now - u.at))} ago`)}`), cols, t)], screen, t);
+  }
   if (!session && !week) return frame('Tank', '', [line(t.dim('   No usage known: the desktop app samples it while it runs.'), cols, t)], screen, t);
   const c = new Canvas(cols, room);
   const h = Math.max(1, Math.min(14, room - 3));
@@ -1888,7 +1898,7 @@ function sparkLines(snap, rows, ui, screen, t) {
   const working = states.filter((s) => ['working', 'running', 'tool'].includes(s)).length;
   const needs = states.filter((s) => s === 'waiting' || s === 'blocked').length;
   const unread = states.filter((s) => s === 'unread').length;
-  const { session, week } = snap.usage ? limitsOf(snap.usage, now) : {};
+  const { session, week, reading = [] } = snap.usage ? limitsOf(snap.usage, now) : {};
   const top = Math.max(session?.v ?? 0, week?.v ?? 0);
   const asleep = !working && !needs;
   const paint = asleep ? t.dim : top >= 90 ? t.red : top >= 75 ? t.yellowBold : t.yellow;
@@ -1926,7 +1936,9 @@ function sparkLines(snap, rows, ui, screen, t) {
   const said = [
     [working && t.green(`${working} at work`), needs && t.yellowBold(`${needs} for you`), unread && t.blueBold(`${unread} unread`)].filter(Boolean).join(t.dim(t.sep))
       || t.dim(sessions.length ? 'asleep: none at work' : 'no sessions listed'),
-    [session && `${t.dim('session')} ${levelOf(session.v, `${session.near ? '~' : ''}${session.v}%`, t)}`, week && `${t.dim('week')} ${levelOf(week.v, `${week.near ? '~' : ''}${week.v}%`, t)}`].filter(Boolean).join('  '),
+    /** @type {[LimitName, Limit | undefined][]} */ ([['session', session], ['week', week]])
+      .map(([label, l]) => (l ? `${t.dim(label)} ${levelOf(l.v, `${l.near ? '~' : ''}${l.v}%`, t)}` : reading.includes(label) ? `${t.dim(label)} ${t.dim(calculating(t))}` : ''))
+      .filter(Boolean).join('  '),
   ].filter(Boolean);
   const first = Math.max(0, cy - Math.floor((said.length - 1) / 2));
   const lines = c.lines(t.ascii).map((text, y) => line(y >= first && y - first < said.length ? text + said[y - first] : text, cols, t));

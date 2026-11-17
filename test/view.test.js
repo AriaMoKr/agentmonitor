@@ -588,6 +588,36 @@ test('the usage carried on to now with this computer\'s replies, marked ~; how l
   assert.ok(top({ ...sample, tracked: { at: NOW, ...session, session: 92 } }, color).includes('\x1b[2msession\x1b[0m \x1b[31m~92%\x1b[0m'));
 });
 
+test('while the replies to carry the usage on with are still being read, a sample no longer fresh says calculating… in place of its percent, with its reset; a fresh one as sampled', () => {
+  /** The header with this usage. @param {import('../src/usage.js').Usage} usage @param {number} [cols] @param {ReturnType<typeof makeTheme>} [t] */
+  const top = (usage, cols = 180, t = plain) => {
+    const snap = snapshot(sessions(), { usage });
+    const ui = initialUi();
+    return listLines(snap, visibleRows(snap, ui, t), ui, { width: cols, height: 10, now: NOW }, t)[0];
+  };
+  /** A reset likeliest at `at`, from and to so many minutes off it. @param {number} at @param {number} from @param {number} to */
+  const reset = (at, from, to) => ({ at, from: at + from * MINUTE, to: at + to * MINUTE });
+  const S = NOW + 2 * HOUR + 7 * MINUTE;
+  const W = NOW + 3 * 24 * HOUR;
+  const sessionAt = timeOfDay(NOW + 2 * HOUR + 5 * MINUTE);
+  /** @type {import('../src/usage.js').Usage} sampled an hour ago */
+  const hour = { at: NOW - HOUR, session: 64, week: 29, sessionReset: reset(S, -10, 5), weekReset: reset(W, -9, 5), reading: true };
+  assert.match(top(hour), new RegExp(`at work +session calculating… resets ${sessionAt} {2}week calculating… resets ${weekday(W)} {2}\\d\\d:\\d\\d:\\d\\d $`), 'and not how old');
+  // Three days ago: the session's surely reset since, gone as without the replies being read.
+  assert.match(top({ ...hour, at: NOW - 3 * 24 * HOUR, sessionReset: undefined }), new RegExp(`at work +week calculating… resets ${weekday(W)} {2}\\d\\d:\\d\\d:\\d\\d $`));
+  assert.match(top({ ...hour, at: NOW - 10 * MINUTE }), new RegExp(`at work +session 64% resets ${sessionAt} {2}week 29% resets ${weekday(W)} {2}\\d\\d:\\d\\d:\\d\\d $`), 'fresh');
+  assert.match(top({ ...hour, reading: undefined }), new RegExp(`at work +session 64% resets ${sessionAt} {2}week 29% resets ${weekday(W)} {2}1h ago {2}\\d`), 'read, and not carried on');
+  const color = makeTheme({ color: true, ascii: false, animate: false });
+  assert.ok(top(hour, 160, color).includes('\x1b[2mweek\x1b[0m \x1b[2mcalculating…\x1b[0m \x1b[2mresets\x1b[0m'), 'dim');
+  // With --ascii, dots: the theme's ellipsis is the ~ of an estimate.
+  assert.match(top(hour, 160, makeTheme({ color: false, ascii: true, animate: false })), /session calculating\.\.\. resets \S+ {2}week calculating\.\.\. resets/);
+  // Narrower, the time first, then the resets before it, as they go before a percent.
+  assert.match(top(hour, 160), new RegExp(`at work +session calculating… resets ${sessionAt} {2}week calculating… resets ${weekday(W)} $`));
+  assert.match(top(hour, 70), /^ ● 1 working {2}◆ 1 waiting +session calculating… {2}week calculating… $/);
+  assert.match(top(hour, 60), /^ ◆ 1 waiting +session calculating… {2}week calculating… $/);
+  for (const cols of [180, 160, 70, 60]) assert.equal(visible(top(hour, cols)), cols);
+});
+
 test('the selected row: marked with > without color, inverse with color', () => {
   const snap = snapshot(sessions());
   const ui = { ...initialUi(), selected: 's:idle' };
@@ -1141,6 +1171,26 @@ test("the week's pace below the rows: since the plan changed, where that was aft
   assert.equal(week({ t: NOW - 12 * HOUR, v: 0 }), head, 'half a day: no pace yet');
   assert.equal(week({ t: NOW - 6 * 24 * HOUR, v: 0 }), `${head} · +8%/d: about 57% by then`, 'before the reset: since the reset');
   assert.equal(week({ t: NOW - 48 * HOUR, v: 40 }), `${head} · +0.5%/d: about 42% by then`, 'a point in two days: in tenths');
+});
+
+test('below the rows, while the replies to carry an old sample on with are still being read: calculating… in place of each bar, with its reset', () => {
+  /** @type {import('../src/usage.js').Usage} sampled an hour ago */
+  const usage = {
+    at: NOW - HOUR, session: 30, week: 40, reading: true,
+    sessionReset: { at: NOW + HOUR, from: NOW + HOUR, to: NOW + HOUR },
+    weekReset: { at: NOW + 48 * HOUR, from: NOW + 48 * HOUR, to: NOW + 48 * HOUR },
+  };
+  const { lines } = panelList(120, 40, {}, plain, usage);
+  const text = lines.map((l) => l.trimEnd());
+  assert.match(text[36], /^ ─ Usage ─+$/);
+  assert.deepEqual(text.slice(37, 39), [
+    ` session calculating…  resets ${timeOfDay(NOW + HOUR)} in 1h00m`,
+    ` week    calculating…  resets ${weekday(NOW + 48 * HOUR)} ${timeOfDay(NOW + 48 * HOUR)} in 2d00h`,
+  ]);
+  lines.slice(0, -1).forEach((l, i) => assert.equal(visible(l), 120, `line ${i}: ${l}`));
+  // A fresh sample as sampled: no pace, as none is carried on.
+  const fresh = panelList(120, 40, {}, plain, { ...usage, at: NOW - 10 * MINUTE }).lines.map((l) => l.trimEnd());
+  assert.equal(fresh[37], ` session ${'█'.repeat(7)}${'░'.repeat(12)}│${'░'.repeat(4)}   30%  resets ${timeOfDay(NOW + HOUR)} in 1h00m`);
 });
 
 test('a pace as said: in whole points, or in tenths below one', () => {

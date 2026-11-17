@@ -106,6 +106,11 @@ test('its tooltip and its menu: the counts, the plan\'s usage as the list\'s fir
   const one = trayState(snapshot([agent({ title: 'x', state: 'waiting' })]), NOW);
   assert.equal(one.counts, '1 needs you');
   assert.deepEqual([one.usage, one.tooltip], ['', 'Claude agents: 1 needs you'], 'no usage without the desktop app');
+  // While the replies to carry an old sample on with are still being read: calculating… in place of its percents.
+  const reading = { at: NOW - HOUR, session: 64, week: 29, sessionReset: { at: S, from: S - 10 * MINUTE, to: S + 5 * MINUTE }, reading: /** @type {const} */ (true) };
+  const calculating = `session calculating… resets ${timeOfDay(NOW + 2 * HOUR + 5 * MINUTE)} · week calculating…`;
+  const read = trayState(snapshot([agent({ title: 'x', state: 'waiting' })], { usage: reading }), NOW);
+  assert.deepEqual([read.usage, read.tooltip], [calculating, `Claude agents: 1 needs you\n${calculating}`]);
   assert.equal(trayState(snapshot([]), NOW).tooltip, 'Claude agents: none running');
   // A title from the files: one clean line, cut; eight sessions at most in the menu, all of them for the rest.
   const rows = Array.from({ length: 10 }, (_, i) => agent({

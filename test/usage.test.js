@@ -474,7 +474,7 @@ test("after the plan changed within the week, the week's split counts from its f
   });
 });
 
-test('the sample carried on once the replies are read, in the background unless waited for; till then, the sample alone', async (t) => {
+test('the sample carried on once the replies are read, in the background unless waited for; till then, the sample alone, marked as being read, and read again at each call', async (t) => {
   const cfg = makeConfig(t);
   cfg.planUsage([[NOW - 150 * MINUTE, 0, 20], [NOW - 135 * MINUTE, 10, 22], [NOW - 120 * MINUTE, 20, 24], [NOW - 105 * MINUTE, 30, 26]]);
   /** @type {unknown[][]} */
@@ -491,11 +491,22 @@ test('the sample carried on once the replies are read, in the background unless 
   const first = await usage.read(NOW);
   assert.deepEqual(brief(first), { at: NOW - 105 * MINUTE, session: 30, week: 26 });
   assert.equal(first?.tracked, undefined, 'the replies not read yet');
+  assert.equal(first?.reading, true, 'but being read');
+  // Read again a second on, not five: carried on as soon as they are read.
   replies = known(...ROSE, [60, 20_000]);
-  const second = await usage.read(NOW + 5000, { wait: true });
+  const second = await usage.read(NOW + 1000);
   assert.deepEqual(brief(second), brief(first), 'the sample as it was');
+  assert.equal(second?.reading, undefined);
   // The week's reset is not known: the week as sampled.
-  assert.deepEqual(second?.tracked, { at: NOW + 5000, session: 50, sessionReset: ends(140), sessionPace: 0 });
+  assert.deepEqual(second?.tracked, { at: NOW + 1000, session: 50, sessionReset: ends(140), sessionPace: 0 });
+  // Then at most every five seconds again.
+  assert.equal(await usage.read(NOW + 3000), second);
+  const third = await usage.read(NOW + 6000, { wait: true });
+  assert.deepEqual(third?.tracked, { ...second?.tracked, at: NOW + 6000 });
   const since = NOW - 150 * MINUTE - SESSION;
-  assert.deepEqual(asked, [[NOW, since, { wait: false }], [NOW + 5000, since, { wait: true }]]);
+  assert.deepEqual(asked, [[NOW, since, { wait: false }], [NOW + 1000, since, { wait: false }], [NOW + 6000, since, { wait: true }]]);
+  // Waited for, a read that came to nothing (one that failed) is all there is: the sample, not marked.
+  const failed = new PlanUsage(async () => [cfg.desktop], /** @type {import('../src/ledger.js').Ledger} */ (/** @type {unknown} */ ({ read: async () => undefined })));
+  const alone = await failed.read(NOW, { wait: true });
+  assert.deepEqual([brief(alone), alone?.reading], [brief(first), undefined]);
 });

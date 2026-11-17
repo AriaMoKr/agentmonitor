@@ -17,6 +17,9 @@ test('the taskbar button\'s bar: the limit used more, green, yellow from 75% or 
   assert.equal(gaugeOf(undefined, NOW), undefined, 'none without the desktop app');
   assert.equal(gaugeOf({ at: NOW - 6 * HOUR, session: 50 }, NOW), undefined, 'a session\'s limit surely reset since');
   assert.deepEqual(gaugeOf({ at, session: 64, week: 29, sessionReset }, NOW), { v: 64, mode: 'normal' });
+  // While the replies to carry it on with are still being read: none for a sample no longer fresh.
+  assert.equal(gaugeOf({ at: NOW - HOUR, session: 64, week: 29, sessionReset, reading: true }, NOW), undefined);
+  assert.deepEqual(gaugeOf({ at, session: 64, week: 29, sessionReset, reading: true }, NOW), { v: 64, mode: 'normal' }, 'a fresh one as sampled');
   assert.deepEqual(gaugeOf({ at, session: 10, week: 80 }, NOW), { v: 80, mode: 'paused' }, 'the week used more');
   assert.deepEqual(gaugeOf({ at, session: 92, week: 80 }, NOW), { v: 92, mode: 'error' });
   // The session's pace, carried on with the replies: 40 points to go at 30 an hour is before its reset in two hours.
