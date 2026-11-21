@@ -344,7 +344,8 @@ export function columns(cols, priced = false) {
  * @typedef {object} Costs what the sessions' use came to, for the PLAN WK and PLAN ALL columns
  * @property {Map<string, number>} week each session's points of the week's limit since it reset or
  *   the plan changed, by its ID
- * @property {Map<string, number>} total its points in all the replies read, as the plan counts them now
+ * @property {Map<string, number>} total its points in all the replies read, each week's as the plan
+ *   counted use that week
  * @property {number} point what a point comes to at the plan's price
  */
 
@@ -1628,7 +1629,7 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
     ...key('LAST', 'how long ago it last did anything'),
     ...key('ACTIVITY', 'what it is doing, with how many of its tasks are done (4/8) and how long the current step has taken'),
     ...key(`PLAN${nb}WK`, "the share of the plan's price its use of the week's limit took since that reset or the plan changed (its API cost is in its details)"),
-    ...key(`PLAN${nb}ALL`, "the same in all its replies read here, back to the desktop app's first sample of the usage (about 30 days), as the plan counts use now"),
+    ...key(`PLAN${nb}ALL`, "the same in all its replies read here, back to the desktop app's first sample of the usage (about 30 days), each week as the plan counted it"),
     '',
     views.length > 1 ? ` ${t.bold('The overview')}${t.dim(', one of the views below the list, where there is room')}` : ` ${t.bold('Below the list')}${t.dim(', where there is room')}`,
     ...key('selected', 'what the selected session or agent is doing, waits for or did last, its tasks, its latest messages'),

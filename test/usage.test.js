@@ -384,16 +384,17 @@ const SPLIT = [
 /**
  * The usage as the app's samples given tell, carried on with replies of this computer's sessions
  * aaa and bbb (SPLIT, unless told others); those of the last minute found by a read 5 seconds ago,
- * and all known from eight hours back.
+ * and all known from eight hours back, unless told another time.
  * @param {import('node:test').TestContext} t
  * @param {[number, number | undefined, number | undefined][]} samples
  * @param {[number, number, string, string][]} [list]
+ * @param {number} [from]
  */
-async function usageWith(t, samples, list = SPLIT) {
+async function usageWith(t, samples, list = SPLIT, from = NOW - 8 * HOUR) {
   const cfg = makeConfig(t);
   cfg.planUsage(samples);
   const replies = list.map(([ago, x, session, model]) => ({ t: NOW - ago, asked: NOW - ago, x, session, model, seen: ago < MINUTE ? NOW - 5000 : NOW - ago }));
-  const ledger = /** @type {import('../src/ledger.js').Ledger} */ (/** @type {unknown} */ ({ read: async () => ({ from: NOW - 8 * HOUR, replies }) }));
+  const ledger = /** @type {import('../src/ledger.js').Ledger} */ (/** @type {unknown} */ ({ read: async () => ({ from, replies }) }));
   return new PlanUsage(async () => [cfg.desktop], ledger).read(NOW, { wait: true });
 }
 
@@ -468,10 +469,55 @@ test("after the plan changed within the week, the week's split counts from its f
   assert.deepEqual(round(u?.split?.week), {
     from: NOW - 120 * MINUTE, to: NOW, sessions: [['bbb', 4], ['aaa', 2.1]], models: [[OPUS, 4.1], ['claude-sonnet-5-5', 2]],
   });
-  // All of them, those before the change too, as the plan counts use now: 51,500 in all.
+  // All of them, those before the change too, at the rates of the week now, the next week whose
+  // rises tell them: 51,500 in all.
   assert.deepEqual(round(u?.split?.all), {
     from: NOW - 8 * HOUR, to: NOW, sessions: [['bbb', 6], ['aaa', 4.3]], models: [[OPUS, 8.3], ['claude-sonnet-5-5', 2]],
   });
+});
+
+test("all the replies read, each week's at the rates its own rises came to: one whose rises don't tell them, or before the plan's change, at the next week's that do", async (t) => {
+  // The week resets 10 hours from now, as three drops a week apart tell (each to 1%): this week
+  // began a week before that, the last a week before this, and so on.
+  const R = NOW + 10 * HOUR;
+  const [thisWeek, lastWeek, twoBack, threeBack] = [1, 2, 3, 4].map((k) => R - k * WEEK);
+  /** The week's percent alone, at each time. @param {[number, number][]} a */
+  const week = (a) => a.map(([at, v]) => /** @type {[number, undefined, number]} */ ([at, undefined, v]));
+  /** A reset at r, from v. @param {number} r @param {number} v @returns {[number, number][]} */
+  const reset = (r, v) => [[r - 10 * MINUTE, v], [r + 5 * MINUTE, 1]];
+  /** Percents a quarter of an hour apart, from t. @param {number} t @param {number[]} vs @returns {[number, number][]} */
+  const rising = (t, vs) => vs.map((v, i) => [t + i * 15 * MINUTE, v]);
+  // Two weeks back, 20 points for 20,000: one for each 1,000. Last week, 40 for 20,000 (unless told
+  // other percents): two. This week, 6 for 30,000: one for each 5,000. Three weeks back, no rise.
+  const samples = (vs = [10, 30, 50]) => week([
+    [threeBack + 2 * DAY, 5], ...reset(twoBack, 40), ...rising(twoBack + DAY, [10, 20, 30]),
+    ...reset(lastWeek, 50), ...rising(lastWeek + DAY, vs), ...reset(thisWeek, 70), ...rising(NOW - 150 * MINUTE, [20, 22, 24, 26]),
+  ]);
+  // Each week's replies a session of their own: 20,000 in the rises, and some besides.
+  const list = /** @type {[number, number, string][]} */ ([
+    [threeBack + 2 * DAY + HOUR, 3000, 'w3'],
+    [twoBack + DAY + 5 * MINUTE, 10_000, 'w2'], [twoBack + DAY + 20 * MINUTE, 10_000, 'w2'], [twoBack + 3 * DAY, 4000, 'w2'],
+    [lastWeek + DAY + 5 * MINUTE, 10_000, 'w1'], [lastWeek + DAY + 20 * MINUTE, 10_000, 'w1'], [lastWeek + 3 * DAY, 5000, 'w1'],
+    [NOW - 140 * MINUTE, 10_000, 'now'], [NOW - 125 * MINUTE, 10_000, 'now'], [NOW - 110 * MINUTE, 10_000, 'now'], [NOW - 60 * MINUTE, 20_000, 'now'],
+  ]).map(([at, x, session]) => /** @type {[number, number, string, string]} */ ([NOW - at, x, session, OPUS]));
+  const from = threeBack + DAY;
+  const u = await usageWith(t, samples(), list, from);
+  assert.deepEqual(round(u?.split?.week), { from: thisWeek, to: NOW, sessions: [['now', 10]], models: [[OPUS, 10]] }, 'the week now at its rates now');
+  // Three weeks back at the rates of two back, the next whose rises tell them.
+  assert.deepEqual(round(u?.split?.all), { from, to: NOW, sessions: [['w1', 50], ['w2', 24], ['now', 10], ['w3', 3]], models: [[OPUS, 87]] });
+  // Last week rose 4 points: too few to tell, so at this week's rates.
+  const few = await usageWith(t, samples([10, 12, 14]), list, from);
+  assert.deepEqual(round(few?.split?.all?.sessions), [['w2', 24], ['now', 10], ['w1', 5], ['w3', 3]]);
+  // The plan changed two weeks back, after its rises: they measured other limits, and that week's
+  // use is counted at the rates of last week, the next whose rises tell them, as is the week before.
+  const changed = week([
+    [threeBack + 2 * DAY, 5], ...reset(twoBack, 40), ...rising(twoBack + DAY, [10, 20, 30]), [twoBack + 2 * DAY, 30], [twoBack + 2 * DAY + 15 * MINUTE, 0],
+    ...reset(lastWeek, 4), ...rising(lastWeek + DAY, [10, 30, 50]), ...reset(thisWeek, 70), ...rising(NOW - 150 * MINUTE, [20, 22, 24, 26]),
+  ]);
+  const after = await usageWith(t, changed, list, from);
+  assert.deepEqual(after?.changed, { t: twoBack + 2 * DAY + 15 * MINUTE, v: 0 });
+  assert.deepEqual(round(after?.split?.all?.sessions), [['w1', 50], ['w2', 48], ['now', 10], ['w3', 6]]);
+  assert.deepEqual(round(after?.split?.week), round(u?.split?.week), 'the week now as before');
 });
 
 test('the sample carried on once the replies are read, in the background unless waited for; till then, the sample alone, marked as being read, and read again at each call', async (t) => {
