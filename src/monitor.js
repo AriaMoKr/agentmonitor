@@ -126,7 +126,7 @@ const safe = (v) => (typeof v === 'string' && clean(v)) || undefined;
  *   next reply
  * @property {string} [hostSessionId] the desktop app's ID for the session
  * @property {{ of: string, title: string, rewoundAt?: number }} [earlier] a Claude Code session
- *   that a desktop app session ran before its current one, titled after it ("reviews (earlier
+ *   that a desktop app session ran before its current one, titled after it ("alerts (earlier
  *   run)"): the session's title, the one this run had, and when the session was rewound from it,
  *   if it was
  * @property {import('./jobs.js').Job} [job]

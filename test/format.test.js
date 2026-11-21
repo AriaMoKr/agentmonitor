@@ -137,7 +137,7 @@ test('kindLabel', () => {
 });
 
 test('lastPart and relativeTo take paths of any system', () => {
-  assert.equal(lastPart('C:\\git\\my\\claude\\pv'), 'pv');
+  assert.equal(lastPart('C:\\work\\tools\\shop'), 'shop');
   assert.equal(lastPart('/home/me/project/'), 'project');
   assert.equal(lastPart(''), '');
   assert.equal(relativeTo('C:\\git\\demo\\src\\a.js', 'C:\\git\\demo'), 'src\\a.js');

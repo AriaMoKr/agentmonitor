@@ -1472,7 +1472,7 @@ function foldersOf(projects) {
  * the roots, each with its root ('C:\git\'), or a root itself where a session ran in it; in a
  * folder, those in it, the most used of the week first, then the latest active. A folder with no
  * project of its own and one folder in it, which has none either, shares its line with that one
- * ('git\my\').
+ * ('git\work\').
  * @param {Folder[]} roots
  * @returns {Branch[]}
  */

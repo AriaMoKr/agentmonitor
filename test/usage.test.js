@@ -79,7 +79,7 @@ test('the session resets five hours after its window began, on the 10-minute mar
 });
 
 test('the week resets at the time of the week two drops or more agree on, on the hour in it', () => {
-  const R = NOW - 10 * HOUR; // a Thursday, 10:00 UTC
+  const R = NOW - 21 * HOUR; // a Wednesday, 23:00 UTC
   /** In time order. @param {{ t: number, v: number }[]} p */
   const sorted = (p) => [...p].sort((a, b) => a.t - b.t);
   /** Samples at 80% before these resets and 1% after. @param {number[]} resets */
@@ -97,7 +97,7 @@ test('the week resets at the time of the week two drops or more agree on, on the
   const wide = [{ t: R - 2 * WEEK - 18 * HOUR, v: 70 }, { t: R - 2 * WEEK + 2 * HOUR, v: 0 }, { t: R - WEEK - 3 * HOUR, v: 60 }, { t: R - WEEK + 15 * HOUR, v: 4 }, { t: R - HOUR, v: 50 }];
   assert.deepEqual(weekReset(wide), { at: R, from: R - 3 * HOUR + MINUTE, to: R + 2 * HOUR });
   // At the turn of the week as the minutes count it (Thursday, 0:00 UTC).
-  const T = R - 10 * HOUR;
+  const T = NOW - 20 * HOUR;
   assert.deepEqual(weekReset([...around([T - WEEK, T]), { t: T + HOUR, v: 5 }]), at(T + WEEK));
   assert.equal(weekReset([]), undefined);
 });

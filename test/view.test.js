@@ -881,22 +881,22 @@ test("a session's details with the plan's price: what it used of the week's limi
 
 test('an earlier run of a desktop app session: its details say so, and the title it had, which the filter knows', () => {
   const run = agent({
-    key: 's:e', title: 'reviews (earlier run)', state: 'ended', live: false, kind: 'desktop', sessionId: 'e1', hostSessionId: 'local_r',
-    earlier: { of: 'reviews', title: 'Sessions, folders, and repos review', rewoundAt: NOW - 15 * MINUTE },
+    key: 's:e', title: 'alerts (earlier run)', state: 'ended', live: false, kind: 'desktop', sessionId: 'e1', hostSessionId: 'local_r',
+    earlier: { of: 'alerts', title: 'Logs, metrics, and alerts setup', rewoundAt: NOW - 15 * MINUTE },
     cost: { usd: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, linesAdded: 0, linesRemoved: 0, apiMs: 0, durationMs: 0, since: 0, unpriced: false },
   });
   const details = (/** @type {import('../src/monitor.js').Agent} */ a) => detailLines(a, snapshot([a]), initialUi(), { width: 100, height: 20, now: NOW }, plain).join('\n');
   const text = details(run);
   assert.match(text, /Desktop {4}local_r · an earlier run, rewound .+ \(15m ago\)/);
-  assert.match(text, /Was titled Sessions, folders, and repos review/);
+  assert.match(text, /Was titled Logs, metrics, and alerts setup/);
   assert.match(text, /API cost {3}\$0\.00 · as Claude Code last saved them/, 'no reply, no tokens to count, no start said');
   assert.match(details({ ...run, cost: { ...run.cost, unpriced: true } }), /API cost {3}\$0\.00 · a model's price unknown · as Claude Code last saved them/);
-  const restarted = details({ ...run, earlier: { of: 'reviews', title: 'reviews' } });
+  const restarted = details({ ...run, earlier: { of: 'alerts', title: 'alerts' } });
   assert.match(restarted, /Desktop {4}local_r · an earlier run *$/m);
   assert.doesNotMatch(restarted, /Was titled/, 'the title it had is the one it is named after');
   const titles = (/** @type {string} */ filter) => visibleRows(snapshot([...sessions(), run]), { ...initialUi(), filter }, plain).map((r) => r.agent.title);
-  assert.deepEqual(titles('FOLDERS, AND REPOS'), ['reviews (earlier run)']);
-  assert.deepEqual(titles('earlier run'), ['reviews (earlier run)']);
+  assert.deepEqual(titles('METRICS, AND ALERTS'), ['alerts (earlier run)']);
+  assert.deepEqual(titles('earlier run'), ['alerts (earlier run)']);
 });
 
 test("the detail view of a blocked session: what you are to do, the app's summary, its category", () => {

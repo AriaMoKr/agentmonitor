@@ -246,7 +246,7 @@ export function kindLabel({ entrypoint, kind }) {
 }
 
 /**
- * The last part of a path written on any system: 'C:\\git\\my\\pv' → 'pv'.
+ * The last part of a path written on any system: 'C:\\work\\shop' → 'shop'.
  * @param {string | undefined} path
  */
 export function lastPart(path) {
