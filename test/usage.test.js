@@ -114,10 +114,10 @@ test("the plan changed where the week's percent dropped at none of its weekly re
   assert.equal(changeOf([{ t: R - 3 * HOUR, v: 80 }, { t: R + 2 * HOUR, v: 10 }], at), undefined, 'samples far apart around the reset');
   assert.equal(changeOf([{ t: R - WEEK - 2 * DAY, v: 80 }, { t: R - 2 * DAY + MINUTE, v: 10 }], at), undefined, 'a week apart: a reset came between');
   assert.equal(changeOf(p, undefined), undefined, 'no reset known to tell one by');
-  // As the app's file tells it: the latest sample with no session, the week's back to 0 on a Sunday.
+  // As the app's file tells it after a change of plan: the latest sample with no session's percent, the week's back to 0.
   const file = {
     samples: [
-      ...[[R - WEEK - 10 * MINUTE, 10, 80], [R - WEEK + 5 * MINUTE, 12, 1], [R - 10 * MINUTE, 20, 70], [R + 5 * MINUTE, 22, 1], [NOW - 30 * MINUTE, 94, 87]]
+      ...[[R - WEEK - 10 * MINUTE, 10, 80], [R - WEEK + 5 * MINUTE, 12, 1], [R - 10 * MINUTE, 20, 70], [R + 5 * MINUTE, 22, 1], [NOW - 30 * MINUTE, 60, 75]]
         .map(([t, fh, sd]) => ({ t, org: 'o', u: { fh, sd } })),
       { t: NOW - 15 * MINUTE, org: 'o', u: { sd: 0 } },
     ],
