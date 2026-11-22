@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -57,7 +58,7 @@ test('--help and --version', async () => {
   assert.match(help.stdout, /^Usage: agentmonitor \[options\]/);
   const version = await run(['-v']);
   assert.equal(version.code, 0);
-  assert.match(version.stdout, /^\d+\.\d+\.\d+\n$/);
+  assert.equal(version.stdout, `${JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version}\n`);
 });
 
 test('a wrong option ends with status 2, saying why', async () => {

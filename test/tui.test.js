@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { width } from '../src/format.js';
 import { runTui } from '../src/tui.js';
+import { VERSION } from '../src/version.js';
 import { agent, snapshot } from './helpers/agents.js';
 import { HOUR, MINUTE } from './helpers/fixture.js';
 import { fakeTerminal, until } from './helpers/screen.js';
@@ -114,6 +115,7 @@ test('help, the filter, sorting, and e: the sessions that ended but those archiv
   assert.doesNotMatch(tui.text(), /Put away/, 'archived in the desktop app, and ended');
   tui.type('?');
   await tui.until((s) => s.includes('Keys') && s.includes('bell on or off'));
+  assert.ok(tui.text().includes(` agentmonitor ${VERSION}  the Claude agents on this computer`), 'its version on the first line');
   // Taller than these 16 lines: End shows its end, k the line above, and any other key goes back.
   tui.type('\x1b[F');
   await tui.until((s) => s.includes('spark') && s.includes('any other key or a click goes back'));

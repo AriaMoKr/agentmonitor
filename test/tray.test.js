@@ -112,6 +112,14 @@ test('its tooltip and its menu: the counts, the plan\'s usage as the list\'s fir
   const read = trayState(snapshot([agent({ title: 'x', state: 'waiting' })], { usage: reading }), NOW);
   assert.deepEqual([read.usage, read.tooltip], [calculating, `Claude agents: 1 needs you\n${calculating}`]);
   assert.equal(trayState(snapshot([]), NOW).tooltip, 'Claude agents: none running');
+  // The app's version, a line of its own, the last.
+  assert.equal(trayState(snapshot([agent({ title: 'x', state: 'waiting' })]), NOW, '0.2.6').tooltip, 'Claude agents: 1 needs you\nagentmonitor 0.2.6');
+  assert.equal(trayState(snapshot([agent({ title: 'x', state: 'waiting' })], { usage: reading }), NOW, '0.2.6').tooltip, `Claude agents: 1 needs you\n${calculating}\nagentmonitor 0.2.6`);
+  // Where the three lines don't fit in what a Windows tooltip holds, the counts' last parts go, the
+  // usage and the version kept whole.
+  const versioned = trayState(snap, NOW, '0.2.6').tooltip;
+  assert.equal(versioned, `Claude agents: 2 need you, 1 unread, 1 at work, 1 in the background…\n${usage}\nagentmonitor 0.2.6`);
+  assert.ok(versioned.length <= 127, `${versioned.length} characters`);
   // A title from the files: one clean line, cut; eight sessions at most in the menu, all of them for the rest.
   const rows = Array.from({ length: 10 }, (_, i) => agent({
     key: `s:${i}`, title: `\x1b[31mRed\x1b[0m\nline ${'x'.repeat(80)}`, state: 'waiting', lastActive: NOW - i * MINUTE, activity: 'Bash:\x1b[2m npm\ntest',

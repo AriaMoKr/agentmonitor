@@ -1007,6 +1007,19 @@ test('the help fills the screen, the keys that scroll it on its last line, one c
   assert.equal(helpLines(initialUi(), { width: 90, height: 10, now: NOW }, plain, '/x').length, 10);
 });
 
+test("the help's first line gives agentmonitor's version, after its name", () => {
+  /** @param {import('../src/view.js').Theme} t @param {number} cols @param {string} [version] */
+  const draw = (t, cols, version) => helpLines(initialUi(), { width: cols, height: 40, now: NOW }, t, '/x', true, [], version);
+  assert.equal(draw(plain, 90, '0.2.6')[0].trimEnd(), ' agentmonitor 0.2.6  the Claude agents on this computer');
+  // Bold, the name alone.
+  const color = makeTheme({ color: true, ascii: false, animate: false });
+  assert.match(draw(color, 90, '0.2.6')[0], /^ \x1b\[1magentmonitor\x1b\[0m 0\.2\.6 {2}the Claude agents on this computer/);
+  // As narrow as a phone's screen, what it is wraps under the start of what it says.
+  assert.deepEqual(draw(plain, 43, '0.2.6').slice(0, 2).map((l) => l.trimEnd()), [' agentmonitor 0.2.6  the Claude agents on', `${' '.repeat(21)}this computer`]);
+  // Not known: the name alone.
+  assert.equal(draw(plain, 90)[0].trimEnd(), ' agentmonitor  the Claude agents on this computer');
+});
+
 test('on a screen too short for it the help scrolls, and says how far down it is', () => {
   const full = helpLines(initialUi(), { width: 90, height: 100, now: NOW }, plain, '/x');
   const ui = initialUi();

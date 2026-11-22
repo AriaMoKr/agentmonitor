@@ -22,6 +22,7 @@ import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Notification, scree
 import { clock, dollars } from '../src/format.js';
 import { dismissalsOf, Monitor } from '../src/monitor.js';
 import { serve } from '../src/serve.js';
+import { VERSION } from '../src/version.js';
 import { sessionStates } from '../src/viewer.js';
 import { appIco, appIcon, countIcon, donutIcon, glyphIco, sessionsIcon, tileIcon, trayIcon, TURNS, turningIcon, usageIcon } from './icons.js';
 import { desktopEntry, electronShortcuts, toastClsidOf } from './launch.js';
@@ -479,7 +480,7 @@ async function update() {
   // sessions would stay in the list after the app.
   if (!snap || !tray || quitting) return;
   const now = Date.now();
-  const state = trayState(snap, now);
+  const state = trayState(snap, now, VERSION);
   latest = { state, gauge: gaugeOf(snap.usage, now) };
   const fresh = notices(before, snap);
   before = sessionStates(snap);

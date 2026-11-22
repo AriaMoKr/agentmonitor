@@ -1563,8 +1563,9 @@ function eventLine(e, cols, now, t) {
  * @param {string} dir
  * @param {boolean} [mouse] whether the mouse is on
  * @param {{ name: string, what: string }[]} [views] the views below the list, as v steps through them
+ * @param {string} [version] agentmonitor's version, after its name on the first line
  */
-export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, views = []) {
+export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, views = [], version = '') {
   const g = t.glyphs;
   // No wider than 88 columns on a wide screen: two keys and what they do take 87.
   const measure = Math.min(cols, 88);
@@ -1583,8 +1584,10 @@ export function helpLines(ui, { width: cols, height }, t, dir, mouse = true, vie
   const [right, left] = t.ascii ? ['right', 'left'] : ['→', '←'];
   // A no-break space keeps a glyph with its word.
   const nb = ' ';
+  // Its name and version, then what it is, wrapped under the start of that.
+  const name = ` ${t.bold('agentmonitor')}${version ? ` ${version}` : ''}  `;
   const text = [
-    ...say(` ${t.bold('agentmonitor')}  the Claude agents on this computer`, 15),
+    ...say(`${name}the Claude agents on this computer`, visibleWidth(name)),
     '',
     ` ${t.bold('Keys')}`,
     ...pair(`${t.arrows} j k`, 'move', 'pgup pgdn home end', 'move by pages'),

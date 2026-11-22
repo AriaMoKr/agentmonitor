@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // agentmonitor: the Claude agents running on this computer, and the ones active lately, live in
 // a terminal. Run it with --help for the options; README.md says what it reads and shows.
-import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -10,6 +9,7 @@ import { Monitor } from '../src/monitor.js';
 import { VIEWS } from '../src/panels.js';
 import { banner, serve, TOKEN, urls } from '../src/serve.js';
 import { runTui } from '../src/tui.js';
+import { VERSION } from '../src/version.js';
 import { AGENTS_SHOWN, makeTheme, table } from '../src/view.js';
 
 const HELP = `Usage: agentmonitor [options]
@@ -113,8 +113,7 @@ if (values.help) {
   process.exit(0);
 }
 if (values.version) {
-  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  process.stdout.write(`${pkg.version}\n`);
+  process.stdout.write(`${VERSION || 'unknown'}\n`);
   process.exit(0);
 }
 

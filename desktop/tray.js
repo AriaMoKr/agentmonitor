@@ -41,7 +41,7 @@ const LEVELS = ['waiting', 'unread', 'working', 'background', 'idle'];
  * @property {number} needs how many sessions need you: waiting for you, or blocked
  * @property {string} counts the sessions by what they show: '1 needs you, 3 at work, 5 idle'
  * @property {string} usage the plan's usage as the list's first line says it; '' when none
- * @property {string} tooltip
+ * @property {string} tooltip the counts, the usage and the app's version, a line each (tooltipOf)
  * @property {{ key: string, label: string }[]} listed those that need you, then those unread,
  *   the latest first: a glyph, the title and the project
  * @property {Record<Shown, number>} tally how many sessions show each level
@@ -62,12 +62,28 @@ export function levelOf(a) {
 }
 
 /**
+ * The tooltip: the counts, the plan's usage and the app's version, a line each, in what a Windows
+ * tooltip holds. Where they don't all fit, the counts' last parts go, the least of what they say,
+ * and an ellipsis says so.
+ * @param {string} counts
+ * @param {string} usage '' when none
+ * @param {string} version '' when not known
+ */
+function tooltipOf(counts, usage, version) {
+  const rest = [usage, version && `agentmonitor ${version}`].filter(Boolean).map((l) => `\n${l}`).join('');
+  let first = `Claude agents: ${counts}`;
+  while (first.length + rest.length > MAX_TOOLTIP && first.includes(', ')) first = `${first.slice(0, first.lastIndexOf(', '))}…`;
+  return `${first}${rest}`.slice(0, MAX_TOOLTIP);
+}
+
+/**
  * What the tray says of `snap`.
  * @param {Snapshot} snap
  * @param {number} now
+ * @param {string} [version] the app's version, the tooltip's last line
  * @returns {TrayState}
  */
-export function trayState(snap, now) {
+export function trayState(snap, now, version = '') {
   /** @type {Record<Shown, number>} */
   const tally = { waiting: 0, unread: 0, working: 0, background: 0, idle: 0 };
   /** @type {{ a: Agent, level: Shown }[]} */
@@ -94,7 +110,7 @@ export function trayState(snap, now) {
     needs,
     counts,
     usage,
-    tooltip: `Claude agents: ${counts}${usage ? `\n${usage}` : ''}`.slice(0, MAX_TOOLTIP),
+    tooltip: tooltipOf(counts, usage, version),
     listed: live
       .filter((s) => s.level === 'waiting' || s.level === 'unread')
       .slice(0, MAX_LISTED)

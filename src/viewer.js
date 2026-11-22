@@ -3,6 +3,7 @@
 // do to them. The full-screen monitor has one; the web view has one for each page open.
 import { durationLabel } from './format.js';
 import { MOVED, VIEWS, boardColumn, viewOf } from './panels.js';
+import { VERSION } from './version.js';
 import { AGENTS_SHOWN, SORTS, detailLines, endedShown, helpLines, initialUi, listLines, settleSelection, visibleRows } from './view.js';
 
 /** The windows the w key steps through. */
@@ -96,7 +97,7 @@ export class Viewer {
     this.animating = false;
     if (!snap) return [` ${t.bold('Claude agents')}  ${t.dim(`reading ${this.monitor.dir}`)}`];
     this.moved(snap, screen.now);
-    if (ui.view === 'help') return helpLines(ui, screen, t, this.monitor.dir, this.mouseOn, VIEWS);
+    if (ui.view === 'help') return helpLines(ui, screen, t, this.monitor.dir, this.mouseOn, VIEWS, VERSION);
     this.rows = visibleRows(snap, ui, t);
     if (ui.view === 'detail') {
       this.detail = find(snap, ui.selected) ?? this.detail;

@@ -237,7 +237,7 @@ Tasks is its task list: the steps done, the one in progress and those to do, and
 | v, V | the next view below the list, or the one before ([Below the list](#below-the-list)) |
 | p | the projects view by folder, or by name again; from another view, the projects by folder. While the projects view shows, the footer says which (`p paths:on`) |
 | r | read everything again now |
-| ? | help |
+| ? | help, its first line with agentmonitor's version (`--version` prints it) |
 | Ctrl+L | draw the screen again |
 | q, Ctrl+C | quit (q in the details goes back) |
 
@@ -305,7 +305,7 @@ The icon shows the sessions, a glyph each, up to four, what matters most first; 
 
 Tray icon, in its menu, gives it another look: what matters most alone, its glyph; that glyph turning while one is at work; that glyph in a ring of the plan's usage, lit round from the top as far as the limit used more, colored as the taskbar button's bar (below), and alone where that has none; or how many need you, dark on yellow (9+ past nine), else what matters most.
 
-Its tooltip counts the sessions and gives the plan's usage. Its menu lists the sessions that need you, then the unread ones (a click on one opens it in the window), and the counts and the usage under them, then these switches, which it keeps:
+Its tooltip counts the sessions and gives the plan's usage and the app's version, a line each (where they don't fit in a Windows tooltip, the last of the counts are left out). Its menu lists the sessions that need you, then the unread ones (a click on one opens it in the window), and the counts and the usage under them, then these switches, which it keeps:
 
 - Notify when a session needs you or ends its turn: a notification when the bell would ring. Off until you turn it on, and on Windows shown only while its settings let apps notify (Settings, System, Notifications).
 - Flash when a session needs you or ends its turn: the window's taskbar button flashes until you bring the window to the front; with the window in the tray, the icon blinks a few seconds. On at first.
