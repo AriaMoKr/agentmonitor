@@ -8,12 +8,16 @@
 // (src/ledger.js), at as many points for so much as the samples rose by with them lately: each
 // model's use at its own rate where the rises tell the models apart, as the plan counts some
 // models' tokens for more than their prices against each other say, else all at one; and each
-// one's pace with the last hour's. At those rates too, what each session and model used of each
-// limit, and the points the replies just written add: to the session's, or where it is not carried
-// on to the week's. What they used in all, each week's at the rates its own rises came to, as the
-// plan counts the same use for more in one week than in another. A plan changed shows where the
-// week's percent dropped at no reset of it: the rises before then measured other limits, and are
-// not used. For the chart, what a point of the week came to at each sample, as the plans changed.
+// one's pace with the last hour's. A rise with none of this computer's use in it was use elsewhere
+// (another computer, the Claude apps), and tells nothing of how much the use here counts for: it
+// is left out. Use elsewhere at the same time as here can't be told apart, and counts as this
+// computer's. At those rates too, what each session and model used of each limit, and the points
+// the replies just written add: to the session's, or where it is not carried on to the week's.
+// What they used in all, each week's at the rates its own rises came to, as the plan counts the
+// same use for more in one week than in another; the week now, where its rises tell none (this
+// computer not used in them), at the latest week's that do. A plan changed shows where the week's
+// percent dropped at no reset of it: the rises before then measured other limits, and are not
+// used. For the chart, what a point of the week came to at each sample, as the plans changed.
 import { join } from 'node:path';
 import { JsonFiles } from './files.js';
 
@@ -425,8 +429,10 @@ export function repliesSince(p, now, changed) {
 /**
  * The percents carried on from the last sample to `now` with this computer's replies since, at as
  * many points for so much use as the latest rises of the samples came to (each between two samples
- * close together, after the time the replies are known from and the plan's last change): each
- * model's use at its own rate where the rises tell the models apart (fit), else all at one. A
+ * close together, after the time the replies are known from and the plan's last change, and with
+ * some of this computer's use in it: a rise with none was use elsewhere): each model's use at its
+ * own rate where the rises tell the models apart (fit), else all at one. The week's, where its
+ * last week of rises tells none, at those of the latest week before whose rises do. A
  * percent the last sample leaves out, not at all, as it tells nothing of it now. The session's:
  * what its window used since the sample when the sample was in that window too, else all its
  * window used, and 0 with no window; the windows those the replies began; and in a window its
@@ -468,7 +474,8 @@ const rateOf = (r, model) => r.by.get(model ?? '') ?? r.all;
  * @property {Tracked} [tracked]
  * @property {Rates} [a] the session's points for each of use (a reply's x)
  * @property {number} [window] the start of the session's window now
- * @property {Rates} [b] the week's points for each of use
+ * @property {Rates} [b] the week's points for each of use: as its last week of rises came to, else
+ *   as the latest week's before whose rises tell them
  * @property {number} [weekFrom] when the week's limit last reset, or the plan last changed where
  *   that is later (its first sample under the new limits)
  * @property {Week[]} [weeks] the weeks back to the first reply, oldest first, the week now last
@@ -506,9 +513,20 @@ function follow(p, { from, replies }, now, weekAt, changed) {
   const starts = windowsOf(replies);
   // The rises the replies are known for, under the limits there are now.
   const after = Math.max(from, changed?.t ?? -Infinity);
+  /** What the replies came to, all told, by each one written: use[i] that of the first i. */
+  const use = [0];
+  for (const r of replies) use.push(/** @type {number} */ (use.at(-1)) + r.x);
+  /**
+   * Whether the plan rose between two samples with none of this computer's use between them: use
+   * elsewhere (another computer, the Claude apps), which tells nothing of how much the use here
+   * counts for. A rise of no points goes on a run all the same.
+   * @param {Point} a @param {Point} b
+   */
+  const elsewhere = (a, b) => b.v > a.v && use[writtenBy(replies, b.t)] <= use[writtenBy(replies, a.t)];
   /**
    * The rates over the rises `keep` keeps, back from sample `till` (the last): of all the use in
-   * them, and each model's where the runs of them tell it apart from the others' (fit).
+   * them, and each model's where the runs of them tell it apart from the others' (fit). Only rises
+   * with some of the use here, where the plan rose.
    * @param {Point[]} q @param {Rises} o @param {(a: Point, b: Point) => boolean} keep @param {number} [till]
    * @returns {Rates | undefined}
    */
@@ -520,7 +538,7 @@ function follow(p, { from, replies }, now, weekAt, changed) {
     let up = 0;
     let x = 0;
     // The latest first.
-    for (const [a, b] of rises(q, o, (a, b) => a.t >= after && keep(a, b), till)) {
+    for (const [a, b] of rises(q, o, (a, b) => a.t >= after && !elsewhere(a, b) && keep(a, b), till)) {
       let run = b === joins ? runs.at(-1) : undefined;
       if (!run) {
         run = { up: 0, x: new Map() };
@@ -567,43 +585,40 @@ function follow(p, { from, replies }, now, weekAt, changed) {
     }
   }
   const last = p.week.at(-1)?.t === latest ? p.week.at(-1) : undefined;
-  const b = last && weekAt && scale(p.week, WEEK_RISES, () => true);
-  if (last && weekAt && b) {
-    f.b = b;
-    /** The reset the week now began at. */
-    let reset;
-    if (now < weekAt.at) {
-      out.week = Math.min(100, Math.round(last.v + points(b, last.t, now)));
-      out.weekReset = weekAt;
-      reset = weekAt.at - WEEK;
-      // Since the reset, or the plan's change where later: the percents before were of other
-      // limits. (A reset since came after any change, which is a sample.)
-      f.weekFrom = Math.max(reset, changed?.t ?? -Infinity);
-    } else {
-      // Reset since: what was used since the latest reset, and the next a week on.
-      const k = Math.floor((now - weekAt.at) / WEEK);
-      reset = weekAt.at + k * WEEK;
-      out.week = Math.min(100, Math.round(points(b, reset, now)));
-      const on = (k + 1) * WEEK;
-      out.weekReset = { at: weekAt.at + on, from: weekAt.from + on, to: weekAt.to + on };
-      f.weekFrom = reset;
-    }
-    if (paced) out.weekPace = pace(b);
+  if (last && weekAt) {
+    // The reset the week now began at: the one before the next, or where one came since the last
+    // sample, the latest (-1 and k weeks on from the next).
+    const k = now < weekAt.at ? -1 : Math.floor((now - weekAt.at) / WEEK);
+    const reset = weekAt.at + k * WEEK;
+    // Since the reset, or the plan's change where later: the percents before were of other limits.
+    // (A reset since came after any change, which is a sample.)
+    const begun = k < 0 ? Math.max(reset, changed?.t ?? -Infinity) : reset;
     // The weeks before, back to the first reply: each from a reset to the next, or to the plan's
-    // change, which begins one; each at the rates its own rises came to, else the next week's.
-    const begun = f.weekFrom;
+    // change, which begins one; and the rates its own rises came to, where they tell them.
     const first = Math.max(from, replies[0]?.t ?? Infinity);
     const cuts = [first, begun, ...(changed ? [changed.t] : [])];
     for (let t = reset; t > first; t -= WEEK) cuts.push(t);
     const edges = [...new Set(cuts)].filter((t) => t >= first && t <= begun).sort((x, y) => x - y);
-    /** @type {Week[]} */
-    const weeks = [{ from: begun, rates: b }];
-    for (let i = edges.length - 2; i >= 0; i--) {
-      const [start, end] = [edges[i], edges[i + 1]];
-      const own = scale(p.week, WEEK_RISES, (x, y) => x.t >= start && y.t <= end, writtenBy(p.week, end) - 1);
-      weeks.unshift({ from: start, rates: own ?? weeks[0].rates });
+    const own = edges.slice(1).map((end, i) => scale(p.week, WEEK_RISES, (x, y) => x.t >= edges[i] && y.t <= end, writtenBy(p.week, end) - 1));
+    // The week now's: as its last week of rises came to, else as the latest week's whose rises
+    // tell them, as on a computer not used in any of its rises (the plan used elsewhere).
+    const b = scale(p.week, WEEK_RISES, () => true) ?? own.findLast((r) => r !== undefined);
+    if (b) {
+      f.b = b;
+      f.weekFrom = begun;
+      // From the last sample, or where a reset came since, what was used since it; the next reset
+      // a week on from that.
+      out.week = Math.min(100, Math.round(k < 0 ? last.v + points(b, last.t, now) : points(b, reset, now)));
+      const on = (k + 1) * WEEK;
+      out.weekReset = k < 0 ? weekAt : { at: weekAt.at + on, from: weekAt.from + on, to: weekAt.to + on };
+      if (paced) out.weekPace = pace(b);
+      // Each week at its own rates, else at the next week's; the week now at those it is carried
+      // on with.
+      /** @type {Week[]} */
+      const weeks = [{ from: begun, rates: b }];
+      for (let i = own.length - 1; i >= 0; i--) weeks.unshift({ from: edges[i], rates: own[i] ?? weeks[0].rates });
+      f.weeks = weeks;
     }
-    f.weeks = weeks;
   }
   if (out.session !== undefined || out.week !== undefined) f.tracked = out;
   return f;
@@ -676,8 +691,9 @@ function splitOf(f, r, now) {
 /**
  * What this computer's replies used (their x) for a point of the week at each of its samples, all
  * of it together: over the latest 20 points of rises back from that sample, after the time the
- * replies are known from and the plan's change before it, where they come to enough points. A
- * plan's first samples have none, till its rises come to enough.
+ * replies are known from and the plan's change before it, where they come to enough points; a
+ * rise with none of the use here (use elsewhere) left out, as track leaves it out. A plan's first
+ * samples have none, till its rises come to enough.
  * @param {Point[]} q the week's percents, in time order
  * @param {import('./ledger.js').Replies} replies
  * @param {Point[]} changes the plan's changes (changesOf), oldest first
@@ -693,6 +709,8 @@ export function perPointOf(q, { from, replies }, changes) {
     for (; j < replies.length && replies[j].t <= s.t; j++) total += replies[j].x;
     by.set(s, total);
   }
+  /** Whether the plan rose with none of the use here between two samples. @param {Point} a @param {Point} b */
+  const elsewhere = (a, b) => b.v > a.v && /** @type {number} */ (by.get(b)) <= /** @type {number} */ (by.get(a));
   /** @type {Point[]} */
   const out = [];
   let c = 0;
@@ -701,7 +719,7 @@ export function perPointOf(q, { from, replies }, changes) {
     const after = Math.max(from, changes[c - 1]?.t ?? -Infinity);
     let up = 0;
     let x = 0;
-    for (const [a, b] of rises(q, POINT_RISES, (a) => a.t >= after, i)) {
+    for (const [a, b] of rises(q, POINT_RISES, (a, b) => a.t >= after && !elsewhere(a, b), i)) {
       up += b.v - a.v;
       x += /** @type {number} */ (by.get(b)) - /** @type {number} */ (by.get(a));
     }
