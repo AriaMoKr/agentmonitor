@@ -471,11 +471,13 @@ let latest;
 
 /**
  * The tray, the taskbar and the jump list brought up to date with the latest read; for what
- * changed, the notifications and the flashing, where they are on.
+ * changed, the notifications and the flashing, where they are on. Nothing once the app quits.
  */
 async function update() {
   const snap = await served?.snapshot();
-  if (!snap || !tray) return;
+  // A read that ends after before-quit gave the jump list Windows' own back paints nothing: its
+  // sessions would stay in the list after the app.
+  if (!snap || !tray || quitting) return;
   const now = Date.now();
   const state = trayState(snap, now);
   latest = { state, gauge: gaugeOf(snap.usage, now) };
