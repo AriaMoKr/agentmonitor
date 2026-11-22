@@ -1,9 +1,10 @@
 # The agentmonitor app for Windows, released: on a tag v<version> pushed, where <version> is that
 # of package.json and desktop/package.json, the tests on Windows, then the app built there
-# (desktop/build.js, its program given the app's icon and name by rcedit), then a GitHub release
-# of its zip and the zip's SHA-256, with GitHub's list of what changed. Run by hand on a branch
-# (Actions, Release, Run workflow), it builds the zip as the run's artifact and releases nothing;
-# on a tag, it releases it again, its files replaced.
+# (desktop/build.js, its program given the app's icon and name by rcedit), then the zip's build
+# attested (where it came from, signed with Sigstore) and a GitHub release of the zip and its
+# SHA-256, with GitHub's list of what changed. Run by hand on a branch (Actions, Release, Run
+# workflow), it builds the zip as the run's artifact and releases nothing; on a tag, it releases
+# it again, its files replaced and the new zip attested.
 name: Release
 
 on:
@@ -88,10 +89,21 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      # The attestation's: a token from GitHub's OIDC for Sigstore's certificate, and the
+      # attestation kept with the repository's.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@v8
         with:
           name: agentmonitor-${{ needs.build.outputs.version }}-windows
+
+      # The zip's build provenance (SLSA), signed with Sigstore and kept with the repository's
+      # attestations: this workflow built it, from the tag's commit (gh attestation verify). Here,
+      # not in the build, so that no step running npm's packages can ask for the token it signs with.
+      - uses: actions/attest@v4
+        with:
+          subject-path: agentmonitor-*.zip
 
       - name: Release
         env:
@@ -105,7 +117,9 @@ jobs:
             {
               echo 'agentmonitor for Windows: the Claude Code sessions on this computer, in a window of its own and an icon in the tray. Unzip it anywhere and run agentmonitor.exe; its first start puts it in the Start menu.'
               echo
-              echo 'It is not signed, so Windows may say it protected your PC: More info, then Run anyway.'
+              echo 'Its program is not signed, so Windows may say it protected your PC: More info, then Run anyway.'
+              echo
+              echo "Its build is [attested]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/attestations), signed with Sigstore: \`gh attestation verify ${files[0]} --repo $GITHUB_REPOSITORY\` checks that this repository's release workflow built the zip, and names the tag it built it from."
               echo
               echo 'SHA-256:'
               echo '```'

@@ -278,7 +278,7 @@ On a phone, a tap is a click: on a row, twice to open it, below the rows to sele
 
 `desktop/` holds agentmonitor as an app, made with Electron: the web page in a window of its own, and an icon in the system tray that shows when a session needs you, with the page again in a small window by it. On Windows its taskbar button shows the plan's usage and the sessions too. Once set up it needs no terminal, and it goes on in the tray with its window closed.
 
-On Windows, take the zip from the latest [release](https://github.com/AriaMoKr/agentmonitor/releases), unzip it anywhere, and run `agentmonitor.exe` in it. It is not signed, so Windows may say it protected your PC: More info, then Run anyway. Elsewhere, or to run it from here:
+On Windows, take the zip from the latest [release](https://github.com/AriaMoKr/agentmonitor/releases), unzip it anywhere, and run `agentmonitor.exe` in it. Its program is not signed, so Windows may say it protected your PC: More info, then Run anyway. Its build is [attested](https://github.com/AriaMoKr/agentmonitor/attestations), though, signed with Sigstore: with GitHub's CLI, `gh attestation verify agentmonitor-<version>-win-x64.zip --repo AriaMoKr/agentmonitor` checks that this repository's release workflow built the zip, and names the tag it built it from. Elsewhere, or to run it from here:
 
 ```bash
 cd desktop
@@ -411,7 +411,7 @@ npx install-electron
 npm run build
 ```
 
-`.github/workflows/release.yml` releases it. When a tag `v<version>` is pushed, it runs the tests on Windows, builds the app there with rcedit, and makes a GitHub release of the zip and its SHA-256. To release, give `package.json` and `desktop/package.json` the new version and commit that, then tag it and push the tag:
+`.github/workflows/release.yml` releases it. When a tag `v<version>` is pushed, it runs the tests on Windows, builds the app there with rcedit, attests the zip's build with GitHub's artifact attestations (its provenance, signed with Sigstore, in a job of its own that runs none of npm's packages), and makes a GitHub release of the zip and its SHA-256. To release, give `package.json` and `desktop/package.json` the new version and commit that, then tag it and push the tag:
 
 ```bash
 git tag v0.2.0
