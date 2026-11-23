@@ -1423,6 +1423,8 @@ function planLines(plan, room, cols, t) {
 function* fieldLines(a, snap, now, t, cols) {
   const field = (/** @type {string} */ label, /** @type {string | undefined} */ value) =>
     value ? t.pad(` ${t.dim(fit(label, 10))} ${truncate(value, Math.max(0, cols - 13), t.ellipsis)}`, cols) : null;
+  /** A field of more lines than one where it needs them, its label on the first. @param {string} label @param {string | undefined} value */
+  const wrapped = (label, value) => (value ? wrapStyled(value, Math.max(1, cols - 13)).map((l, i) => field(i ? '' : label, l)) : []);
   const when = (/** @type {number | undefined} */ ts) => (ts ? `${clock(ts, now)} (${ago(now - ts)} ago)` : undefined);
   const join = (/** @type {(string | false | undefined)[]} */ parts) => parts.filter(Boolean).join(t.sep) || undefined;
   const lines = doing(a, now, t).map(([label, value]) => field(label, value));
@@ -1448,7 +1450,8 @@ function* fieldLines(a, snap, now, t, cols) {
         (a.cost.linesAdded || a.cost.linesRemoved) && `+${a.cost.linesAdded} -${a.cost.linesRemoved} lines`,
         'as Claude Code last saved them',
       ]) : undefined),
-      field('Plan', snap.planPrice ? planOf(a, snap.usage?.split, snap.planPrice) : undefined),
+      // Whole, on more lines where it needs them: where its points are not known, it says why.
+      ...wrapped('Plan', snap.planPrice ? planOf(a, snap.usage, snap.planPrice) : undefined),
       field('Started', when(a.startedAt)),
       field('Last', when(a.lastActive)),
       field('Desktop', join([
@@ -1474,14 +1477,35 @@ function* fieldLines(a, snap, now, t, cols) {
 }
 
 /**
+ * Why the week's points for this computer's use are not known, as the share's view and a session's
+ * Plan say it: its reset not known yet, else how far its rises came, with the use here, between
+ * samples too far apart, and with none of it.
+ * @param {import('./usage.js').Unrated} r
+ */
+export function unratedText(r) {
+  const n = (/** @type {number} */ v) => String(Math.round(v));
+  if (r.dropped !== undefined) {
+    return `it needs the week's reset, which the desktop app's samples here show where they dropped at the same time of the week twice or more (${r.dropped} drop${r.dropped === 1 ? '' : 's'} so far)`;
+  }
+  return [
+    `since ${monthDay(r.from ?? 0)} the week rose ${n(r.here ?? 0)} point${n(r.here ?? 0) === '1' ? '' : 's'} while this computer was used, as the desktop app here sampled it, of the ${r.least} in a week it takes to tell how much its use counts`,
+    (r.apart ?? 0) >= 1 && `${n(r.apart ?? 0)} more while it was used, between samples over half an hour apart`,
+    (r.elsewhere ?? 0) >= 1 && `${n(r.elsewhere ?? 0)} while it was not (use elsewhere)`,
+  ].filter(Boolean).join('; ');
+}
+
+/**
  * What a session's use came to at the plan's price, as its PLAN WK and PLAN ALL columns say: its
  * points of the week's limit since it reset or the plan changed, and in all the replies read where
- * that is more (in all, when it began after the first of them); undefined for next to none.
+ * that is more (in all, when it began after the first of them); undefined for next to none. Where
+ * the week's points for the use here are not known, why.
  * @param {Agent} a
- * @param {import('./usage.js').Usage['split']} split
+ * @param {import('./usage.js').Usage | undefined} u
  * @param {number} price the plan's price a month
  */
-function planOf(a, split, price) {
+function planOf(a, u, price) {
+  const split = u?.split;
+  if (!split?.week && !split?.all && u?.unrated) return `not known yet: ${unratedText(u.unrated)}`;
   const of = (/** @type {import('./usage.js').Share | undefined} */ s) => s?.sessions.find(([id]) => id === a.sessionId)?.[1] ?? 0;
   const week = of(split?.week);
   const total = of(split?.all);

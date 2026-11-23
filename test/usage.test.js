@@ -559,6 +559,26 @@ test("where none of the last week's rises had this computer's use in them, as wh
   // With none of its rises, the week can't be carried on, nor the use here counted.
   const none = await usageWith(t, samples, list.slice(-1), from);
   assert.deepEqual([none?.tracked, none?.split], [undefined, undefined]);
+  assert.equal(u?.unrated, undefined, 'carried on: nothing to say why not');
+});
+
+test("where the week is not carried on, why: its reset not known yet, or since the replies read (or the plan's change), its rises with the use here too few, those with some of it between samples too far apart, and those with none", async (t) => {
+  /** The week's percent alone, so many minutes ago. @param {[number, number][]} a */
+  const week = (a) => a.map(([m, v]) => /** @type {[number, undefined, number]} */ ([NOW - m * MINUTE, undefined, v]));
+  // One drop three days ago: it agrees with none on a reset.
+  const one = await usageWith(t, week([[3 * 24 * 60, 80], [3 * 24 * 60 - 15, 1], [150, 20], [135, 22]]));
+  assert.deepEqual([one?.tracked, one?.split, one?.unrated], [undefined, undefined, { dropped: 1 }]);
+  // Two drops a week apart tell the reset. Since then, 3 points with use here (2, then 1), 6 with
+  // some of it over an hour, and 2 with none of it.
+  const R = NOW + 10 * HOUR;
+  const resets = [R - 2 * WEEK, R - WEEK].flatMap((r) => [[r - 10 * MINUTE, undefined, 80], [r + 5 * MINUTE, undefined, 1]]);
+  const list = /** @type {[number, number, string, string][]} */ ([[140 * MINUTE, 5000, 'aaa', OPUS], [90 * MINUTE, 5000, 'aaa', OPUS], [50 * MINUTE, 5000, 'bbb', OPUS]]);
+  const few = await usageWith(t, [...resets, ...week([[150, 20], [135, 22], [120, 24], [60, 30], [45, 31]])], list);
+  assert.deepEqual([few?.tracked, few?.split], [undefined, undefined]);
+  assert.deepEqual(few?.unrated, { from: NOW - 8 * HOUR, here: 3, least: 5, apart: 6, elsewhere: 2 });
+  // Two more with use here: 5, and carried on.
+  const enough = await usageWith(t, [...resets, ...week([[150, 20], [135, 22], [120, 24], [60, 30], [45, 31], [30, 33]])], [...list, [40 * MINUTE, 5000, 'bbb', OPUS]]);
+  assert.deepEqual([enough?.tracked?.week, enough?.unrated], [33, undefined]);
 });
 
 test('the sample carried on once the replies are read, in the background unless waited for; till then, the sample alone, marked as being read, and read again at each call', async (t) => {

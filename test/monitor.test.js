@@ -36,7 +36,8 @@ test('the plan\'s usage, as the desktop app last sampled it', async (t) => {
     session: 64,
     week: 29,
     sessionReset: { at: NOW - 40 * MINUTE + 5 * HOUR, from: NOW - 40 * MINUTE + 5 * HOUR, to: NOW - 20 * MINUTE + 5 * HOUR },
-  }, 'the session began about its last 0%, on the 10-minute mark before; the week has not dropped');
+    unrated: { dropped: 0 },
+  }, 'the session began about its last 0%, on the 10-minute mark before; the week has not dropped, and so is not carried on');
   assert.deepEqual(history, {
     session: [{ t: NOW - 35 * MINUTE, v: 0 }, { t: NOW - 20 * MINUTE, v: 40 }, { t: NOW - 5 * MINUTE, v: 64 }],
     week: [{ t: NOW - 35 * MINUTE, v: 10 }, { t: NOW - 20 * MINUTE, v: 10 }, { t: NOW - 5 * MINUTE, v: 29 }],

@@ -133,6 +133,8 @@ test('--once and --json with the plan\'s usage, as the desktop app sampled it', 
     session: 64,
     week: 29,
     sessionReset: { at: resets, from: resets, to: mark(now - 20 * MINUTE) + 5 * HOUR },
+    // Why the week is not carried on: no drop of it sampled, to tell when it resets.
+    unrated: { dropped: 0 },
   });
   assert.equal(json.planPrice, undefined);
   for (const price of ['17.50', '$200']) {

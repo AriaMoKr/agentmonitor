@@ -550,6 +550,13 @@ test("who used the limits: each session's points as a bar of the whole, what the
   assert.deepEqual(clickAt(hits, 10, top + 3), { open: 's:work' });
   assert.deepEqual(clickAt(hits, 10, top + 5), { unselect: true }, 'a session not listed');
   assert.match(draw('share', { snap: fullSnapshot({ usage: { ...USAGE, split: undefined } }) }).view[2], /Not known yet/);
+  // The week not carried on: why its points for the use here are not known, wrapped.
+  const unrated = { from: NOW - 3 * DAY, here: 3, least: 5, apart: 6, elsewhere: 2 };
+  const why = draw('share', { width: 80, snap: fullSnapshot({ usage: { ...USAGE, tracked: undefined, split: undefined, unrated } }) }).view;
+  assert.equal(why[2], " week    62%  this computer's points not known yet:");
+  const under = why.slice(3).filter((l) => l);
+  assert.ok(under.length > 1 && under.every((l) => l.startsWith('   ') && l.length <= 79), 'under it, in the width');
+  assert.equal(under.join(' ').replace(/\s+/g, ' ').trim(), `since ${monthDay(NOW - 3 * DAY)} the week rose 3 points while this computer was used, as the desktop app here sampled it, of the 5 in a week it takes to tell how much its use counts; 6 more while it was used, between samples over half an hour apart; 2 while it was not (use elsewhere)`);
 });
 
 test("who used the limits, with the plan's price: the week's points in dollars too, and a point's price in the heading", () => {

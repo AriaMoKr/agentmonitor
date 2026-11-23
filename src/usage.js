@@ -15,9 +15,10 @@
 // the replies just written add: to the session's, or where it is not carried on to the week's.
 // What they used in all, each week's at the rates its own rises came to, as the plan counts the
 // same use for more in one week than in another; the week now, where its rises tell none (this
-// computer not used in them), at the latest week's that do. A plan changed shows where the week's
-// percent dropped at no reset of it: the rises before then measured other limits, and are not
-// used. For the chart, what a point of the week came to at each sample, as the plans changed.
+// computer not used in them), at the latest week's that do. Where none do, or its reset is not
+// known yet, why, for the views to say. A plan changed shows where the week's percent dropped at
+// no reset of it: the rises before then measured other limits, and are not used. For the chart,
+// what a point of the week came to at each sample, as the plans changed.
 import { join } from 'node:path';
 import { JsonFiles } from './files.js';
 
@@ -82,6 +83,22 @@ const PACE_LEAST = 15 * MINUTE;
  *   own rises came to (Followed's weeks)
  * @property {Drop[]} [drops] the replies of the last half minute, as they add to the session's, or
  *   where it is not carried on to the week's
+ * @property {Unrated} [unrated] why the week is not carried on, where the latest sample has its
+ *   percent and the replies are read: for the views to say why its points are not known
+ */
+
+/**
+ * @typedef {object} Unrated why the week's points for the use here are not known: its reset not
+ *   known yet (`dropped`), else its rises since the plan's change, or since the replies read, too
+ *   few (the rest)
+ * @property {number} [dropped] how many times its percent dropped in the samples, where they agree
+ *   on no reset yet
+ * @property {number} [from] the time its rises are looked at from
+ * @property {number} [here] the points they rose with this computer's use in them, between samples
+ *   close enough together (what tells the rates)
+ * @property {number} [least] the points of those a week takes
+ * @property {number} [apart] the points they rose with some of it, between samples further apart
+ * @property {number} [elsewhere] the points they rose with none of it: use elsewhere
  */
 
 /**
@@ -187,6 +204,7 @@ export class PlanUsage {
         const perModel = { ...(f.a?.by.size ? { session: [...f.a.by] } : {}), ...(f.b?.by.size ? { week: [...f.b.by] } : {}) };
         usage = { ...latest.usage, tracked: f.tracked, perUse, ...(perModel.session || perModel.week ? { perModel } : {}), ...splitOf(f, replies, now) };
       }
+      if (usage && f?.unrated) usage = { ...usage, unrated: f.unrated };
       const perPoint = history && latest && replies ? this.perPointOf(latest, replies) : [];
       if (usage && perPoint.length) usage = { ...usage, perPoint };
     }
@@ -354,11 +372,7 @@ export function sessionReset(p) {
  */
 export function weekReset(p) {
   const last = p.at(-1);
-  /** @type {[number, number][]} each drop: after the first time and by the second */
-  const drops = [];
-  for (let i = 1; i < p.length; i++) {
-    if (p[i].v < p[i - 1].v - 1 && p[i].t - p[i - 1].t < WEEK) drops.push([p[i - 1].t, p[i].t]);
-  }
+  const drops = dropsOf(p);
   if (!last || !drops.length) return undefined;
   // For each minute of the week, the drops that could have been a reset at it, and the last one.
   const minutes = WEEK / MINUTE;
@@ -403,6 +417,21 @@ export function weekReset(p) {
   const [a, b] = /** @type {[number, number]} */ (drops.at(-1));
   if (a < reset(k).to && b > reset(k).from) k++;
   return reset(k);
+}
+
+/**
+ * Where the week's percent dropped: by more than a point, between two samples less than a week
+ * apart; each drop as the time of the sample before it, and of the one after.
+ * @param {Point[]} p the week's percents, in time order
+ * @returns {[number, number][]}
+ */
+function dropsOf(p) {
+  /** @type {[number, number][]} */
+  const drops = [];
+  for (let i = 1; i < p.length; i++) {
+    if (p[i].v < p[i - 1].v - 1 && p[i].t - p[i - 1].t < WEEK) drops.push([p[i - 1].t, p[i].t]);
+  }
+  return drops;
 }
 
 /**
@@ -479,6 +508,7 @@ const rateOf = (r, model) => r.by.get(model ?? '') ?? r.all;
  * @property {number} [weekFrom] when the week's limit last reset, or the plan last changed where
  *   that is later (its first sample under the new limits)
  * @property {Week[]} [weeks] the weeks back to the first reply, oldest first, the week now last
+ * @property {Unrated} [unrated] why the week is not carried on, where the last sample has it
  *
  * @typedef {object} Week a week of the week's limit, from a reset to the next (a change of plan
  *   begins one too), and the rates its replies count at: those its own rises came to, as the plan
@@ -585,6 +615,8 @@ function follow(p, { from, replies }, now, weekAt, changed) {
     }
   }
   const last = p.week.at(-1)?.t === latest ? p.week.at(-1) : undefined;
+  // Not carried on without its reset: the drops sampled, which agree on none yet.
+  if (last && !weekAt) f.unrated = { dropped: dropsOf(p.week).length };
   if (last && weekAt) {
     // The reset the week now began at: the one before the next, or where one came since the last
     // sample, the latest (-1 and k weeks on from the next).
@@ -603,6 +635,19 @@ function follow(p, { from, replies }, now, weekAt, changed) {
     // The week now's: as its last week of rises came to, else as the latest week's whose rises
     // tell them, as on a computer not used in any of its rises (the plan used elsewhere).
     const b = scale(p.week, WEEK_RISES, () => true) ?? own.findLast((r) => r !== undefined);
+    if (!b) {
+      // How far they came since: with the use here, as the rates are worked out from (a week's at
+      // least); with some of it between samples too far apart; and with none of it.
+      let [here, apart, away] = [0, 0, 0];
+      for (let i = 1; i < p.week.length; i++) {
+        const [x, y] = [p.week[i - 1], p.week[i]];
+        if (x.t < after || y.v <= x.v) continue;
+        if (elsewhere(x, y)) away += y.v - x.v;
+        else if (y.t - x.t > RISE) apart += y.v - x.v;
+        else if (y.v < 100) here += y.v - x.v;
+      }
+      f.unrated = { from: after, here, least: WEEK_RISES.least, apart, elsewhere: away };
+    }
     if (b) {
       f.b = b;
       f.weekFrom = begun;

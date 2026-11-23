@@ -879,6 +879,18 @@ test("a session's details with the plan's price: what it used of the week's limi
   assert.match(text([['p1', 22]], 200, [['p1', 22.04]]), /Plan {7}\$10\.12 this week: 22 points of its limit, at \$200 a month +\n/, 'next to none more');
 });
 
+test("a session's details with the plan's price, where the week's points for the use here are not known: why", () => {
+  const s = agent({ key: 's:p', title: 'Priced session', state: 'idle', sessionId: 'p1' });
+  /** Its details, in one line. @param {import('../src/usage.js').Unrated} unrated */
+  const text = (unrated) => detailLines(s, snapshot([s], { usage: { at: NOW, week: 40, unrated }, planPrice: 200 }), initialUi(), { width: 100, height: 30, now: NOW }, plain).join('\n').replace(/\s+/g, ' ');
+  const from = NOW - 3 * 24 * HOUR;
+  assert.ok(text({ from, here: 3, least: 5, apart: 6, elsewhere: 2 }).includes(` Plan not known yet: since ${monthDay(from)} the week rose 3 points while this computer was used, as the desktop app here sampled it, of the 5 in a week it takes to tell how much its use counts; 6 more while it was used, between samples over half an hour apart; 2 while it was not (use elsewhere) `));
+  const alone = text({ from, here: 1, least: 5, apart: 0, elsewhere: 0 });
+  assert.ok(alone.includes(' the week rose 1 point while this computer was used, as the desktop app here sampled it, of the 5 in a week it takes to tell how much its use counts Last '));
+  assert.doesNotMatch(alone, /more while it was used|while it was not/, 'none of the rest');
+  assert.ok(text({ dropped: 1 }).includes(" Plan not known yet: it needs the week's reset, which the desktop app's samples here show where they dropped at the same time of the week twice or more (1 drop so far) "));
+});
+
 test('an earlier run of a desktop app session: its details say so, and the title it had, which the filter knows', () => {
   const run = agent({
     key: 's:e', title: 'alerts (earlier run)', state: 'ended', live: false, kind: 'desktop', sessionId: 'e1', hostSessionId: 'local_r',

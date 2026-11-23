@@ -8,7 +8,7 @@
 // that move do so with the time they are drawn for.
 import { Canvas } from './canvas.js';
 import { ago, clean, clock, dollars, durationLabel, elapsed, fit, graphemes, lastPart, monthDay, relativeTo, shortModel, timeOfDay, tokens, toolName, truncate, weekday, width } from './format.js';
-import { bar, calculating, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, pointPrice, projectName, putAway, rate, sessionEnd, shown, statusOf, till, visibleWidth, weekPace } from './view.js';
+import { bar, calculating, glyph, glyphChar, heading, levelOf, limitsOf, paintOf, placeOf, pointPrice, projectName, putAway, rate, sessionEnd, shown, statusOf, till, unratedText, visibleWidth, weekPace, wrapStyled } from './view.js';
 
 /**
  * @typedef {import('./monitor.js').Agent} Agent
@@ -1294,8 +1294,9 @@ function chartLines(snap, rows, ui, screen, t) {
  * Who used the limits: of the session's in its window and of the week's since its reset (or the
  * plan's change, where later), the points each session on this computer used, as bars of the
  * whole limit, the most first; what the rest came to (other computers, or use before the replies
- * read); and the points by model. With the plan's price, the week's points in dollars too. A
- * click on a session opens it.
+ * read); and the points by model. With the plan's price, the week's points in dollars too. Where
+ * the week's points for the use here are not known, why: its reset not known yet, or its rises
+ * with the use here too few. A click on a session opens it.
  * @type {Panel}
  */
 function shareLines(snap, rows, ui, screen, t) {
@@ -1348,6 +1349,14 @@ function shareLines(snap, rows, ui, screen, t) {
       body.push(line(`   ${t.dim(fit('elsewhere', nw))} ${gray} ${fit(pts(rest), 5, 'right')}${price(rest, 7)}  ${t.dim('not in the replies read here')}`, cols, t));
     }
     if (models) body.push(line(`   ${t.dim(fit('by model', nw))} ${models}`, cols, t));
+  }
+  // The week's points for the use here not known: why, as far as the samples tell.
+  const unrated = limits.week && !u?.split?.week ? u?.unrated : undefined;
+  if (limits.week && unrated) {
+    const l = limits.week;
+    if (body.length) body.push(line('', cols, t));
+    body.push(line(` ${t.bold(fit('week', 7))} ${levelOf(l.v, `${l.near ? '~' : ''}${l.v}%`, t)}  ${t.dim("this computer's points not known yet:")}`, cols, t));
+    for (const text of wrapStyled(t.dim(unratedText(unrated)), Math.max(1, cols - 4))) body.push(line(`   ${text}`, cols, t));
   }
   if (!body.length) body.push(line(t.dim("   Not known yet: it needs the desktop app's samples of the usage, and this computer's replies read."), cols, t));
   // With the plan's price, what a point of the week comes to, where the heading has room for it
